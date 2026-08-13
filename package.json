@@ -11,6 +11,7 @@
     "desktop:dev": "npm --workspace @second-brain/desktop run tauri:dev",
     "desktop:build": "npm --workspace @second-brain/desktop run tauri:build",
     "desktop:installer": "npm --workspace @second-brain/desktop run tauri:installer",
+    "desktop:publisher-installer": "node scripts/build-publisher-installer.mjs",
     "rust:test": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets"
   },
   "engines": {

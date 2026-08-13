@@ -1,0 +1,20 @@
+{
+  "productName": "Second Brain Workspace Publisher Preview",
+  "version": "0.2.0",
+  "identifier": "app.example.secondbrain.publisher-preview",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Second Brain Workspace Publisher Preview",
+        "width": 1040,
+        "height": 760,
+        "minWidth": 320,
+        "minHeight": 520,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": true
+      }
+    ]
+  }
+}

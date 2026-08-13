@@ -21,8 +21,24 @@ export interface DiagnosticsSnapshot {
   keyBackend: string;
   recoveryStatus: string;
   syncEnabled: boolean;
+  publisherOrigin: string | null;
   closeBehavior: "hide_to_tray" | "exit";
   autostartEnabled: boolean;
+}
+
+export interface PublisherHttpRequest {
+  origin: string;
+  method: "GET" | "POST" | "DELETE";
+  path: string;
+  body: string | null;
+  headers: Record<string, string>;
+  signed: boolean;
+}
+
+export interface PublisherHttpResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
 }
 
 export interface ScannedMarkdownFile {
@@ -63,6 +79,8 @@ export interface NativeAdapter {
   getDeviceIdentity(): Promise<DeviceIdentity>;
   completeDevicePairing(deviceId: string): Promise<void>;
   signCanonicalRequest(request: DeviceCanonicalRequestInput): Promise<SignResponse>;
+  publisherHttpRequest(request: PublisherHttpRequest): Promise<PublisherHttpResponse>;
+  openPublisherPairing(origin: string, pairingId: string): Promise<void>;
   getDiagnostics(): Promise<DiagnosticsSnapshot>;
   pickVaultFolder(): Promise<string | null>;
   selectVault(path: string): Promise<{ vaultId: string; root: string }>;
@@ -194,12 +212,17 @@ function validateDiagnostics(value: unknown): DiagnosticsSnapshot {
     "keyBackend",
     "recoveryStatus",
     "syncEnabled",
+    "publisherOrigin",
     "closeBehavior",
     "autostartEnabled",
   ]);
   const selectedVault = record.selectedVault;
   if (selectedVault !== null && typeof selectedVault !== "string") {
     throw new Error("native diagnostics vault is invalid");
+  }
+  const publisherOrigin = record.publisherOrigin;
+  if (publisherOrigin !== null && typeof publisherOrigin !== "string") {
+    throw new Error("native diagnostics publisher origin is invalid");
   }
   return {
     selectedVault,
@@ -208,8 +231,53 @@ function validateDiagnostics(value: unknown): DiagnosticsSnapshot {
     keyBackend: assertString(record.keyBackend, "keyBackend"),
     recoveryStatus: assertString(record.recoveryStatus, "recoveryStatus"),
     syncEnabled: record.syncEnabled === true,
+    publisherOrigin,
     closeBehavior: record.closeBehavior === "hide_to_tray" ? "hide_to_tray" : "exit",
     autostartEnabled: record.autostartEnabled === true,
+  };
+}
+
+function validatePublisherRequest(request: PublisherHttpRequest): PublisherHttpRequest {
+  const origin = new URL(request.origin);
+  if (origin.origin !== request.origin || origin.username || origin.password) {
+    throw new Error("publisher origin is invalid");
+  }
+  if (!/^(GET|POST|DELETE)$/.test(request.method)) throw new Error("publisher method is invalid");
+  if (!request.path.startsWith("/api/brain/device/") || request.path.includes("?") || request.path.length > 512) {
+    throw new Error("publisher path is invalid");
+  }
+  if (request.body !== null && request.body.length > 4_000_000) throw new Error("publisher body is too large");
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(request.headers)) {
+    const normalized = name.toLowerCase();
+    if (!['if-none-match', 'idempotency-key'].includes(normalized) || /[\r\n]/.test(value)) {
+      throw new Error("publisher header is invalid");
+    }
+    headers[normalized] = value;
+  }
+  return { ...request, headers };
+}
+
+function validatePublisherResponse(value: unknown): PublisherHttpResponse {
+  const record = assertRecord(value);
+  assertExactKeys(record, ["status", "headers", "body"]);
+  if (typeof record.status !== "number" || !Number.isInteger(record.status) || record.status < 100 || record.status > 599) {
+    throw new Error("native publisher status is invalid");
+  }
+  const rawHeaders = assertRecord(record.headers);
+  const headers: Record<string, string> = {};
+  for (const [name, headerValue] of Object.entries(rawHeaders)) {
+    if (typeof headerValue !== "string" || name.length > 128 || headerValue.length > 8_192) {
+      throw new Error("native publisher headers are invalid");
+    }
+    headers[name.toLowerCase()] = headerValue;
+  }
+  return {
+    status: record.status,
+    headers,
+    body: typeof record.body === "string" && record.body.length <= 8_000_000
+      ? record.body
+      : (() => { throw new Error("native publisher body is invalid"); })(),
   };
 }
 
@@ -230,6 +298,21 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
       canonicalizeDeviceRequest(request);
       const response = await invoke("sign_canonical_request", { request });
       return validateSignResponse(response);
+    },
+    async publisherHttpRequest(request) {
+      return validatePublisherResponse(await invoke("publisher_http_request", {
+        request: validatePublisherRequest(request),
+      }));
+    },
+    async openPublisherPairing(origin, pairingId) {
+      const normalizedOrigin = new URL(origin);
+      if (normalizedOrigin.origin !== origin || normalizedOrigin.username || normalizedOrigin.password) {
+        throw new Error("publisher origin is invalid");
+      }
+      await invoke("open_publisher_pairing", {
+        origin,
+        pairingId: assertUuid(pairingId, "pairing id"),
+      });
     },
     async getDiagnostics() {
       return validateDiagnostics(await invoke("diagnostics"));

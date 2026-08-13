@@ -164,3 +164,23 @@ test("pending commit IPC rejects malformed nested choices and journal paths", as
   }));
   await assert.rejects(() => malformedJournal.loadPendingCommit(), /pending commit/i);
 });
+
+test("publisher HTTP IPC validates the narrow structured response contract", async () => {
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const adapter = createNativeAdapter(async (command, args) => {
+    calls.push({ command, args });
+    return { status: 200, headers: { etag: '"brain-1"' }, body: "{}" };
+  });
+  const response = await adapter.publisherHttpRequest({
+    origin: "https://brain.example.com", method: "GET", path: "/api/brain/device/state",
+    body: null, headers: {}, signed: true,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(calls[0]?.command, "publisher_http_request");
+
+  const unsafe = createNativeAdapter(async () => ({ status: 200, headers: {}, body: "{}", privateKey: "x" }));
+  await assert.rejects(() => unsafe.publisherHttpRequest({
+    origin: "https://brain.example.com", method: "GET", path: "/api/brain/device/state",
+    body: null, headers: {}, signed: true,
+  }), /unknown|secret/i);
+});

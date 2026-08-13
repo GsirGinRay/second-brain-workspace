@@ -29,6 +29,12 @@ pub enum NativeError {
     Io,
     #[error("duplicate entity id")]
     DuplicateId,
+    #[error("Publisher sync is disabled in this build")]
+    PublisherDisabled,
+    #[error("Publisher origin is not allowed by this build")]
+    PublisherOriginRejected,
+    #[error("Publisher transport failed")]
+    PublisherTransport,
 }
 
 impl From<io::Error> for NativeError {

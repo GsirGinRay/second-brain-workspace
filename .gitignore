@@ -16,3 +16,5 @@ apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/target/
 backups/
 recovery/
+apps/desktop/private/*.json
+!apps/desktop/private/*.example.json

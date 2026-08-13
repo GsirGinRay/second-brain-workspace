@@ -176,6 +176,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     async (updateStatus = true) => {
       const nextDiagnostics = await native.getDiagnostics();
       setDiagnostics(nextDiagnostics);
+      if (nextDiagnostics.publisherOrigin) {
+        setServerOrigin(nextDiagnostics.publisherOrigin);
+      }
       if (!nextDiagnostics.selectedVault) {
         if (updateStatus) setStatus("請先選擇 Markdown 資料夾");
         return;
@@ -444,7 +447,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
 
   async function configureServer() {
     try {
-      const normalized = new DeviceClient(serverOrigin, native).origin;
+      const normalized = new DeviceClient(diagnostics?.publisherOrigin ?? serverOrigin, native).origin;
       localStorage.setItem("second-brain.serverOrigin", normalized);
       setServerOrigin(normalized);
       setStatus("雲端同步服務已設定");
@@ -461,11 +464,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       const result = await client.startPairing("第二大腦工作台");
       setPairing(result);
       setStatus("請在第二大腦網頁核准配對碼");
-      window.open(
-        `${client.origin}/devices?pairingId=${encodeURIComponent(result.pairingId)}`,
-        "_blank",
-        "noopener,noreferrer",
-      );
+      await client.openPairingPage(result.pairingId);
     } catch (cause) {
       setError(
         `無法開始配對：${cause instanceof Error ? cause.message : "PAIR_FAILED"}`,
@@ -477,11 +476,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
 
   function openPairingWebsite() {
     if (!client || !pairing) return;
-    window.open(
-      `${client.origin}/devices?pairingId=${encodeURIComponent(pairing.pairingId)}`,
-      "_blank",
-      "noopener,noreferrer",
-    );
+    void client.openPairingPage(pairing.pairingId).catch((cause) => {
+      setError(`無法開啟 Publisher 配對頁：${cause instanceof Error ? cause.message : "OPEN_PAIRING_FAILED"}`);
+    });
   }
 
   useEffect(() => {
@@ -2266,12 +2263,19 @@ function SyncSettings({
           <input
             value={serverOrigin}
             onChange={(event) => setServerOrigin(event.target.value)}
+            readOnly={diagnostics?.syncEnabled === true}
             placeholder="選用：localhost 開發伺服器"
           />
-          <button className="primary" onClick={onConfigureServer}>
+          <button className="primary" disabled={diagnostics?.syncEnabled === true} onClick={onConfigureServer}>
             儲存
           </button>
         </div>
+        {diagnostics?.syncEnabled && (
+          <div className="paired-ok">
+            <strong>Publisher 同步已啟用</strong>
+            <small>私人 build 已鎖定允許的 Publisher origin</small>
+          </div>
+        )}
       </section>
       <section className="settings-card">
         <span className="step">3</span>

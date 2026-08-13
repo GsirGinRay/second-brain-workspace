@@ -1,16 +1,11 @@
 import {
-  DEVICE_SIGNATURE_HEADERS,
   type BrainProjectSnapshot,
   type BrainTaskSnapshot,
   type DevicePairStartResultDto,
   type DevicePairStatusDto,
 } from "@second-brain/brain-core";
-import type { NativeAdapter } from "./ipc";
-
-type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+import type { NativeAdapter, PublisherHttpResponse } from "./ipc";
 export const DEFAULT_SERVER_ORIGIN = "";
-
-const browserFetch: Fetcher = (input, init) => globalThis.fetch(input, init);
 
 export interface DeviceOwnerState {
   revision: number;
@@ -56,29 +51,43 @@ export function normalizeServerOrigin(value: string): string {
   if (url.protocol !== "https:" && !(loopback && url.protocol === "http:")) {
     throw new Error("Server URL must use HTTPS");
   }
-  if (!loopback) {
-    throw new Error("Remote cloud sync is not configured in this open-source build");
-  }
   return url.origin;
 }
 
-function base64Url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
-}
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes).buffer));
-  return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
-}
-
-async function responseError(response: Response): Promise<Error> {
-  try {
-    const value = await response.json() as { error?: string | { code?: string; message?: string } };
-    const message = typeof value.error === "string" ? value.error : value.error?.code ?? value.error?.message;
-    return new Error(message || `HTTP_${response.status}`);
-  } catch {
-    return new Error(`HTTP_${response.status}`);
+export class PublisherHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    readonly detail: string,
+  ) {
+    super(`HTTP ${status} · ${code} · ${detail}`);
+    this.name = "PublisherHttpError";
   }
+}
+
+function responseError(response: PublisherHttpResponse): Error {
+  try {
+    const value = JSON.parse(response.body) as { error?: string | { code?: string; message?: string }; code?: string; message?: string };
+    const stringError = typeof value.error === "string" ? value.error : undefined;
+    const code = typeof value.error === "object"
+      ? value.error.code
+      : value.code ?? (stringError && /^[A-Z][A-Z0-9_]+$/.test(stringError) ? stringError : undefined);
+    const detail = stringError ?? (typeof value.error === "object" ? value.error.message : undefined) ?? value.message;
+    return new PublisherHttpError(response.status, code || `HTTP_${response.status}`, detail || readableHttpStatus(response.status));
+  } catch {
+    return new PublisherHttpError(response.status, `HTTP_${response.status}`, readableHttpStatus(response.status));
+  }
+}
+
+function readableHttpStatus(status: number): string {
+  if (status === 400) return "Publisher 拒絕了請求格式";
+  if (status === 401) return "裝置尚未配對、已撤銷，或簽章驗證失敗";
+  if (status === 403) return "目前帳號或裝置沒有同步權限";
+  if (status === 404) return "Publisher 同步端點不存在";
+  if (status === 409) return "同步版本衝突，請重新產生預覽";
+  if (status === 429) return "請求過於頻繁，請稍後再試";
+  if (status >= 500) return "Publisher 伺服器暫時無法完成同步";
+  return "Publisher 回傳未預期的狀態";
 }
 
 export class DeviceClient {
@@ -87,7 +96,6 @@ export class DeviceClient {
   constructor(
     origin: string,
     private readonly native: NativeAdapter,
-    private readonly fetcher: Fetcher = browserFetch,
   ) {
     this.origin = normalizeServerOrigin(origin);
   }
@@ -105,14 +113,18 @@ export class DeviceClient {
     return this.unsignedJson("/api/brain/device/pair/status", { pairingId, pollingSecret });
   }
 
+  async openPairingPage(pairingId: string): Promise<void> {
+    await this.native.openPublisherPairing(this.origin, pairingId);
+  }
+
   async getState(etag: string | null): Promise<
     { kind: "not-modified"; etag: string | null } | { kind: "modified"; etag: string | null; state: DeviceOwnerState }
   > {
     const response = await this.signedRequest("GET", "/api/brain/device/state", undefined, etag ? { "if-none-match": etag } : {});
-    const responseEtag = response.headers.get("etag") ?? etag;
+    const responseEtag = response.headers.etag ?? etag;
     if (response.status === 304) return { kind: "not-modified", etag: responseEtag };
-    if (!response.ok) throw await responseError(response);
-    return { kind: "modified", etag: responseEtag, state: await response.json() as DeviceOwnerState };
+    if (response.status < 200 || response.status >= 300) throw responseError(response);
+    return { kind: "modified", etag: responseEtag, state: JSON.parse(response.body) as DeviceOwnerState };
   }
 
   async createPlan(input: {
@@ -138,31 +150,28 @@ export class DeviceClient {
     if (!/^[0-9a-f-]{36}$/i.test(planId)) throw new Error("SYNC_PLAN_ID_INVALID");
     const path = `/api/brain/device/sync/plans/${planId}`;
     const response = await this.signedRequest("GET", path);
-    if (!response.ok) throw await responseError(response);
-    return response.json() as Promise<DevicePlanStatus>;
+    if (response.status < 200 || response.status >= 300) throw responseError(response);
+    return JSON.parse(response.body) as DevicePlanStatus;
   }
 
   async deleteTaskPermanently(taskId: string): Promise<void> {
     if (!/^[0-9a-f-]{36}$/i.test(taskId)) throw new Error("TASK_ID_INVALID");
     const response = await this.signedRequest("DELETE", `/api/brain/device/tasks/${taskId}`);
-    if (!response.ok) throw await responseError(response);
+    if (response.status < 200 || response.status >= 300) throw responseError(response);
   }
 
   private async unsignedJson<T>(path: string, body: unknown, expectedStatus = 200): Promise<T> {
-    const response = await this.fetcher(this.origin + path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      cache: "no-store",
+    const response = await this.native.publisherHttpRequest({
+      origin: this.origin, method: "POST", path, body: JSON.stringify(body), headers: {}, signed: false,
     });
-    if (response.status !== expectedStatus) throw await responseError(response);
-    return response.json() as Promise<T>;
+    if (response.status !== expectedStatus) throw responseError(response);
+    return JSON.parse(response.body) as T;
   }
 
   private async signedJson<T>(method: string, path: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
     const response = await this.signedRequest(method, path, body, extraHeaders);
-    if (!response.ok) throw await responseError(response);
-    return response.json() as Promise<T>;
+    if (response.status < 200 || response.status >= 300) throw responseError(response);
+    return JSON.parse(response.body) as T;
   }
 
   private async signedRequest(
@@ -170,35 +179,14 @@ export class DeviceClient {
     path: string,
     body?: unknown,
     extraHeaders: Record<string, string> = {},
-  ): Promise<Response> {
-    const identity = await this.native.getDeviceIdentity();
-    const bodyText = body === undefined ? "" : JSON.stringify(body);
-    const bodyBytes = new TextEncoder().encode(bodyText);
-    const timestamp = Math.floor(Date.now() / 1_000);
-    const nonceBytes = crypto.getRandomValues(new Uint8Array(16));
-    const nonce = base64Url(nonceBytes);
-    const contentType = body === undefined ? "" : "application/json";
-    const canonical = {
-      method,
+  ): Promise<PublisherHttpResponse> {
+    return this.native.publisherHttpRequest({
+      origin: this.origin,
+      method: method as "GET" | "POST" | "DELETE",
       path,
-      query: [] as [string, string][],
-      timestamp,
-      nonce,
-      contentType,
-      bodySha256: await sha256Hex(bodyBytes),
-    };
-    const signature = await this.native.signCanonicalRequest(canonical);
-    const headers = new Headers(extraHeaders);
-    headers.set(DEVICE_SIGNATURE_HEADERS.deviceId, identity.deviceId);
-    headers.set(DEVICE_SIGNATURE_HEADERS.timestamp, String(timestamp));
-    headers.set(DEVICE_SIGNATURE_HEADERS.nonce, nonce);
-    headers.set(DEVICE_SIGNATURE_HEADERS.signature, signature.signatureBase64Url);
-    if (contentType) headers.set("content-type", contentType);
-    return this.fetcher(this.origin + path, {
-      method,
-      headers,
-      body: body === undefined ? undefined : bodyText,
-      cache: "no-store",
+      body: body === undefined ? null : JSON.stringify(body),
+      headers: extraHeaders,
+      signed: true,
     });
   }
 }

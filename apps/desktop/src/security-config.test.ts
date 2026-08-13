@@ -15,12 +15,20 @@ test("Tauri capability does not grant filesystem or shell/process plugins", () =
   assert.doesNotMatch(capability, /\*\*/);
 });
 
-test("WP6 enables sync only through explicit native commands", () => {
+test("Publisher sync is implemented only through explicit native commands", () => {
   const source = readFileSync(
     resolve(import.meta.dirname, "../src-tauri/src/lib.rs"),
     "utf8",
   );
-  assert.match(source, /const SYNC_AGENT_ENABLED: bool = true/);
+  assert.match(source, /publisher_http_request/);
+  assert.match(source, /open_publisher_pairing/);
   assert.match(source, /apply_markdown_changes/);
   assert.match(source, /save_pending_commit/);
+});
+
+test("WebView CSP never grants arbitrary HTTPS connectivity", () => {
+  const config = JSON.parse(readFileSync(resolve(import.meta.dirname, "../src-tauri/tauri.conf.json"), "utf8"));
+  const connectSource = String(config.app.security.csp).match(/connect-src\s+([^;]+)/i)?.[1] ?? "";
+  assert.doesNotMatch(connectSource, /https:/i);
+  assert.doesNotMatch(connectSource, /(^|\s)\*(\s|$)/);
 });

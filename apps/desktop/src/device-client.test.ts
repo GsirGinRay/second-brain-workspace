@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DeviceClient, normalizeServerOrigin } from "./device-client";
+import { DeviceClient, PublisherHttpError, normalizeServerOrigin } from "./device-client";
 import type { NativeAdapter } from "./ipc";
 
 function native(): NativeAdapter {
@@ -13,6 +13,8 @@ function native(): NativeAdapter {
       assert.equal(request.bodySha256, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
       return { signatureBase64Url: "A".repeat(86) };
     },
+    async publisherHttpRequest() { throw new Error("unused"); },
+    async openPublisherPairing() {},
     async getDiagnostics() { throw new Error("unused"); }, async pickVaultFolder() { return null; }, async selectVault() { throw new Error("unused"); },
     async setAutostart() {}, async setCloseBehavior() {}, async scanVault() { return []; },
     async readMarkdownFiles() { return []; }, async applyMarkdownChanges() { throw new Error("unused"); },
@@ -25,67 +27,111 @@ function native(): NativeAdapter {
 test("server origin requires HTTPS except loopback development", () => {
   assert.equal(normalizeServerOrigin("http://localhost:3000"), "http://localhost:3000");
   assert.throws(() => normalizeServerOrigin("http://brain.example.com"), /HTTPS/);
-  assert.throws(() => normalizeServerOrigin("https://brain.example.com"), /not configured/);
+  assert.equal(normalizeServerOrigin("https://brain.example.com"), "https://brain.example.com");
   assert.throws(() => normalizeServerOrigin("https://user:pass@example.com"), /credentials/);
 });
 
-test("signed client binds request headers and never exposes private key material", async () => {
-  let captured: RequestInit | undefined;
-  const client = new DeviceClient("http://localhost:3000", native(), async (_url, init) => {
-    captured = init;
-    return new Response(JSON.stringify({ revision: 2, pendingCount: 0, lastSyncAt: null }), {
-      status: 200,
-      headers: { "content-type": "application/json", etag: '"brain-2"' },
-    });
-  });
+test("signed client delegates signing and transport to native IPC", async () => {
+  let captured: unknown;
+  const adapter = native();
+  adapter.publisherHttpRequest = async (request) => {
+    captured = request;
+    return { status: 200, headers: { etag: '"brain-2"' }, body: JSON.stringify({ revision: 2, pendingCount: 0, lastSyncAt: null }) };
+  };
+  const client = new DeviceClient("http://localhost:3000", adapter);
   const result = await client.getState(null);
   assert.equal(result.kind, "modified");
-  const headers = new Headers(captured?.headers);
-  assert.equal(headers.get("x-brain-device-id"), "11111111-1111-4111-8111-111111111111");
-  assert.equal(headers.get("x-brain-signature"), "A".repeat(86));
-  assert.equal(headers.has("private-key"), false);
+  assert.deepEqual(captured, {
+    origin: "http://localhost:3000",
+    method: "GET",
+    path: "/api/brain/device/state",
+    body: null,
+    headers: {},
+    signed: true,
+  });
+  assert.doesNotMatch(JSON.stringify(captured), /private|signature|secret/i);
 });
 
-test("default fetcher preserves the browser global receiver", async () => {
-  const originalFetch = globalThis.fetch;
-  let receiverWasGlobal = false;
-  globalThis.fetch = async function (this: typeof globalThis, _input, _init) {
-    receiverWasGlobal = this === globalThis;
-    if (!receiverWasGlobal) throw new TypeError("Illegal invocation");
-    return new Response(JSON.stringify({
+test("pairing uses unsigned native HTTP and opens the allowlisted native page", async () => {
+  const adapter = native();
+  let opened = "";
+  adapter.publisherHttpRequest = async (request) => {
+    assert.equal(request.signed, false);
+    assert.equal(request.path, "/api/brain/device/pair/start");
+    return { status: 201, headers: {}, body: JSON.stringify({
       pairingId: "22222222-2222-4222-8222-222222222222",
       pollingSecret: "secret",
       userCode: "ABCDEFGH",
       expiresAt: "2026-08-12T12:00:00.000Z",
-    }), { status: 201, headers: { "content-type": "application/json" } });
-  } as typeof fetch;
-
-  try {
-    const client = new DeviceClient("http://localhost:3000", native());
-    const result = await client.startPairing("Second Brain Workspace");
-    assert.equal(result.userCode, "ABCDEFGH");
-    assert.equal(receiverWasGlobal, true);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+    }) };
+  };
+  adapter.openPublisherPairing = async (origin, pairingId) => { opened = `${origin}/${pairingId}`; };
+  const client = new DeviceClient("http://localhost:3000", adapter);
+  const result = await client.startPairing("Second Brain Workspace");
+  await client.openPairingPage(result.pairingId);
+  assert.equal(result.userCode, "ABCDEFGH");
+  assert.equal(opened, "http://localhost:3000/22222222-2222-4222-8222-222222222222");
 });
 
-test("permanent task deletion is owner-bound through a signed DELETE request", async () => {
-  let capturedUrl = "";
-  let captured: RequestInit | undefined;
+test("permanent task deletion is owner-bound through a signed native request", async () => {
+  let captured: unknown;
   const signingNative = native();
-  signingNative.signCanonicalRequest = async (request) => {
-    assert.equal(request.method, "DELETE");
-    assert.equal(request.path, "/api/brain/device/tasks/33333333-3333-4333-8333-333333333333");
-    return { signatureBase64Url: "A".repeat(86) };
-  };
-  const client = new DeviceClient("http://localhost:3000", signingNative, async (url, init) => {
-    capturedUrl = String(url);
-    captured = init;
-    return new Response(null, { status: 204 });
-  });
+  signingNative.publisherHttpRequest = async (request) => { captured = request; return { status: 204, headers: {}, body: "" }; };
+  const client = new DeviceClient("http://localhost:3000", signingNative);
   await client.deleteTaskPermanently("33333333-3333-4333-8333-333333333333");
-  assert.equal(capturedUrl, "http://localhost:3000/api/brain/device/tasks/33333333-3333-4333-8333-333333333333");
-  assert.equal(captured?.method, "DELETE");
-  assert.equal(captured?.body, undefined);
+  assert.deepEqual(captured, {
+    origin: "http://localhost:3000", method: "DELETE",
+    path: "/api/brain/device/tasks/33333333-3333-4333-8333-333333333333",
+    body: null, headers: {}, signed: true,
+  });
+});
+
+test("HTTP failures preserve status, server error code, and readable detail", async () => {
+  const adapter = native();
+  adapter.publisherHttpRequest = async () => ({
+    status: 401,
+    headers: {},
+    body: JSON.stringify({ error: { code: "DEVICE_SIGNATURE_INVALID", message: "Device signature was rejected" } }),
+  });
+  const client = new DeviceClient("https://brain.example.com", adapter);
+  await assert.rejects(
+    () => client.getState(null),
+    (error: unknown) => error instanceof PublisherHttpError
+      && error.status === 401
+      && error.code === "DEVICE_SIGNATURE_INVALID"
+      && /HTTP 401/.test(error.message),
+  );
+});
+
+test("sync plan request contains structured fields but no Markdown body or attachment", async () => {
+  const adapter = native();
+  let body = "";
+  adapter.publisherHttpRequest = async (request) => {
+    body = request.body ?? "";
+    return { status: 200, headers: {}, body: JSON.stringify({ planId: "22222222-2222-4222-8222-222222222222", baseRevision: 0, targetRevision: 1, payloadDigest: "b".repeat(64), expiresAt: "2026-08-13T00:00:00.000Z", desiredTasks: [], desiredProjects: [], conflicts: [] }) };
+  };
+  await new DeviceClient("https://brain.example.com", adapter).createPlan({
+    schemaVersion: 3, baseRevision: 0, tasks: [], projects: [], fileHashes: { "notes.md": "a".repeat(64) },
+  });
+  assert.match(body, /fileHashes/);
+  assert.doesNotMatch(body, /bytesBase64|replacementBase64|markdownBody|attachment|privateKey/i);
+});
+
+test("sync commit carries plan choices and idempotency through signed native HTTP", async () => {
+  const adapter = native();
+  let captured: Parameters<NativeAdapter["publisherHttpRequest"]>[0] | undefined;
+  adapter.publisherHttpRequest = async (request) => {
+    captured = request;
+    return { status: 200, headers: {}, body: JSON.stringify({ ok: true }) };
+  };
+  const idempotencyKey = "44444444-4444-4444-8444-444444444444";
+  await new DeviceClient("https://brain.example.com", adapter).commitPlan(
+    "22222222-2222-4222-8222-222222222222",
+    [],
+    idempotencyKey,
+  );
+  assert.equal(captured?.path, "/api/brain/device/sync/commit");
+  assert.equal(captured?.signed, true);
+  assert.equal(captured?.headers["idempotency-key"], idempotencyKey);
+  assert.match(captured?.body ?? "", /22222222-2222-4222-8222-222222222222/);
 });

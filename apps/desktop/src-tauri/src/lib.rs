@@ -5,6 +5,7 @@ pub mod diagnostics;
 pub mod error;
 pub mod key_store;
 pub mod path_policy;
+pub mod publisher;
 pub mod scheduler;
 pub mod state;
 pub mod watcher;
@@ -16,6 +17,7 @@ use crate::diagnostics::{set_autostart, DiagnosticsSnapshot, WindowCloseBehavior
 use crate::error::NativeError;
 use crate::key_store::{KeyStore, PublicIdentity};
 use crate::path_policy::{scan_markdown, validate_vault_root, ScanLimits, ScanResult};
+use crate::publisher::{PublisherHttpRequest, PublisherHttpResponse, PublisherTransport};
 use crate::state::LocalState;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -30,7 +32,6 @@ use tauri::{
     AppHandle, Emitter, Manager, State, WindowEvent,
 };
 
-const SYNC_AGENT_ENABLED: bool = true;
 const MAX_NATIVE_BATCH_FILES: usize = 100_000;
 const MAX_NATIVE_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 
@@ -42,6 +43,7 @@ pub struct AppState {
     autostart_enabled: Mutex<bool>,
     data_dir: PathBuf,
     watcher: Mutex<Option<RecommendedWatcher>>,
+    publisher: PublisherTransport,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -127,6 +129,41 @@ fn sign_canonical_request(
         .map_err(|_| NativeError::KeyStorageUnavailable)?
         .sign(&request)?;
     Ok(serde_json::json!({ "signatureBase64Url": signature_base64_url }))
+}
+
+#[tauri::command]
+async fn publisher_http_request(
+    request: PublisherHttpRequest,
+    state: State<'_, AppState>,
+) -> Result<PublisherHttpResponse, NativeError> {
+    let (identity, signature, canonical) = if request.signed {
+        let canonical = state.publisher.canonical_request(&request)?;
+        let store = state
+            .key_store
+            .lock()
+            .map_err(|_| NativeError::KeyStorageUnavailable)?;
+        (
+            Some(store.public_identity()),
+            Some(store.sign(&canonical)?),
+            Some(canonical),
+        )
+    } else {
+        (None, None, None)
+    };
+    state
+        .publisher
+        .execute(request, identity, signature, canonical)
+        .await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn open_publisher_pairing(
+    origin: String,
+    pairing_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), NativeError> {
+    let url = state.publisher.pairing_url(&origin, &pairing_id)?;
+    open::that_detached(url.as_str()).map_err(|_| NativeError::Io)
 }
 
 #[tauri::command]
@@ -392,7 +429,8 @@ fn diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsSnapshot, Native
         .map_err(|_| NativeError::KeyStorageUnavailable)?
         .public_identity();
     let mut snapshot = DiagnosticsSnapshot::disabled(&identity);
-    snapshot.sync_enabled = SYNC_AGENT_ENABLED;
+    snapshot.publisher_origin = state.publisher.private_origin();
+    snapshot.sync_enabled = snapshot.publisher_origin.is_some();
     snapshot.watcher_status = if state.watcher.lock().map_err(|_| NativeError::Io)?.is_some() {
         "watching".to_owned()
     } else {
@@ -501,6 +539,8 @@ pub fn run() -> tauri::Result<()> {
             let watcher = selected_vault
                 .as_ref()
                 .and_then(|root| start_watcher(app.handle(), root).ok());
+            let publisher = PublisherTransport::from_compiled_profile()
+                .map_err(|_| std::io::Error::other("invalid Publisher build profile"))?;
             app.manage(AppState {
                 key_store: Mutex::new(key_store),
                 local_state,
@@ -509,6 +549,7 @@ pub fn run() -> tauri::Result<()> {
                 autostart_enabled: Mutex::new(false),
                 data_dir,
                 watcher: Mutex::new(watcher),
+                publisher,
             });
             build_tray(app.handle())?;
             Ok(())
@@ -517,6 +558,8 @@ pub fn run() -> tauri::Result<()> {
             device_identity,
             complete_device_pairing,
             sign_canonical_request,
+            publisher_http_request,
+            open_publisher_pairing,
             pick_vault_folder,
             select_vault,
             scan_vault,
