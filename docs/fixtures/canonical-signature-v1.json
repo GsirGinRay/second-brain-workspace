@@ -1,0 +1,18 @@
+{
+  "description": "Public deterministic Ed25519 test vector; never use this key as a credential",
+  "algorithm": "Ed25519",
+  "testSeedHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "publicKeyBase64Url": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "request": {
+    "method": "POST",
+    "path": "/api/brain/device/sync/commit",
+    "query": "",
+    "timestamp": "1786416000",
+    "nonce": "AAECAwQFBgcICQoLDA0ODw",
+    "contentType": "application/json",
+    "rawBodyUtf8": "{\"planId\":\"66666666-6666-4666-8666-666666666666\",\"idempotencyKey\":\"77777777-7777-4777-8777-777777777777\",\"conflictChoices\":[]}",
+    "bodySha256": "e46c0800c1af2f2d2fa63bd7cff00c3552d2fa85de1cbbeecfa19ebf28c434c5"
+  },
+  "canonicalUtf8": "v1\nPOST\n/api/brain/device/sync/commit\n\n1786416000\nAAECAwQFBgcICQoLDA0ODw\napplication/json\ne46c0800c1af2f2d2fa63bd7cff00c3552d2fa85de1cbbeecfa19ebf28c434c5",
+  "signatureBase64Url": "9yZJgeeNC2-h1nSSUEMy7xwZTJDuUjXX2BsMC3XdNXcfg_JjcgeOBCXPrOrKkG74sjUtjqiCLKEMqpwZVj3OBw"
+}

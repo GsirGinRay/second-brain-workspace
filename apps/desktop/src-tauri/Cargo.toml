@@ -1,0 +1,54 @@
+[package]
+name = "second-brain-workspace"
+version = "0.1.0"
+description = "Native local-first second brain workspace"
+authors = ["Second Brain Workspace"]
+edition = "2021"
+rust-version = "1.77"
+build = "build.rs"
+
+[lib]
+name = "second_brain_workspace_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "second-brain-workspace"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.5.5", features = [] }
+
+[dependencies]
+base64 = "0.22.1"
+hex = "0.4.3"
+ring = "0.17.14"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+tauri = { version = "2.10.2", features = ["tray-icon"] }
+thiserror = "2.0.18"
+uuid = { version = "1.20.0", features = ["v4", "serde"] }
+zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+zeroize = "1.8.2"
+notify = "8.2.0"
+rfd = "0.15.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Registry",
+  "Win32_System_Memory",
+] }
+winreg = "0.55.0"
+
+[dev-dependencies]
+tempfile = "3.25.0"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

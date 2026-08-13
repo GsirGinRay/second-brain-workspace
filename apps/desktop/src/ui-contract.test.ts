@@ -1,0 +1,56 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import test from "node:test";
+
+const app = () => readFileSync(resolve(import.meta.dirname, "App.tsx"), "utf8");
+const css = () => readFileSync(resolve(import.meta.dirname, "styles.css"), "utf8");
+
+test("desktop includes today, calendar, board, projects and settings views", () => {
+  const source = app();
+  for (const view of ["today", "calendar", "board", "projects", "sync"])
+    assert.match(source, new RegExp(`\\b${view}\\b`));
+  assert.match(source, /calendar-task-title/);
+  assert.match(source, /most-important/);
+  assert.match(source, /vault-changed/);
+});
+
+test("desktop supports quick add, editing, task actions and readable icons", () => {
+  const source = app();
+  for (const icon of [
+    "Archive", "Trash2", "CheckCircle2", "RefreshCw", "Plus", "Pencil",
+    "Star", "Menu", "Eye", "Save", "RotateCcw",
+  ]) assert.match(source, new RegExp(`<${icon}\\b`));
+  assert.match(source, /<TaskEditor/);
+  assert.match(source, /deleteTaskPermanently/);
+  assert.match(source, /markMostImportant/);
+});
+
+test("desktop calendar and board expose the task editor", () => {
+  const source = app();
+  assert.match(source, /<Board[\s\S]*projects=\{projects\}/);
+  assert.match(source, /<Calendar[\s\S]*projects=\{projects\}/);
+  assert.match(source, /<TaskEditor[\s\S]*task=\{task\}[\s\S]*projects=\{projects\}/);
+});
+
+test("completed tasks are hidden by default and the preference is local", () => {
+  const source = app();
+  assert.match(source, /second-brain\.showCompletedTasks/);
+  assert.match(source, /filterCompletedTasks/);
+  assert.match(css(), /text-decoration:\s*line-through/);
+});
+
+test("theme is monochrome with red reserved for important and destructive actions", () => {
+  const styles = css();
+  assert.match(styles, /--accent-red:/);
+  assert.match(styles, /\.task-card\.most-important/);
+  assert.match(styles, /\.calendar-task-title\.most-important/);
+  assert.match(styles, /\.danger/);
+});
+
+test("remote cloud access is absent from the default Tauri CSP", () => {
+  const config = readFileSync(resolve(import.meta.dirname, "../src-tauri/tauri.conf.json"), "utf8");
+  assert.doesNotMatch(config, /gsir\.zeabur\.app/);
+  assert.doesNotMatch(config, /connect-src[^;]*\shttps:/);
+  assert.match(config, /http:\/\/localhost:\*/);
+});

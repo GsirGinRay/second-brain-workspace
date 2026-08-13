@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Least-privilege desktop capability; filesystem and shell plugins are intentionally absent.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

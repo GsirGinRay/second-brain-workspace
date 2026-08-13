@@ -1,0 +1,644 @@
+import type {
+  BrainProjectSnapshot,
+  BrainTaskSnapshot,
+  ParsedMarkdownTask,
+  ParsedProjectFrontmatter,
+  TaskLineInput,
+  TaskPriority,
+  TaskStatus,
+} from "./types";
+
+export type TaskTokenKind =
+  | "dueDate"
+  | "plannedDate"
+  | "completedAt"
+  | "priority"
+  | "project";
+
+export interface TaskTokenSpan {
+  kind: TaskTokenKind;
+  start: number;
+  end: number;
+  valueStart: number;
+  valueEnd: number;
+  value?: string;
+}
+
+interface MarkerSpan {
+  start: number;
+  end: number;
+  jsonStart: number;
+  jsonEnd: number;
+  value: Record<string, unknown>;
+}
+
+interface TaskLineAnalysis {
+  rawLine: string;
+  body: string;
+  bodyStart: number;
+  bodyEnd: number;
+  checkboxStart: number;
+  checkbox: string;
+  tokenSpans: TaskTokenSpan[];
+  marker: MarkerSpan | null;
+  blockIdStart: number | null;
+  projectSpan: TaskTokenSpan | null;
+  priority: TaskPriority;
+}
+
+interface Edit {
+  start: number;
+  end: number;
+  replacement: string;
+}
+
+const PRIORITY_TO_TOKEN: Record<TaskPriority, string> = {
+  highest: "\u{1F53A}",
+  high: "\u{23EB}",
+  medium: "\u{1F53C}",
+  normal: "",
+  low: "\u{1F53D}",
+};
+
+const TOKEN_TO_PRIORITY: Record<string, TaskPriority> = {
+  "\u{1F53A}": "highest",
+  "\u{23EB}": "high",
+  "\u{1F53C}": "medium",
+  "\u{1F53D}": "low",
+};
+
+const VALID_STATUSES = new Set<TaskStatus>(["todo", "doing", "waiting", "done"]);
+
+function parseMarker(value: string | undefined): Partial<BrainTaskSnapshot> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return {
+      ...(typeof parsed.id === "string" && parsed.id ? { id: parsed.id } : {}),
+      ...(typeof parsed.rank === "string" ? { rank: parsed.rank } : {}),
+      ...(typeof parsed.status === "string" &&
+      VALID_STATUSES.has(parsed.status as TaskStatus)
+        ? { status: parsed.status as TaskStatus }
+        : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function findDateSpans(
+  body: string,
+  bodyStart: number,
+  icon: string,
+  kind: TaskTokenKind,
+): TaskTokenSpan[] {
+  const spans: TaskTokenSpan[] = [];
+  const expression = new RegExp(
+    icon + "\\s*(\\d{4}-\\d{2}-\\d{2})(?=\\s|$)",
+    "gu",
+  );
+  for (const match of body.matchAll(expression)) {
+    const start = match.index ?? 0;
+    const valueOffset = match[0].indexOf(match[1]);
+    spans.push({
+      kind,
+      start: bodyStart + start,
+      end: bodyStart + start + match[0].length,
+      valueStart: bodyStart + start + valueOffset,
+      valueEnd: bodyStart + start + valueOffset + match[1].length,
+      value: match[1],
+    });
+  }
+  return spans;
+}
+
+function analyzeTaskLine(rawLine: string): TaskLineAnalysis | null {
+  const bomOffset = rawLine.startsWith("\uFEFF") ? 1 : 0;
+  const normalizedLine = rawLine.slice(bomOffset);
+  const header = normalizedLine.match(/^(\s*-\s*\[)([ xX])\]/);
+  if (!header) return null;
+  const taskPrefix = normalizedLine.match(/^\s*-\s*\[[ xX]\]\s+#task\b\s*/);
+  if (!taskPrefix) return null;
+  const bodyStart = bomOffset + taskPrefix[0].length;
+  let bodyEnd = rawLine.length;
+  while (bodyEnd > bodyStart && /\s/u.test(rawLine[bodyEnd - 1])) bodyEnd -= 1;
+  const body = rawLine.slice(bodyStart, bodyEnd);
+  const tokenSpans = [
+    ...findDateSpans(body, bodyStart, "\u{1F4C5}", "dueDate"),
+    ...findDateSpans(body, bodyStart, "\u{23F3}", "plannedDate"),
+    ...findDateSpans(body, bodyStart, "\u2705", "completedAt"),
+  ];
+
+  const priorityEntries = Object.entries(TOKEN_TO_PRIORITY);
+  for (const [token, priority] of priorityEntries) {
+    const expression = new RegExp(
+      "(?:^|\\s)(" + token + ")(?=\\s|$)",
+      "gu",
+    );
+    const match = expression.exec(body);
+    if (match) {
+      const start = match.index + match[0].indexOf(token);
+      tokenSpans.push({
+        kind: "priority",
+        start: bodyStart + start,
+        end: bodyStart + start + token.length,
+        valueStart: bodyStart + start,
+        valueEnd: bodyStart + start + token.length,
+        value: token,
+      });
+      break;
+    }
+  }
+
+  const wikilinks = [...body.matchAll(/\[\[([^\]\n]+)\]\]/g)];
+  const lastWikilink = wikilinks.at(-1);
+  const projectSpan = lastWikilink
+    ? {
+        kind: "project" as const,
+        start: bodyStart + (lastWikilink.index ?? 0),
+        end:
+          bodyStart +
+          (lastWikilink.index ?? 0) +
+          lastWikilink[0].length,
+        valueStart:
+          bodyStart +
+          (lastWikilink.index ?? 0) +
+          lastWikilink[0].indexOf(lastWikilink[1]),
+        valueEnd:
+          bodyStart +
+          (lastWikilink.index ?? 0) +
+          lastWikilink[0].indexOf(lastWikilink[1]) +
+          lastWikilink[1].length,
+        value: lastWikilink[1],
+      }
+    : null;
+  if (projectSpan) tokenSpans.push(projectSpan);
+
+  const markerMatch = body.match(
+    /<!--\s*publisher-task:(\{[\s\S]*?\})\s*-->/,
+  );
+  const marker = markerMatch
+    ? {
+        start: bodyStart + (markerMatch.index ?? 0),
+        end: bodyStart + (markerMatch.index ?? 0) + markerMatch[0].length,
+        jsonStart:
+          bodyStart +
+          (markerMatch.index ?? 0) +
+          markerMatch[0].indexOf(markerMatch[1]),
+        jsonEnd:
+          bodyStart +
+          (markerMatch.index ?? 0) +
+          markerMatch[0].indexOf(markerMatch[1]) +
+          markerMatch[1].length,
+        value: (() => {
+          try {
+            return JSON.parse(markerMatch[1]) as Record<string, unknown>;
+          } catch {
+            return {};
+          }
+        })(),
+      }
+    : null;
+  const blockIdMatch = body.match(/\s+\^[A-Za-z0-9][A-Za-z0-9_-]*(?=\s|$)/);
+
+  return {
+    rawLine,
+    body,
+    bodyStart,
+    bodyEnd,
+    checkboxStart: bomOffset + header[1].length,
+    checkbox: header[2],
+    tokenSpans: tokenSpans.sort((left, right) => left.start - right.start),
+    marker,
+    blockIdStart: blockIdMatch
+      ? bodyStart + (blockIdMatch.index ?? 0)
+      : null,
+    projectSpan,
+    priority:
+      tokenSpans.find((span) => span.kind === "priority")?.value
+        ? TOKEN_TO_PRIORITY[
+            tokenSpans.find((span) => span.kind === "priority")?.value ?? ""
+          ]
+        : "normal",
+  };
+}
+
+function replaceRanges(source: string, ranges: Array<{ start: number; end: number }>): string {
+  let result = source;
+  for (const range of [...ranges].sort((left, right) => right.start - left.start)) {
+    result = result.slice(0, range.start) + " " + result.slice(range.end);
+  }
+  return result;
+}
+
+function parsedTaskFromAnalysis(
+  analysis: TaskLineAnalysis,
+  sourcePath: string,
+  lineIndex: number,
+): ParsedMarkdownTask {
+  const markerRange = analysis.marker
+    ? [{ start: analysis.marker.start, end: analysis.marker.end }]
+    : [];
+  const tokenRanges = analysis.tokenSpans
+    .filter((span) => span.kind !== "project")
+    .map((span) => ({ start: span.start, end: span.end }));
+  const projectRange = analysis.projectSpan
+    ? [{ start: analysis.projectSpan.start, end: analysis.projectSpan.end }]
+    : [];
+  const titleBody = replaceRanges(
+    analysis.rawLine.slice(analysis.bodyStart, analysis.bodyEnd),
+    [
+      ...markerRange.map((range) => ({
+        start: range.start - analysis.bodyStart,
+        end: range.end - analysis.bodyStart,
+      })),
+      ...tokenRanges.map((range) => ({
+        start: range.start - analysis.bodyStart,
+        end: range.end - analysis.bodyStart,
+      })),
+      ...projectRange.map((range) => ({
+        start: range.start - analysis.bodyStart,
+        end: range.end - analysis.bodyStart,
+      })),
+    ],
+  );
+  const markerValues = analysis.marker
+    ? parseMarker(JSON.stringify(analysis.marker.value))
+    : {};
+  const status: TaskStatus =
+    analysis.checkbox.toLowerCase() === "x"
+      ? "done"
+      : markerValues.status ?? "todo";
+  const dateValue = (kind: TaskTokenKind) =>
+    analysis.tokenSpans.find((span) => span.kind === kind)?.value ?? null;
+  return {
+    id: markerValues.id ?? null,
+    title: titleBody.replace(/\s+/g, " ").trim(),
+    status,
+    taskDate: dateValue("plannedDate") ?? dateValue("dueDate"),
+    priority: analysis.priority,
+    projectId: null,
+    projectName: analysis.projectSpan?.value ?? null,
+    rank: markerValues.rank ?? "",
+    sourcePath,
+    sourceHeading: null,
+    completedAt: dateValue("completedAt"),
+    lineIndex,
+    rawLine: analysis.rawLine,
+  };
+}
+
+export function parseTaskLine(
+  line: string,
+  sourcePath: string,
+  lineIndex: number,
+): ParsedMarkdownTask | null {
+  const analysis = analyzeTaskLine(line);
+  return analysis ? parsedTaskFromAnalysis(analysis, sourcePath, lineIndex) : null;
+}
+
+export function formatTaskLine(task: TaskLineInput): string {
+  const parts = [
+    "- [" + (task.status === "done" ? "x" : " ") + "] #task",
+    task.title.trim() || "(無標題)",
+  ];
+  if (task.projectName) parts.push("[[" + task.projectName + "]]");
+  const priority = PRIORITY_TO_TOKEN[task.priority];
+  if (priority) parts.push(priority);
+  const taskDate = task.taskDate ?? task.plannedDate ?? task.dueDate ?? null;
+  if (taskDate) parts.push("\u{23F3} " + taskDate);
+  if (task.status === "done" && task.completedAt) {
+    parts.push("\u2705 " + task.completedAt);
+  }
+  parts.push(
+    "<!-- publisher-task:" +
+      JSON.stringify({
+        id: task.id,
+        status: task.status,
+        rank: task.rank,
+      }) +
+      " -->",
+  );
+  return parts.join(" ");
+}
+
+function findSpan(
+  analysis: TaskLineAnalysis,
+  kind: TaskTokenKind,
+): TaskTokenSpan | undefined {
+  return analysis.tokenSpans.find((span) => span.kind === kind);
+}
+
+function removeSpan(rawLine: string, span: TaskTokenSpan): Edit {
+  let start = span.start;
+  let end = span.end;
+  if (start > 0 && /\s/u.test(rawLine[start - 1])) start -= 1;
+  else if (end < rawLine.length && /\s/u.test(rawLine[end])) end += 1;
+  return { start, end, replacement: "" };
+}
+
+function tokenInsertionPoint(analysis: TaskLineAnalysis): number {
+  return Math.min(
+    analysis.marker?.start ?? analysis.bodyEnd,
+    analysis.blockIdStart ?? analysis.bodyEnd,
+  );
+}
+
+function addTokenEdit(
+  rawLine: string,
+  analysis: TaskLineAnalysis,
+  token: string,
+): Edit {
+  const start = tokenInsertionPoint(analysis);
+  const before = rawLine[start - 1];
+  const after = rawLine[start];
+  const prefix = before && !/\s/u.test(before) ? " " : "";
+  const suffix = after && !/\s/u.test(after) ? " " : "";
+  return { start, end: start, replacement: prefix + token + suffix };
+}
+
+function markerFieldEdit(
+  rawLine: string,
+  marker: MarkerSpan,
+  key: string,
+  value: string | null,
+): Edit | null {
+  const json = rawLine.slice(marker.jsonStart, marker.jsonEnd);
+  const expression = new RegExp(
+    '("' +
+      key +
+      '"\\s*:\\s*)(("(?:\\\\.|[^"\\\\])*")|null)',
+  );
+  const match = expression.exec(json);
+  if (!match) return null;
+  const start = marker.jsonStart + match.index + match[1].length;
+  return { start, end: start + match[2].length, replacement: JSON.stringify(value) };
+}
+
+function patchMarker(
+  rawLine: string,
+  analysis: TaskLineAnalysis,
+  current: ParsedMarkdownTask,
+  desired: TaskLineInput,
+): Edit[] {
+  const values: Record<string, string | null> = {
+    id: desired.id,
+    status: desired.status,
+    rank: desired.rank,
+  };
+  if (analysis.marker) {
+    const edits: Edit[] = [];
+    for (const [key, value] of Object.entries(values)) {
+      const currentValue = analysis.marker.value[key];
+      if (currentValue === value) continue;
+      const edit = markerFieldEdit(rawLine, analysis.marker, key, value);
+      if (edit) edits.push(edit);
+      else {
+        const json = rawLine.slice(analysis.marker.jsonStart, analysis.marker.jsonEnd);
+        const parsed = { ...analysis.marker.value, [key]: value };
+        edits.push({
+          start: analysis.marker.jsonStart,
+          end: analysis.marker.jsonEnd,
+          replacement: JSON.stringify(parsed),
+        });
+        break;
+      }
+    }
+    return edits;
+  }
+  if (
+    desired.id === current.id &&
+    desired.status === current.status &&
+    desired.rank === current.rank
+  ) {
+    return [];
+  }
+  return [
+    {
+      start: tokenInsertionPoint(analysis),
+      end: tokenInsertionPoint(analysis),
+      replacement:
+        (rawLine[tokenInsertionPoint(analysis) - 1] &&
+        !/\s/u.test(rawLine[tokenInsertionPoint(analysis) - 1])
+          ? " "
+          : "") +
+        "<!-- publisher-task:" +
+        JSON.stringify(values) +
+        " -->",
+    },
+  ];
+}
+
+function patchDate(
+  rawLine: string,
+  analysis: TaskLineAnalysis,
+  kind: TaskTokenKind,
+  icon: string,
+  currentValue: string | null,
+  desiredValue: string | null | undefined,
+): Edit | null {
+  if (desiredValue === undefined || desiredValue === currentValue) return null;
+  const span = findSpan(analysis, kind);
+  if (span && desiredValue) {
+    return {
+      start: span.valueStart,
+      end: span.valueEnd,
+      replacement: desiredValue,
+    };
+  }
+  if (span) return removeSpan(rawLine, span);
+  if (desiredValue) return addTokenEdit(rawLine, analysis, icon + " " + desiredValue);
+  return null;
+}
+
+function applyEdits(rawLine: string, edits: Edit[]): string {
+  const ordered = [...edits]
+    .filter((edit) => edit.start <= edit.end)
+    .sort((left, right) => right.start - left.start);
+  let output = rawLine;
+  for (const edit of ordered) {
+    output = output.slice(0, edit.start) + edit.replacement + output.slice(edit.end);
+  }
+  return output;
+}
+
+export function patchTaskLine(
+  rawOrParsed: string | Pick<ParsedMarkdownTask, "rawLine">,
+  desired: TaskLineInput,
+): string {
+  const rawLine = typeof rawOrParsed === "string" ? rawOrParsed : rawOrParsed.rawLine;
+  const analysis = analyzeTaskLine(rawLine);
+  if (!analysis) return rawLine;
+  const current = parsedTaskFromAnalysis(analysis, "", -1);
+  const edits: Edit[] = [];
+  const checked = desired.status === "done" ? "x" : " ";
+  if (analysis.checkbox.toLowerCase() !== checked) {
+    edits.push({ start: analysis.checkboxStart, end: analysis.checkboxStart + 1, replacement: checked });
+  }
+  const desiredTaskDate = desired.taskDate ?? desired.plannedDate ?? desired.dueDate ?? null;
+  // V3 has one task date. Always remove the legacy due token during a write.
+  const dueSpan = findSpan(analysis, "dueDate");
+  const plannedSpan = findSpan(analysis, "plannedDate");
+  if (!plannedSpan && dueSpan && desiredTaskDate) {
+    edits.push({ start: dueSpan.start, end: dueSpan.end, replacement: `\u{23F3} ${desiredTaskDate}` });
+  } else {
+    if (dueSpan) edits.push(removeSpan(rawLine, dueSpan));
+    const plannedEdit = patchDate(rawLine, analysis, "plannedDate", "\u{23F3}", current.plannedDate ?? null, desiredTaskDate);
+    if (plannedEdit) edits.push(plannedEdit);
+  }
+  const completedShouldChange =
+    desired.completedAt !== current.completedAt ||
+    (desired.status === "done" && desired.completedAt !== null);
+  if (completedShouldChange) {
+    const completedEdit = patchDate(
+      rawLine,
+      analysis,
+      "completedAt",
+      "\u2705",
+      current.completedAt,
+      desired.completedAt,
+    );
+    if (completedEdit) edits.push(completedEdit);
+  }
+
+  if (desired.priority !== current.priority) {
+    const span = findSpan(analysis, "priority");
+    if (span && desired.priority === "normal") edits.push(removeSpan(rawLine, span));
+    else if (span) {
+      edits.push({
+        start: span.start,
+        end: span.end,
+        replacement: PRIORITY_TO_TOKEN[desired.priority],
+      });
+    } else if (desired.priority !== "normal") {
+      edits.push(addTokenEdit(rawLine, analysis, PRIORITY_TO_TOKEN[desired.priority]));
+    }
+  }
+
+  if (desired.projectName !== current.projectName) {
+    if (analysis.projectSpan && desired.projectName) {
+      edits.push({
+        start: analysis.projectSpan.valueStart,
+        end: analysis.projectSpan.valueEnd,
+        replacement: desired.projectName,
+      });
+    } else if (analysis.projectSpan) {
+      edits.push(removeSpan(rawLine, analysis.projectSpan));
+    } else if (desired.projectName) {
+      edits.push(addTokenEdit(rawLine, analysis, "[[" + desired.projectName + "]]"));
+    }
+  }
+
+  edits.push(...patchMarker(rawLine, analysis, current, desired));
+
+  if (desired.title !== current.title) {
+    const firstToken = analysis.tokenSpans
+      .map((span) => span.start)
+      .concat(
+        analysis.marker?.start ?? [],
+        analysis.blockIdStart ?? [],
+      )
+      .filter((position) => position >= analysis.bodyStart)
+      .sort((left, right) => left - right)[0];
+    const titleEnd = firstToken ?? analysis.bodyEnd;
+    const titleStart = analysis.bodyStart + (rawLine.slice(analysis.bodyStart, titleEnd).match(/^\s*/)?.[0].length ?? 0);
+    edits.push({ start: titleStart, end: titleEnd, replacement: desired.title });
+  }
+
+  return edits.length ? applyEdits(rawLine, edits) : rawLine;
+}
+
+export const patchTaskLineMinimal = patchTaskLine;
+
+function parseScalar(value: string): string | number | boolean | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  return trimmed.replace(/^['"]|['"]$/g, "");
+}
+
+function stringifyScalar(value: string | number | boolean | null): string {
+  if (value === null) return "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return String(value);
+}
+
+export function parseProjectFrontmatter(
+  source: string,
+  sourcePath: string,
+): ParsedProjectFrontmatter | null {
+  const content = source.startsWith("\uFEFF") ? source.slice(1) : source;
+  const lines = content.split(/\r?\n/);
+  if (lines[0] !== "---") return null;
+  const closing = lines.findIndex((line, index) => index > 0 && line === "---");
+  if (closing < 0) return null;
+  const values = new Map<string, string | number | boolean | null>();
+  for (const line of lines.slice(1, closing)) {
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (match) values.set(match[1], parseScalar(match[2]));
+  }
+  if (values.get("type") !== "project") return null;
+  const heading = lines
+    .slice(closing + 1)
+    .find((line) => /^#\s+/.test(line))
+    ?.replace(/^#\s+/, "")
+    .trim();
+  if (!heading) return null;
+  return {
+    id:
+      typeof values.get("publisher_id") === "string"
+        ? (values.get("publisher_id") as string)
+        : null,
+    name: heading,
+    sourcePath,
+    status: String(values.get("status") ?? "active"),
+    area: values.get("area") == null ? null : String(values.get("area")),
+    priority:
+      typeof values.get("priority") === "number"
+        ? (values.get("priority") as number)
+        : null,
+    progress:
+      typeof values.get("progress") === "number"
+        ? (values.get("progress") as number)
+        : null,
+    focusToday: values.get("focus_today") === true,
+    startDate:
+      values.get("start_date") == null ? null : String(values.get("start_date")),
+    endDate:
+      values.get("end_date") == null
+        ? values.get("target_date") == null
+          ? null
+          : String(values.get("target_date"))
+        : String(values.get("end_date")),
+    frontmatterStart: 0,
+    frontmatterEnd: closing,
+  };
+}
+
+export function updateProjectFrontmatter(
+  source: string,
+  updates: Record<string, string | number | boolean | null>,
+): string {
+  if (Object.keys(updates).length === 0) return source;
+  const bom = source.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const content = bom ? source.slice(1) : source;
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  if (lines[0] !== "---") return source;
+  const closing = lines.findIndex((line, index) => index > 0 && line === "---");
+  if (closing < 0) return source;
+  for (const [key, value] of Object.entries(updates)) {
+    const line = key + ": " + stringifyScalar(value);
+    const index = lines.findIndex(
+      (candidate, lineIndex) =>
+        lineIndex > 0 &&
+        lineIndex < closing &&
+        candidate.startsWith(key + ":"),
+    );
+    if (index >= 0) lines[index] = line;
+    else lines.splice(closing, 0, line);
+  }
+  return bom + lines.join(newline);
+}
