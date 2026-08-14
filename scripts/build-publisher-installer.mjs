@@ -5,6 +5,11 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const profilePath = resolve(root, "apps/desktop/private/publisher-profile.json");
 const profile = JSON.parse(readFileSync(profilePath, "utf8"));
+const tauriProfilePath = resolve(
+  root,
+  "apps/desktop/private/publisher-profile.tauri.json",
+);
+const tauriProfile = JSON.parse(readFileSync(tauriProfilePath, "utf8"));
 const origin = new URL(profile.publisherOrigin);
 
 if (
@@ -14,6 +19,15 @@ if (
   || origin.password
 ) {
   throw new Error("publisherOrigin must be an exact credential-free HTTPS origin");
+}
+
+const mainWindow = tauriProfile.app?.windows?.find(
+  (windowConfig) => windowConfig.label === "main",
+);
+if (!mainWindow || mainWindow.dragDropEnabled !== false) {
+  throw new Error(
+    "private Publisher main window must set dragDropEnabled to false for Windows HTML5 task drag and drop",
+  );
 }
 
 const npmCli = process.env.npm_execpath;

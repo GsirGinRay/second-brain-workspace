@@ -12,6 +12,21 @@ const tauriConfig = () =>
       "utf8",
     ),
   ) as { app?: { windows?: Array<{ dragDropEnabled?: boolean }> } };
+const publisherTauriExample = () =>
+  JSON.parse(
+    readFileSync(
+      resolve(
+        import.meta.dirname,
+        "../private/publisher-profile.tauri.example.json",
+      ),
+      "utf8",
+    ),
+  ) as { app?: { windows?: Array<{ dragDropEnabled?: boolean }> } };
+const publisherInstallerScript = () =>
+  readFileSync(
+    resolve(import.meta.dirname, "../../../scripts/build-publisher-installer.mjs"),
+    "utf8",
+  );
 
 test("desktop includes today, calendar, board, projects and settings views", () => {
   const source = app();
@@ -61,6 +76,17 @@ test("Windows WebView permits HTML task drag and carries the task id through dat
   assert.equal(tauriConfig().app?.windows?.[0]?.dragDropEnabled, false);
   assert.match(source, /dataTransfer\.setData\("text\/plain"/);
   assert.match(source, /dataTransfer\.getData\("text\/plain"\)/);
+});
+
+test("private Publisher builds cannot override the Windows HTML drag setting", () => {
+  assert.equal(
+    publisherTauriExample().app?.windows?.[0]?.dragDropEnabled,
+    false,
+  );
+  assert.match(
+    publisherInstallerScript(),
+    /dragDropEnabled\s*!==\s*false/,
+  );
 });
 
 test("calendar drag feedback dims the source day, raises the task, and marks the drop target", () => {
