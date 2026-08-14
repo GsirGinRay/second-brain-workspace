@@ -139,6 +139,17 @@ test("task actions are compact accessible icons and permanent delete is never ar
   assert.match(source, /className="agenda-drag-handle"[\s\S]{0,160}draggable/);
 });
 
+test("today command center makes the daily template visible and understandable", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /className="routine-template-card"/);
+  assert.match(source, /每日任務模板/);
+  assert.match(source, /啟用項目/);
+  assert.match(source, /管理模板/);
+  assert.match(styles, /\.routine-template-card/);
+  assert.match(styles, /\.routine-template-action/);
+});
+
 test("desktop exposes global task and project search with keyboard shortcuts", () => {
   const source = app();
   assert.match(source, /WorkspaceSearch/);

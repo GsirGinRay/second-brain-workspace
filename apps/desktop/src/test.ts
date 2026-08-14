@@ -6,3 +6,4 @@ import "./device-client.test";
 import "./sync-engine.test";
 import "./ui-contract.test";
 import "./task-actions.test";
+import "./task-deletion.test";

@@ -54,6 +54,7 @@ import {
   type NativeAdapter,
 } from "./ipc";
 import { SyncEngine, type SyncResult } from "./sync-engine";
+import { deleteTaskLocalFirst } from "./task-deletion";
 import {
   archiveTask,
   boardLane,
@@ -427,7 +428,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   async function persistLocal(
     nextTasks: BrainTaskSnapshot[],
     nextProjects = projects,
-  ) {
+  ): Promise<boolean> {
     const changes = applyDesiredSnapshot(files, {
       schemaVersion: 5,
       tasks: nextTasks,
@@ -437,7 +438,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     if (changes.length === 0) {
       setTasks(nextTasks);
       setProjects(nextProjects);
-      return;
+      return true;
     }
     setWorking(true);
     setError("");
@@ -446,10 +447,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setStatus("已儲存在本機 · 等待同步");
       await reloadLocal();
       window.setTimeout(() => void runSync({ background: true }), 50);
+      return true;
     } catch (cause) {
       setError(
         `本機寫入失敗：${cause instanceof Error ? cause.message : "WRITE_FAILED"}`,
       );
+      return false;
     } finally {
       setWorking(false);
     }
@@ -468,17 +471,26 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       return;
     setWorking(true);
     setError("");
-    try {
-      if (client && task.id) await client.deleteTaskPermanently(task.id);
-      await persistLocal(tasks.filter((item) => item.id !== task.id));
-      setStatus(client ? "任務已從雲端與本機 Markdown 永久刪除" : "任務已從本機 Markdown 永久刪除");
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "DELETE_FAILED";
-      setError(`永久刪除失敗，尚未刪除本機資料：${message}`);
-      if (/401|DEVICE_|AUTH/i.test(message)) setDevicePaired(false);
-    } finally {
+    const outcome = await deleteTaskLocalFirst({
+      deleteLocal: () => persistLocal(tasks.filter((item) => task.id ? item.id !== task.id : item !== task)),
+      deleteRemote: client && task.id ? () => client.deleteTaskPermanently(task.id!) : undefined,
+    });
+    if (!outcome.localDeleted) {
       setWorking(false);
+      return;
     }
+    if (outcome.remoteDeleted === false) {
+      setError(
+        outcome.needsPairing
+          ? "本機任務已刪除；Publisher 裝置授權已失效，請到「同步與設定」重新配對，遠端變更會在之後同步。"
+          : `本機任務已刪除；Publisher 尚未刪除：${outcome.remoteError ?? "DELETE_FAILED"}`,
+      );
+      if (outcome.needsPairing) setDevicePaired(false);
+      setStatus("本機 Markdown 已安全刪除 · 遠端待同步");
+    } else {
+      setStatus(outcome.remoteDeleted ? "任務已從雲端與本機 Markdown 永久刪除" : "任務已從本機 Markdown 永久刪除");
+    }
+    setWorking(false);
   }
 
   async function selectVault(path = vaultInput) {
@@ -1115,10 +1127,17 @@ function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuickAdd, r
     setDraggedItem(null);
   };
   const important = groups.today.find((task) => task.priority === "highest") ?? null;
+  const enabledRoutineItems = routineTemplate.items.filter((item) => item.enabled);
+  const scheduledRoutineItems = enabledRoutineItems.filter((item) => item.startTime);
   return <section className="command-center">
     <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>安排精力，而不只是塞滿行程</h2><p>先選出今天最重要的事，再把低耗能工作留給下午。</p></div><button className="primary start-day-button" onClick={startToday}><Plus />開始今天</button></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
-    <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article><button className="template-settings-button" onClick={() => setTemplateOpen((open) => !open)}><Settings2 />編輯每日模板</button></div>
+    <section className="routine-template-card" aria-label="每日任務模板">
+      <div className="routine-template-icon"><Settings2 /></div>
+      <div><span className="eyebrow">每日任務模板</span><strong>{routineTemplate.name}</strong><small>{enabledRoutineItems.length} 個啟用項目 · {scheduledRoutineItems.length} 個已排時間</small></div>
+      <button className="routine-template-action" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{templateOpen ? "收合模板" : "管理模板"}</button>
+    </section>
+    <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article></div>
     {templateOpen && <section className="routine-editor"><header><div><span className="eyebrow">DAILY ROUTINE</span><input aria-label="模板名稱" value={routineTemplate.name} onChange={(event) => onRoutineTemplateChange({ ...routineTemplate, name: event.target.value })} /></div><button onClick={() => setTemplateOpen(false)} aria-label="關閉模板"><X /></button></header><div className="routine-items">{routineTemplate.items.map((item) => <article key={item.id} draggable onDragStart={() => setDraggedItem(item.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropItem(item.id)}><GripVertical /><input type="checkbox" aria-label={`${item.title}啟用`} checked={item.enabled} onChange={(event) => updateItem(item.id, { enabled: event.target.checked })} /><input aria-label="例行任務名稱" value={item.title} onChange={(event) => updateItem(item.id, { title: event.target.value })} /><select aria-label="例行任務專案" value={item.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); updateItem(item.id, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><select aria-label="例行任務優先度" value={item.priority} onChange={(event) => updateItem(item.id, { priority: event.target.value as RoutineTemplateItem["priority"] })}>{(["highest","high","medium","normal","low"] as const).map((value) => <option key={value} value={value}>{priorityDisplay(value).code}</option>)}</select><input aria-label="開始時間" type="time" value={item.startTime ?? ""} onChange={(event) => updateItem(item.id, { startTime: event.target.value || null, durationMinutes: event.target.value ? item.durationMinutes ?? 30 : null })} /><select aria-label="持續時間" disabled={!item.startTime} value={item.durationMinutes ?? 30} onChange={(event) => updateItem(item.id, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select><button className="danger-icon" aria-label={`刪除${item.title}`} onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.filter((value) => value.id !== item.id) })}><Trash2 /></button></article>)}</div><button className="secondary" onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: [...routineTemplate.items, { id: crypto.randomUUID(), title: "新的例行任務", enabled: true, projectId: null, projectName: null, priority: "normal", startTime: null, durationMinutes: null, rank: rankForIndex(routineTemplate.items.length) }] })}><Plus />新增模板項目</button></section>}
     <section className="timeline-section"><header><div><span className="eyebrow">TODAY TIMELINE</span><h3>今日時間軸</h3></div><button className="secondary" onClick={onQuickAdd}><Plus />新增任務 <kbd>N</kbd></button></header>{scheduled.length === 0 ? <Empty text="尚未安排時間。可直接在下方任務設定開始時間。" /> : <div className="timeline">{scheduled.map((task) => <article key={task.id ?? task.title} className={`${Number(task.startTime?.slice(0,2)) >= 13 && ["normal","low"].includes(task.priority) ? "low-energy" : ""}`}><time>{task.startTime}</time><div><strong>{task.title}</strong><small>{task.durationMinutes ?? 30} 分鐘 · {task.projectName ?? "無專案"}</small></div></article>)}</div>}</section>
     <div className="today-columns"><TaskPanel title="逾期任務" tone="overdue" tasks={groups.overdue} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /><TaskPanel title="今日任務" tone="today" tasks={groups.today} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /></div>
