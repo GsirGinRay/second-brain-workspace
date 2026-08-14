@@ -49,12 +49,38 @@ test("board and calendar expose direct date editing and task-level drag feedback
   assert.match(styles, /\.week-task-list article\.dragging/);
 });
 
+test("calendar drag feedback dims the source day, raises the task, and marks the drop target", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /dragOriginDate/);
+  assert.match(source, /dropTargetDate/);
+  assert.match(source, /"drag-origin"/);
+  assert.match(source, /"drop-target"/);
+  assert.match(styles, /\.calendar-day\.drag-origin/);
+  assert.match(styles, /\.calendar-day\.drop-target/);
+  assert.match(styles, /\.calendar-task-title\.selected-task[^}]*translateY/);
+  assert.doesNotMatch(styles, /\.calendar-task-title\.selected-task[^}]*0 0 0 4px/);
+});
+
 test("week calendar and idea inbox use compact responsive cards", () => {
   const styles = css();
-  assert.match(styles, /\.idea-drawer>div\{display:grid/);
-  assert.match(styles, /grid-template-columns:repeat\(auto-fill,minmax\(240px,1fr\)\)/);
+  assert.match(styles, /\.idea-grid\{display:grid/);
+  assert.match(styles, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.match(styles, /\.week-task-list article[^}]*min-height:0/);
   assert.doesNotMatch(styles, /\.idea-drawer article[^}]*min-width:220px/);
+});
+
+test("idea inbox is calm by default and supports accessible quick deletion", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /ideasExpanded \? ideas : ideas\.slice\(0, 8\)/);
+  assert.match(source, /className="idea-delete-button"/);
+  assert.match(source, /aria-label=\{\`永久刪除想法/);
+  assert.match(source, /onContextMenu=/);
+  assert.match(source, /role="menu"/);
+  assert.match(styles, /\.idea-card-body/);
+  assert.match(styles, /\.idea-delete-button/);
+  assert.match(styles, /\.idea-context-menu/);
 });
 
 test("task actions are compact accessible icons and permanent delete is never archived", () => {

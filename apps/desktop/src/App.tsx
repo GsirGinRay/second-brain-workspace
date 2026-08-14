@@ -1696,8 +1696,16 @@ function Calendar({
   const [sideOpen, setSideOpen] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
+  const [dragOriginDate, setDragOriginDate] = useState<string | null>(null);
+  const [dropTargetDate, setDropTargetDate] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [ideasExpanded, setIdeasExpanded] = useState(false);
+  const [ideaContextMenu, setIdeaContextMenu] = useState<{
+    task: BrainTaskSnapshot;
+    x: number;
+    y: number;
+  } | null>(null);
   const month = anchor.slice(0, 7);
   const cells = buildMonthCells(month);
   const weekDates = buildWeekDates(anchor);
@@ -1710,6 +1718,31 @@ function Calendar({
   const ideas = visibleTasks
     .filter((task) => boardLane(task) === "idea")
     .sort((a, b) => a.rank.localeCompare(b.rank));
+  const visibleIdeas = ideasExpanded ? ideas : ideas.slice(0, 8);
+  useEffect(() => {
+    if (!ideaContextMenu) return;
+    const close = () => setIdeaContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [ideaContextMenu]);
+  const beginDrag = (id: string | null, originDate: string | null) => {
+    setDragTaskId(id);
+    setDragOriginDate(originDate);
+    setDropTargetDate(null);
+    setActiveTaskId(id);
+  };
+  const resetDrag = () => {
+    setDragTaskId(null);
+    setDragOriginDate(null);
+    setDropTargetDate(null);
+  };
   function shift(delta: number) {
     if (mode === "week") {
       const next = addDateDays(anchor, delta * 7);
@@ -1756,7 +1789,7 @@ function Calendar({
     const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
     if (date) schedule(taskId, date);
     else if (target?.closest("[data-idea-drawer]")) unschedule(taskId);
-    setDragTaskId(null);
+    resetDrag();
   };
   const dateLabel = (date: string) =>
     new Intl.DateTimeFormat("zh-TW", {
@@ -1831,13 +1864,17 @@ function Calendar({
                 return (
                   <button
                     key={cell.date}
-                    className={`calendar-day ${cell.currentMonth ? "" : "muted"} ${selected === cell.date ? "selected" : ""} ${cell.date === today ? "today" : ""}`}
+                    className={`calendar-day ${cell.currentMonth ? "" : "muted"} ${selected === cell.date ? "selected" : ""} ${cell.date === today ? "today" : ""} ${dragTaskId && dragOriginDate === cell.date ? "drag-origin" : ""} ${dragTaskId && dropTargetDate === cell.date && dragOriginDate !== cell.date ? "drop-target" : ""}`}
                     data-calendar-date={cell.date}
-                    onDragOver={(event) => event.preventDefault()}
+                    onDragEnter={() => setDropTargetDate(cell.date)}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                    }}
                     onDrop={(event) => {
                       event.preventDefault();
                       schedule(dragTaskId, cell.date);
-                      setDragTaskId(null);
+                      resetDrag();
                     }}
                     onClick={() => {
                       setSelected(cell.date);
@@ -1853,9 +1890,10 @@ function Calendar({
                           draggable
                           onDragStart={(event) => {
                             event.stopPropagation();
-                            setDragTaskId(entry.task.id);
+                            event.dataTransfer.effectAllowed = "move";
+                            beginDrag(entry.task.id, entry.date);
                           }}
-                          onDragEnd={() => setDragTaskId(null)}
+                          onDragEnd={resetDrag}
                           onClick={(event) => {
                             event.stopPropagation();
                             setActiveTaskId(entry.task.id);
@@ -1895,12 +1933,16 @@ function Calendar({
                 <section
                   key={date}
                   data-calendar-date={date}
-                  className={`week-day ${date === today ? "today" : ""} ${date === selected ? "selected" : ""}`}
-                  onDragOver={(event) => event.preventDefault()}
+                  className={`week-day ${date === today ? "today" : ""} ${date === selected ? "selected" : ""} ${dragTaskId && dragOriginDate === date ? "drag-origin" : ""} ${dragTaskId && dropTargetDate === date && dragOriginDate !== date ? "drop-target" : ""}`}
+                  onDragEnter={() => setDropTargetDate(date)}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
                   onDrop={(event) => {
                     event.preventDefault();
                     schedule(dragTaskId, date);
-                    setDragTaskId(null);
+                    resetDrag();
                   }}
                 >
                   <button
@@ -1924,8 +1966,11 @@ function Calendar({
                     {dayEntries.map((entry) => (
                       <article
                         draggable
-                        onDragStart={() => setDragTaskId(entry.task.id)}
-                        onDragEnd={() => setDragTaskId(null)}
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = "move";
+                          beginDrag(entry.task.id, entry.date);
+                        }}
+                        onDragEnd={resetDrag}
                         onClick={(event) => {
                           event.stopPropagation();
                           setActiveTaskId(entry.task.id);
@@ -1968,7 +2013,7 @@ function Calendar({
           onDrop={(event) => {
             event.preventDefault();
             unschedule(dragTaskId);
-            setDragTaskId(null);
+            resetDrag();
           }}
         >
           <header>
@@ -1976,31 +2021,99 @@ function Calendar({
               <h3>想法匣</h3>
               <p>尚未承諾執行的草稿任務；拖到月曆或週曆即可排程。</p>
             </div>
-            <span>{ideas.length} 項</span>
+            <button
+              type="button"
+              className="idea-count-button"
+              onClick={() => setIdeasExpanded((value) => !value)}
+              aria-expanded={ideasExpanded}
+            >
+              {ideasExpanded ? "收合" : `${ideas.length} 項`}
+            </button>
           </header>
-          <div>
+          <div className="idea-grid">
             {ideas.length === 0 ? (
               <small>目前沒有未排程想法</small>
             ) : (
-              ideas.map((task) => (
+              visibleIdeas.map((task) => (
                 <article
                   draggable
-                  onDragStart={() => setDragTaskId(task.id)}
-                  onDragEnd={() => setDragTaskId(null)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    beginDrag(task.id, null);
+                  }}
+                  onDragEnd={resetDrag}
                   onClick={() => setActiveTaskId(task.id)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setActiveTaskId(task.id);
+                    setIdeaContextMenu({
+                      task,
+                      x: Math.min(event.clientX, window.innerWidth - 210),
+                      y: Math.min(event.clientY, window.innerHeight - 64),
+                    });
+                  }}
                   style={taskProjectStyle(task)}
                   className={`${activeTaskId === task.id ? "selected-task" : ""} ${dragTaskId === task.id ? "dragging" : ""}`}
                   key={task.id ?? task.title}
                 >
                   <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
-                  <PriorityBadge priority={task.priority} />
-                  <strong>{task.title}</strong>
-                  <small>{task.projectName ?? "無專案"}</small>
+                  <div className="idea-card-body">
+                    <strong>{task.title}</strong>
+                    <span>
+                      <PriorityBadge priority={task.priority} />
+                      <small>{task.projectName ?? "無專案"}</small>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="idea-delete-button"
+                    aria-label={`永久刪除想法「${task.title}」`}
+                    title="永久刪除"
+                    draggable={false}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void remove(task);
+                    }}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </button>
                 </article>
               ))
             )}
           </div>
+          {ideas.length > 8 && (
+            <button
+              type="button"
+              className="idea-expand-button"
+              onClick={() => setIdeasExpanded((value) => !value)}
+            >
+              {ideasExpanded ? "收合想法" : `顯示其餘 ${ideas.length - 8} 項想法`}
+            </button>
+          )}
         </section>
+        {ideaContextMenu && (
+          <div
+            className="idea-context-menu"
+            role="menu"
+            aria-label={`${ideaContextMenu.task.title}的操作`}
+            style={{ left: ideaContextMenu.x, top: ideaContextMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const task = ideaContextMenu.task;
+                setIdeaContextMenu(null);
+                void remove(task);
+              }}
+            >
+              <Trash2 aria-hidden="true" />
+              永久刪除想法
+            </button>
+          </div>
+        )}
       </section>
       {sideOpen && (
         <aside className="agenda">
