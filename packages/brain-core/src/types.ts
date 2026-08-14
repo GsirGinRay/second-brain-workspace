@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isValidDateKey } from "./dates";
 
-export const SNAPSHOT_SCHEMA_VERSION = 3 as const;
+export const SNAPSHOT_SCHEMA_VERSION = 4 as const;
 export type SnapshotSchemaVersion = typeof SNAPSHOT_SCHEMA_VERSION;
 
 export const TaskStatusSchema = z.enum(["todo", "doing", "waiting", "done"]);
@@ -19,7 +19,11 @@ export const DateSchema = z
   .string()
   .refine(isValidDateKey, "Invalid date key")
   .nullable();
-const SchemaVersionSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]).optional();
+const SchemaVersionSchema = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional();
+const TimeSchema = z
+  .string()
+  .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "Invalid time")
+  .nullable();
 
 export const BrainTaskSnapshotSchema = z.object({
   id: z.string().nullable(),
@@ -36,6 +40,10 @@ export const BrainTaskSnapshotSchema = z.object({
   sourcePath: z.string().nullable(),
   sourceHeading: z.string().nullable(),
   completedAt: DateSchema,
+  startTime: TimeSchema.optional(),
+  durationMinutes: z.number().int().min(5).max(1440).nullable().optional(),
+  timeZone: z.string().min(1).max(100).nullable().optional(),
+  calendarSyncEnabled: z.boolean().optional(),
   schemaVersion: SchemaVersionSchema,
 }).strict();
 
@@ -52,6 +60,7 @@ export const BrainProjectSnapshotSchema = z.object({
   endDate: DateSchema.optional(),
   // Expand/contract compatibility only. V3 writes endDate.
   targetDate: DateSchema.optional(),
+  completedAt: DateSchema.optional(),
   schemaVersion: SchemaVersionSchema,
 }).strict();
 

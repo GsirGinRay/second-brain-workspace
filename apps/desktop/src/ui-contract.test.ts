@@ -18,12 +18,34 @@ test("desktop includes today, calendar, board, projects and settings views", () 
 test("desktop supports quick add, editing, task actions and readable icons", () => {
   const source = app();
   for (const icon of [
-    "Archive", "Trash2", "CheckCircle2", "RefreshCw", "Plus", "Pencil",
+    "Trash2", "CheckCircle2", "RefreshCw", "Plus", "Pencil", "Search",
     "Star", "Menu", "Eye", "Save", "RotateCcw",
   ]) assert.match(source, new RegExp(`<${icon}\\b`));
   assert.match(source, /<TaskEditor/);
   assert.match(source, /deleteTaskPermanently/);
   assert.match(source, /markMostImportant/);
+});
+
+test("task actions are compact accessible icons and permanent delete is never archived", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /function TaskActionBar/);
+  for (const label of ["設為最重要", "標記完成", "編輯任務", "永久刪除"]) {
+    assert.match(source, new RegExp(`aria-label=\\{?[^\\n]*${label}`));
+  }
+  assert.match(source, /onDelete=\{onDelete\}/);
+  assert.doesNotMatch(source, /永久刪除[\s\S]{0,180}archive\(/);
+  assert.match(styles, /\.task-action-button[^}]*min-width:\s*40px/);
+  assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(4/);
+});
+
+test("desktop exposes global task and project search with keyboard shortcuts", () => {
+  const source = app();
+  assert.match(source, /WorkspaceSearch/);
+  assert.match(source, /Ctrl\/Cmd\+K/);
+  assert.match(source, /event\.key === "\/"/);
+  assert.match(source, /關聯性/);
+  assert.match(source, /日期/);
 });
 
 test("desktop calendar and board expose the task editor", () => {

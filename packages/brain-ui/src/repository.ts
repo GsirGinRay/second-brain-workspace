@@ -16,7 +16,11 @@ export interface BrainTaskDto {
   sourcePath: string | null;
   sourceHeading: string | null;
   completedAt: string | null;
-  schemaVersion?: 1 | 2 | 3;
+  startTime: string | null;
+  durationMinutes: number | null;
+  timeZone: string;
+  calendarSyncEnabled: boolean;
+  schemaVersion?: 1 | 2 | 3 | 4;
   ownerEmail: string;
   version: number;
   pendingSync: boolean;
@@ -37,7 +41,8 @@ export interface BrainProjectDto {
   endDate: string | null;
   /** @deprecated V2 response compatibility; mirrors endDate during rollout. */
   targetDate?: string | null;
-  schemaVersion?: 1 | 2 | 3;
+  completedAt: string | null;
+  schemaVersion?: 1 | 2 | 3 | 4;
   ownerEmail: string;
   version: number;
   pendingSync: boolean;

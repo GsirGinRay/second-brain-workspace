@@ -33,6 +33,10 @@ test("taskDate round-trips as the Obsidian Tasks ⏳ token", () => {
   assert.match(line, /⏳ 2026-08-11/);
   assert.deepEqual(parseTaskLine(line, "tasks.md", 2), {
     ...task,
+    startTime: null,
+    durationMinutes: null,
+    timeZone: "Asia/Taipei",
+    calendarSyncEnabled: false,
     lineIndex: 2,
     rawLine: line,
   });
@@ -72,16 +76,16 @@ test("Zod DTO accepts taskDate and rejects malformed task snapshots", () => {
   assert.throws(() => parseSyncSnapshot({ tasks: [{ ...task, status: "invalid" }], projects: [] }));
 });
 
-test("migrates legacy task and sync snapshots to schemaVersion 3", () => {
+test("migrates legacy task and sync snapshots to schemaVersion 4", () => {
   const v1 = { ...task, taskDate: undefined, plannedDate: "2026-08-10" };
   const migratedTask = migrateTaskSnapshot(v1);
-  assert.equal(migratedTask.schemaVersion, 3);
+  assert.equal(migratedTask.schemaVersion, 4);
   assert.equal(migratedTask.taskDate, "2026-08-10");
 
   const migratedSync = migrateSyncSnapshot({ tasks: [v1], projects: [] });
-  assert.equal(migratedSync.schemaVersion, 3);
+  assert.equal(migratedSync.schemaVersion, 4);
   assert.equal(migratedSync.tasks[0]?.taskDate, "2026-08-10");
-  assert.equal(migratedSync.tasks[0]?.schemaVersion, 3);
+  assert.equal(migratedSync.tasks[0]?.schemaVersion, 4);
 });
 
 test("mergeEntity treats taskDate as a field when a legacy base omits it", () => {

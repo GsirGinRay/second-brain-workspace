@@ -1,4 +1,4 @@
-import type { TaskPriority } from "./types";
+import type { BrainProjectSnapshot, BrainTaskSnapshot, TaskPriority } from "./types";
 
 export interface DailyPriorityTask {
   id: string;
@@ -21,4 +21,25 @@ export function enforceDailyP1<T extends DailyPriorityTask>(tasks: readonly T[])
     task.taskDate && task.priority === "highest" && winners.get(task.taskDate) !== task.id
       ? { ...task, priority: "high" } as T
       : task);
+}
+
+export function completeProject(
+  project: BrainProjectSnapshot,
+  tasks: readonly BrainTaskSnapshot[],
+  completedAt: string,
+): { project: BrainProjectSnapshot; tasks: BrainTaskSnapshot[] } {
+  return {
+    project: {
+      ...project,
+      status: "done",
+      progress: 100,
+      focusToday: false,
+      completedAt,
+    },
+    tasks: tasks.map((task) =>
+      task.projectId === project.id && task.status !== "done"
+        ? { ...task, status: "done" as const, completedAt }
+        : { ...task },
+    ),
+  };
 }

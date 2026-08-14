@@ -30,6 +30,13 @@ export {
   BrainConflictError,
   BrainRepositoryError,
 } from "./repository";
+export { searchWorkspace } from "./search";
+export type {
+  WorkspaceSearchOptions,
+  WorkspaceSearchProject,
+  WorkspaceSearchResult,
+  WorkspaceSearchTask,
+} from "./search";
 export type {
   BrainOwnerStateDto,
   BrainProjectDto,

@@ -10,15 +10,20 @@ import {
 
 export type VersionedTaskSnapshot = Omit<BrainTaskSnapshot, "plannedDate" | "dueDate"> & {
   taskDate: string | null;
-  schemaVersion: 3;
+  startTime: string | null;
+  durationMinutes: number | null;
+  timeZone: string;
+  calendarSyncEnabled: boolean;
+  schemaVersion: 4;
 };
 export type VersionedProjectSnapshot = Omit<BrainProjectSnapshot, "targetDate"> & {
   startDate: string | null;
   endDate: string | null;
-  schemaVersion: 3;
+  completedAt: string | null;
+  schemaVersion: 4;
 };
 export type VersionedSyncSnapshot = Omit<SyncSnapshot, "schemaVersion" | "tasks" | "projects"> & {
-  schemaVersion: 3;
+  schemaVersion: 4;
   tasks: VersionedTaskSnapshot[];
   projects: VersionedProjectSnapshot[];
 };
@@ -29,6 +34,10 @@ export function migrateTaskSnapshot(value: unknown): VersionedTaskSnapshot {
   return {
     ...rest,
     taskDate: parsed.taskDate ?? plannedDate ?? dueDate ?? null,
+    startTime: parsed.startTime ?? null,
+    durationMinutes: parsed.startTime ? (parsed.durationMinutes ?? 30) : null,
+    timeZone: parsed.timeZone ?? "Asia/Taipei",
+    calendarSyncEnabled: parsed.calendarSyncEnabled ?? false,
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
   };
 }
@@ -40,6 +49,7 @@ export function migrateProjectSnapshot(value: unknown): VersionedProjectSnapshot
     ...rest,
     startDate: parsed.startDate ?? null,
     endDate: parsed.endDate ?? targetDate ?? null,
+    completedAt: parsed.completedAt ?? null,
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
   };
 }

@@ -53,7 +53,7 @@ export interface DeviceRevokeResultDto {
 }
 
 export interface DeviceSyncPlanDto {
-  schemaVersion: 2;
+  schemaVersion: 2 | 3 | 4;
   baseRevision: number;
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];

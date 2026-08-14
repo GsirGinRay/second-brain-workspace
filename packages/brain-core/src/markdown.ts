@@ -80,6 +80,18 @@ function parseMarker(value: string | undefined): Partial<BrainTaskSnapshot> {
       VALID_STATUSES.has(parsed.status as TaskStatus)
         ? { status: parsed.status as TaskStatus }
         : {}),
+      ...(typeof parsed.startTime === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(parsed.startTime)
+        ? { startTime: parsed.startTime }
+        : {}),
+      ...(typeof parsed.durationMinutes === "number" && Number.isInteger(parsed.durationMinutes) && parsed.durationMinutes >= 5 && parsed.durationMinutes <= 1440
+        ? { durationMinutes: parsed.durationMinutes }
+        : {}),
+      ...(typeof parsed.timeZone === "string" && parsed.timeZone.length <= 100
+        ? { timeZone: parsed.timeZone }
+        : {}),
+      ...(typeof parsed.calendarSyncEnabled === "boolean"
+        ? { calendarSyncEnabled: parsed.calendarSyncEnabled }
+        : {}),
     };
   } catch {
     return {};
@@ -283,6 +295,12 @@ function parsedTaskFromAnalysis(
     sourcePath,
     sourceHeading: null,
     completedAt: dateValue("completedAt"),
+    startTime: markerValues.startTime ?? null,
+    durationMinutes: markerValues.startTime
+      ? (markerValues.durationMinutes ?? 30)
+      : null,
+    timeZone: markerValues.timeZone ?? "Asia/Taipei",
+    calendarSyncEnabled: markerValues.calendarSyncEnabled ?? false,
     lineIndex,
     rawLine: analysis.rawLine,
   };
@@ -310,13 +328,20 @@ export function formatTaskLine(task: TaskLineInput): string {
   if (task.status === "done" && task.completedAt) {
     parts.push("\u2705 " + task.completedAt);
   }
+  const marker = {
+    id: task.id,
+    status: task.status,
+    rank: task.rank,
+    ...(task.startTime ? {
+      startTime: task.startTime,
+      durationMinutes: task.durationMinutes ?? 30,
+      timeZone: task.timeZone ?? "Asia/Taipei",
+    } : {}),
+    ...(task.calendarSyncEnabled ? { calendarSyncEnabled: true } : {}),
+  };
   parts.push(
     "<!-- publisher-task:" +
-      JSON.stringify({
-        id: task.id,
-        status: task.status,
-        rank: task.rank,
-      }) +
+      JSON.stringify(marker) +
       " -->",
   );
   return parts.join(" ");
@@ -381,35 +406,38 @@ function patchMarker(
   current: ParsedMarkdownTask,
   desired: TaskLineInput,
 ): Edit[] {
-  const values: Record<string, string | null> = {
+  const values: Record<string, unknown> = {
     id: desired.id,
     status: desired.status,
     rank: desired.rank,
+    ...(desired.startTime ? {
+      startTime: desired.startTime,
+      durationMinutes: desired.durationMinutes ?? 30,
+      timeZone: desired.timeZone ?? "Asia/Taipei",
+    } : {}),
+    ...(desired.calendarSyncEnabled ? { calendarSyncEnabled: true } : {}),
   };
   if (analysis.marker) {
-    const edits: Edit[] = [];
-    for (const [key, value] of Object.entries(values)) {
-      const currentValue = analysis.marker.value[key];
-      if (currentValue === value) continue;
-      const edit = markerFieldEdit(rawLine, analysis.marker, key, value);
-      if (edit) edits.push(edit);
-      else {
-        const json = rawLine.slice(analysis.marker.jsonStart, analysis.marker.jsonEnd);
-        const parsed = { ...analysis.marker.value, [key]: value };
-        edits.push({
-          start: analysis.marker.jsonStart,
-          end: analysis.marker.jsonEnd,
-          replacement: JSON.stringify(parsed),
-        });
-        break;
-      }
-    }
-    return edits;
+    const managedKeys = ["id", "status", "rank", "startTime", "durationMinutes", "timeZone", "calendarSyncEnabled"];
+    const nextMarker = { ...analysis.marker.value };
+    for (const key of managedKeys) delete nextMarker[key];
+    Object.assign(nextMarker, values);
+    const replacement = JSON.stringify(nextMarker);
+    const currentJson = rawLine.slice(analysis.marker.jsonStart, analysis.marker.jsonEnd);
+    return replacement === currentJson ? [] : [{
+      start: analysis.marker.jsonStart,
+      end: analysis.marker.jsonEnd,
+      replacement,
+    }];
   }
   if (
     desired.id === current.id &&
     desired.status === current.status &&
     desired.rank === current.rank
+    && (desired.startTime ?? null) === (current.startTime ?? null)
+    && (desired.durationMinutes ?? null) === (current.durationMinutes ?? null)
+    && (desired.timeZone ?? "Asia/Taipei") === (current.timeZone ?? "Asia/Taipei")
+    && (desired.calendarSyncEnabled ?? false) === (current.calendarSyncEnabled ?? false)
   ) {
     return [];
   }
@@ -612,6 +640,10 @@ export function parseProjectFrontmatter(
           ? null
           : String(values.get("target_date"))
         : String(values.get("end_date")),
+    completedAt:
+      values.get("completed_at") == null
+        ? null
+        : String(values.get("completed_at")),
     frontmatterStart: 0,
     frontmatterEnd: closing,
   };

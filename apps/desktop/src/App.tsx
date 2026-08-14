@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import {
-  Archive,
   CalendarDays,
   CheckCircle2,
   Columns3,
@@ -13,6 +12,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   Settings2,
   Star,
   Trash2,
@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import {
   getTodayTasks,
+  completeProject,
   projectColor,
   rankForIndex,
   type BrainProjectSnapshot,
@@ -32,6 +33,8 @@ import {
   buildWeekDates,
   getCalendarTaskEntries as buildCalendarTaskEntries,
   taipeiDateKey as dateKeyForTaipei,
+  searchWorkspace,
+  type WorkspaceSearchResult,
 } from "@second-brain/brain-ui";
 import {
   DeviceClient,
@@ -120,6 +123,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [view, setView] = useState<View>("today");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [showCompleted, setShowCompleted] = useState(
     () => localStorage.getItem("second-brain.showCompletedTasks") === "true",
   );
@@ -152,6 +156,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     expiresAt: string;
   } | null>(null);
   const [devicePaired, setDevicePaired] = useState(false);
+  const [calendarIntegration, setCalendarIntegration] = useState<{ enabled: boolean; connected: boolean } | null>(null);
   const [writeApproved, setWriteApproved] = useState(
     () => localStorage.getItem("second-brain.agentWriteApproved") === "true",
   );
@@ -171,6 +176,25 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     () => (client ? new SyncEngine(native, client) : null),
     [client, native],
   );
+
+  useEffect(() => {
+    if (!client || !devicePaired) { setCalendarIntegration(null); return; }
+    void client.getCalendarIntegrationStatus().then(setCalendarIntegration).catch(() => setCalendarIntegration(null));
+  }, [client, devicePaired]);
+
+  useEffect(() => {
+    const openSearch = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      } else if (event.key === "/" && !isEditableElement(event.target)) {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", openSearch);
+    return () => window.removeEventListener("keydown", openSearch);
+  }, []);
 
   const reloadLocal = useCallback(
     async (updateStatus = true) => {
@@ -357,7 +381,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     nextProjects = projects,
   ) {
     const changes = applyDesiredSnapshot(files, {
-      schemaVersion: 2,
+      schemaVersion: 4,
       tasks: nextTasks,
       projects: nextProjects,
       fileHashes: {},
@@ -384,23 +408,22 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   }
 
   async function permanentlyDeleteTask(task: BrainTaskSnapshot) {
-    if (!task.id || !client) {
-      setError("無法永久刪除：任務尚未同步或伺服器未設定。");
-      return;
-    }
     const source = task.sourcePath ? `\n本機來源：${task.sourcePath}` : "";
+    const scope = client && task.id
+      ? "這會刪除雲端資料，並從本機 Markdown 移除整行"
+      : "目前是本機模式，這會從本機 Markdown 移除整行";
     if (
       !window.confirm(
-        `永久刪除「${task.title}」？\n\n這會刪除雲端資料，並從本機 Markdown 移除整行，無法在 App 內復原。${source}`,
+        `永久刪除「${task.title}」？\n\n${scope}，無法在 App 內復原。${source}`,
       )
     )
       return;
     setWorking(true);
     setError("");
     try {
-      await client.deleteTaskPermanently(task.id);
+      if (client && task.id) await client.deleteTaskPermanently(task.id);
       await persistLocal(tasks.filter((item) => item.id !== task.id));
-      setStatus("任務已從雲端與本機 Markdown 永久刪除");
+      setStatus(client ? "任務已從雲端與本機 Markdown 永久刪除" : "任務已從本機 Markdown 永久刪除");
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "DELETE_FAILED";
       setError(`永久刪除失敗，尚未刪除本機資料：${message}`);
@@ -590,7 +613,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       <Projects
         projects={projects}
         tasks={tasks}
-        onSave={(value) => persistLocal(tasks, value)}
+        onSave={(nextProjects, nextTasks) => persistLocal(nextTasks, nextProjects)}
       />
     ) : (
       <SyncSettings
@@ -603,6 +626,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         devicePaired={devicePaired}
         working={working}
         writeApproved={writeApproved}
+        calendarIntegration={calendarIntegration}
         onBrowseVault={browseVault}
         onSelectVault={() => selectVault()}
         onConfigureServer={configureServer}
@@ -657,6 +681,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             </div>
           </div>
           <div className="top-actions">
+            <button className="search-button" onClick={() => setSearchOpen(true)}>
+              <Search aria-hidden="true" />搜尋任務與專案 <kbd>Ctrl/Cmd+K</kbd>
+            </button>
             <label className="completed-visibility-toggle">
               <input
                 type="checkbox"
@@ -721,6 +748,17 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           onSave={(next) => {
             setQuickAddOpen(false);
             void persistLocal(next);
+          }}
+        />
+      )}
+      {searchOpen && (
+        <WorkspaceSearch
+          tasks={tasks}
+          projects={projects}
+          onClose={() => setSearchOpen(false)}
+          onSelect={(result) => {
+            setSearchOpen(false);
+            setView(result.kind === "project" ? "projects" : result.value.taskDate ? "calendar" : "today");
           }}
         />
       )}
@@ -881,6 +919,35 @@ function TaskEditor({
             setValue({ ...value, taskDate: event.target.value || null })
           }
         />
+        <input
+          aria-label="開始時間"
+          type="time"
+          value={value.startTime ?? ""}
+          onChange={(event) => setValue({
+            ...value,
+            startTime: event.target.value || null,
+            durationMinutes: event.target.value ? (value.durationMinutes ?? 30) : null,
+            timeZone: "Asia/Taipei",
+            calendarSyncEnabled: event.target.value ? (value.calendarSyncEnabled ?? false) : false,
+          })}
+        />
+        <select
+          aria-label="持續時間"
+          disabled={!value.startTime}
+          value={value.durationMinutes ?? 30}
+          onChange={(event) => setValue({ ...value, durationMinutes: Number(event.target.value) })}
+        >
+          {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分鐘</option>)}
+        </select>
+        <label className="calendar-sync-toggle" title="完成 Publisher 配對及 Google Calendar 連線後會自動同步">
+          <input
+            type="checkbox"
+            disabled={!value.startTime}
+            checked={value.calendarSyncEnabled ?? false}
+            onChange={(event) => setValue({ ...value, calendarSyncEnabled: event.target.checked })}
+          />
+          同步 Google Calendar
+        </label>
         <select
           aria-label="優先度"
           value={value.priority}
@@ -917,6 +984,40 @@ function TaskEditor({
           <Save aria-hidden="true" />儲存變更
         </button>
       </div>
+    </div>
+  );
+}
+
+function TaskActionBar({
+  task,
+  important,
+  onImportant,
+  onComplete,
+  onEdit,
+  onDelete,
+}: {
+  task: BrainTaskSnapshot;
+  important: boolean;
+  onImportant: () => void;
+  onComplete: () => void;
+  onEdit: () => void;
+  onDelete: (task: BrainTaskSnapshot) => void;
+}) {
+  const done = task.status === "done";
+  return (
+    <div className="task-action-bar" aria-label={`${task.title}的操作`}>
+      <button className={`task-action-button ${important ? "active" : ""}`} aria-label="設為最重要" title="設為最重要" onClick={onImportant}>
+        <Star aria-hidden="true" fill={important ? "currentColor" : "none"} />
+      </button>
+      <button className="task-action-button" aria-label={done ? "重新開啟" : "標記完成"} title={done ? "重新開啟" : "標記完成"} onClick={onComplete}>
+        {done ? <RotateCcw aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
+      </button>
+      <button className="task-action-button" aria-label="編輯任務" title="編輯任務" onClick={onEdit}>
+        <Pencil aria-hidden="true" />
+      </button>
+      <button className="task-action-button danger" aria-label="永久刪除" title="永久刪除雲端與本機 Markdown" onClick={() => onDelete(task)}>
+        <Trash2 aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -974,18 +1075,6 @@ function Today({
           : item,
       ),
     );
-  const archive = (task: BrainTaskSnapshot) => {
-    if (
-      window.confirm(
-        "要將這項任務標記完成並移出今日嗎？Markdown 歷史仍會保留。",
-      )
-    )
-      onSave(
-        tasks.map((item) =>
-          item.id === task.id ? archiveTask(item, today) : item,
-        ),
-      );
-  };
   return (
     <section>
       <div className="hero-card">
@@ -1111,43 +1200,14 @@ function Today({
                     />
                   )}
                 </div>
-                <span className={`status ${task.status}`}>
-                  {STATUS_LABELS[task.status]}
-                </span>
-                {!important && task.id && (
-                  <button
-                    className="important-button action-with-icon"
-                    onClick={() =>
-                      onSave(markMostImportant(tasks, task.id!, today))
-                    }
-                  >
-                    <Star aria-hidden="true" />設為今日最重要
-                  </button>
-                )}
-                <button
-                  className="edit-button action-with-icon"
-                  aria-label={`編輯：${task.title}`}
-                  onClick={() =>
-                    setEditing(editing === task.id ? null : task.id)
-                  }
-                >
-                  <Pencil aria-hidden="true" />編輯
-                </button>
-                <button
-                  className="archive-button action-with-icon"
-                  title="封存為完成並保留 Markdown"
-                  aria-label={`封存：${task.title}`}
-                  onClick={() => archive(task)}
-                >
-                  <Archive aria-hidden="true" />封存
-                </button>
-                <button
-                  className="danger-action action-with-icon"
-                  title="永久刪除雲端與本機 Markdown"
-                  onClick={() => onDelete(task)}
-                >
-                  <Trash2 aria-hidden="true" />永久刪除
-                </button>
+                <TaskActionBar
+                  task={task}
+                  important={important}
+                  onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, today))}
+                  onComplete={() => toggleDone(task)}
+                  onEdit={() => setEditing(editing === task.id ? null : task.id)}
+                  onDelete={onDelete}
+                />
               </article>
             );
           })
@@ -1181,19 +1241,14 @@ function Today({
                     {task.projectName ?? "無專案"} · 完成於 {task.completedAt}
                   </small>
                 </div>
-                <span className="status done">完成</span>
-                <button
-                  className="edit-button action-with-icon"
-                  onClick={() => toggleDone(task)}
-                >
-                  <RotateCcw aria-hidden="true" />重新開啟
-                </button>
-                <button
-                  className="danger-action action-with-icon"
-                  onClick={() => onDelete(task)}
-                >
-                  <Trash2 aria-hidden="true" />永久刪除
-                </button>
+                <TaskActionBar
+                  task={task}
+                  important={task.priority === "highest"}
+                  onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, task.taskDate ?? today))}
+                  onComplete={() => toggleDone(task)}
+                  onEdit={() => setEditing(editing === task.id ? null : task.id)}
+                  onDelete={onDelete}
+                />
               </article>
             ))}
           </div>
@@ -1218,6 +1273,9 @@ function QuickAddModal({
   const [projectId, setProjectId] = useState("");
   const [ideaInbox, setIdeaInbox] = useState(true);
   const [taskDate, setTaskDate] = useState(taipeiDateKey());
+  const [startTime, setStartTime] = useState("");
+  const [durationMinutes, setDurationMinutes] = useState(30);
+  const [calendarSyncEnabled, setCalendarSyncEnabled] = useState(false);
   const [important, setImportant] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   useEffect(() => titleRef.current?.focus(), []);
@@ -1226,6 +1284,9 @@ function QuickAddModal({
     const project = projects.find((item) => item.id === projectId);
     const task = newTask(title, {
       taskDate: ideaInbox ? null : taskDate || null,
+      startTime: ideaInbox ? null : startTime || null,
+      durationMinutes: startTime ? durationMinutes : null,
+      calendarSyncEnabled: Boolean(startTime) && calendarSyncEnabled,
       project,
     });
     const next = [
@@ -1322,7 +1383,29 @@ function QuickAddModal({
               onChange={(event) => setTaskDate(event.target.value)}
             />
           </label>
+          <label>
+            開始時間
+            <input
+              type="time"
+              disabled={ideaInbox}
+              value={ideaInbox ? "" : startTime}
+              onChange={(event) => {
+                setStartTime(event.target.value);
+                if (!event.target.value) setCalendarSyncEnabled(false);
+              }}
+            />
+          </label>
+          <label>
+            持續時間
+            <select disabled={ideaInbox || !startTime} value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))}>
+              {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分鐘</option>)}
+            </select>
+          </label>
         </div>
+        <label className="calendar-sync-toggle">
+          <input type="checkbox" disabled={ideaInbox || !startTime} checked={calendarSyncEnabled} onChange={(event) => setCalendarSyncEnabled(event.target.checked)} />
+          <span><strong>同步 Google Calendar</strong><small>需要 Publisher 已配對且網頁端已連線 Google Calendar</small></span>
+        </label>
         <label className="important-toggle">
           <input
             type="checkbox"
@@ -1356,11 +1439,14 @@ function newTask(
   title: string,
   options: {
     taskDate?: string | null;
+    startTime?: string | null;
+    durationMinutes?: number | null;
+    calendarSyncEnabled?: boolean;
     project?: BrainProjectSnapshot;
   } = {},
 ): BrainTaskSnapshot {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     id: crypto.randomUUID(),
     title: title.trim(),
     status: "todo",
@@ -1373,6 +1459,10 @@ function newTask(
     sourcePath: null,
     sourceHeading: null,
     completedAt: null,
+    startTime: options.startTime ?? null,
+    durationMinutes: options.startTime ? (options.durationMinutes ?? 30) : null,
+    timeZone: "Asia/Taipei",
+    calendarSyncEnabled: options.calendarSyncEnabled ?? false,
   };
 }
 
@@ -1420,7 +1510,6 @@ function Board({
         ),
       );
   };
-  const archive = onDelete;
   const finishBoardPointer = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
     if (!taskId) return;
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
@@ -1570,21 +1659,14 @@ function Board({
                       >
                         ↓
                       </button>
-                      <button
-                        className="edit-button action-with-icon"
-                        aria-label={`編輯：${task.title}`}
-                        title="編輯任務"
-                        onClick={() => setEditingTaskId(editingTaskId === task.id ? null : task.id)}
-                      >
-                        <Pencil aria-hidden="true" />編輯
-                      </button>
-                      <button
-                        className="danger-action action-with-icon"
-                        title="永久刪除雲端與本機 Markdown"
-                        onClick={() => archive(task)}
-                      >
-                        <Trash2 aria-hidden="true" />永久刪除
-                      </button>
+                      <TaskActionBar
+                        task={task}
+                        important={task.priority === "highest"}
+                        onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, task.taskDate ?? today))}
+                        onComplete={() => moveToLane(task.id, task.status === "done" ? "todo" : "done")}
+                        onEdit={() => setEditingTaskId(editingTaskId === task.id ? null : task.id)}
+                        onDelete={onDelete}
+                      />
                     </div>
                     {editingTaskId === task.id && (
                       <TaskEditor
@@ -1978,34 +2060,14 @@ function Calendar({
                   }
                 />
                 <div className="agenda-actions">
-                  {task.status !== "done" && task.id && (
-                    <button
-                      className="action-with-icon"
-                      onClick={() =>
-                        onSave(markMostImportant(tasks, task.id!, selected))
-                      }
-                    >
-                      <Star aria-hidden="true" />設為最重要
-                    </button>
-                  )}
-                  <button className="action-with-icon" onClick={() => complete(task.id)}>
-                    {task.status === "done" ? <RotateCcw aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
-                    {task.status === "done" ? "重新開啟" : "完成"}
-                  </button>
-                  <button
-                    className="edit-button action-with-icon"
-                    aria-label={`編輯：${task.title}`}
-                    onClick={() => setEditingTaskId(editingTaskId === task.id ? null : task.id)}
-                  >
-                    <Pencil aria-hidden="true" />編輯
-                  </button>
-                  <button
-                    className="danger-action action-with-icon"
-                    title="永久刪除雲端與本機 Markdown"
-                    onClick={() => remove(task)}
-                  >
-                    <Trash2 aria-hidden="true" />永久刪除
-                  </button>
+                  <TaskActionBar
+                    task={task}
+                    important={task.priority === "highest"}
+                    onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, selected))}
+                    onComplete={() => complete(task.id)}
+                    onEdit={() => setEditingTaskId(editingTaskId === task.id ? null : task.id)}
+                    onDelete={remove}
+                  />
                 </div>
                 {editingTaskId === task.id && (
                   <TaskEditor
@@ -2036,11 +2098,17 @@ function ProjectEditor({
   openTasks,
   onSave,
   onFocus,
+  onComplete,
+  onReopen,
+  onArchive,
 }: {
   project: BrainProjectSnapshot;
   openTasks: number;
   onSave: (value: BrainProjectSnapshot) => void;
   onFocus: (enabled: boolean) => void;
+  onComplete: () => void;
+  onReopen: () => void;
+  onArchive: () => void;
 }) {
   const [value, setValue] = useState(project);
   useEffect(() => setValue(project), [project]);
@@ -2079,7 +2147,8 @@ function ProjectEditor({
           >
             <option value="active">進行中</option>
             <option value="paused">暫停</option>
-            <option value="done">完成</option>
+            {value.status === "done" && <option value="done">完成</option>}
+            {value.status === "archived" && <option value="archived">封存</option>}
           </select>
         </label>
         <label>
@@ -2137,9 +2206,15 @@ function ProjectEditor({
             }
           />
         </label>
-        <button className="primary" onClick={() => onSave(value)}>
-          儲存專案
-        </button>
+        <div className="project-actions">
+          <button className="primary" onClick={() => onSave(value)}>儲存變更</button>
+          {value.status === "done" || value.status === "archived" ? (
+            <button className="secondary-button" onClick={onReopen}>重新啟用</button>
+          ) : (
+            <button className="secondary-button" onClick={onComplete}><CheckCircle2 aria-hidden="true" />完成專案</button>
+          )}
+          {value.status !== "archived" && <button className="archive-button" onClick={onArchive}>封存</button>}
+        </div>
       </div>
     </article>
   );
@@ -2151,14 +2226,42 @@ function Projects({
 }: {
   projects: BrainProjectSnapshot[];
   tasks: BrainTaskSnapshot[];
-  onSave: (projects: BrainProjectSnapshot[]) => void;
+  onSave: (projects: BrainProjectSnapshot[], tasks: BrainTaskSnapshot[]) => void;
 }) {
+  const [tab, setTab] = useState<"current" | "completed" | "archived">("current");
+  const groups = {
+    current: projects.filter((project) => project.status !== "done" && project.status !== "archived"),
+    completed: projects.filter((project) => project.status === "done"),
+    archived: projects.filter((project) => project.status === "archived"),
+  };
+  const visibleProjects = groups[tab];
+  const saveProject = (project: BrainProjectSnapshot, value: BrainProjectSnapshot) =>
+    onSave(projects.map((item) => item.id === project.id ? value : item), tasks);
+  const finishProject = (project: BrainProjectSnapshot) => {
+    const openCount = tasks.filter((task) => task.projectId === project.id && task.status !== "done").length;
+    if (!window.confirm(`完成「${project.name}」？\n\n將同時完成 ${openCount} 項未完成任務，並保留完整歷史。`)) return;
+    const completed = completeProject(project, tasks, taipeiDateKey());
+    onSave(projects.map((item) => item.id === project.id ? completed.project : item), completed.tasks);
+    setTab("completed");
+  };
   return (
-    <div className="project-grid">
-      {projects.length === 0 ? (
+    <section className="projects-workspace">
+      <header className="project-tabs" role="tablist" aria-label="專案狀態">
+        {([
+          ["current", "進行中"],
+          ["completed", "已完成"],
+          ["archived", "封存"],
+        ] as const).map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>
+            {label}<span>{groups[id].length}</span>
+          </button>
+        ))}
+      </header>
+      <div className="project-grid">
+      {visibleProjects.length === 0 ? (
         <Empty text="尚未找到 type: project 的 Markdown。" />
       ) : (
-        projects.map((project) => (
+        visibleProjects.map((project) => (
           <ProjectEditor
             key={project.id ?? project.name}
             project={project}
@@ -2168,23 +2271,24 @@ function Projects({
                   task.projectId === project.id && task.status !== "done",
               ).length
             }
-            onSave={(value) =>
-              void onSave(
-                projects.map((item) => (item.id === project.id ? value : item)),
-              )
-            }
+            onSave={(value) => saveProject(project, value)}
             onFocus={(enabled) =>
               void onSave(
                 projects.map((item) => ({
                   ...item,
                   focusToday: item.id === project.id ? enabled : false,
                 })),
+                tasks,
               )
             }
+            onComplete={() => finishProject(project)}
+            onReopen={() => saveProject(project, { ...project, status: "active", completedAt: null, focusToday: false })}
+            onArchive={() => saveProject(project, { ...project, status: "archived", focusToday: false })}
           />
         ))
       )}
-    </div>
+      </div>
+    </section>
   );
 }
 
@@ -2198,6 +2302,7 @@ function SyncSettings({
   devicePaired,
   working,
   writeApproved,
+  calendarIntegration,
   onBrowseVault,
   onSelectVault,
   onConfigureServer,
@@ -2215,6 +2320,7 @@ function SyncSettings({
   devicePaired: boolean;
   working: boolean;
   writeApproved: boolean;
+  calendarIntegration: { enabled: boolean; connected: boolean } | null;
   onBrowseVault: () => void;
   onSelectVault: () => void;
   onConfigureServer: () => void;
@@ -2254,6 +2360,15 @@ function SyncSettings({
             </button>
           </div>
         </details>
+      </section>
+      <section className="settings-card">
+        <span className="step">5</span>
+        <h2>Google Calendar</h2>
+        <p>Calendar 授權只保留在 Publisher；桌面不會取得 Google token。</p>
+        <div className={calendarIntegration?.connected ? "paired-ok" : "first-sync-hint"}>
+          <strong>{calendarIntegration?.connected ? "✓ Google Calendar 已連線" : calendarIntegration?.enabled ? "尚未在 Publisher 連線" : "Calendar 整合尚未啟用"}</strong>
+          <small>{calendarIntegration?.connected ? "有勾選的時段任務會自動建立或更新事件" : "請在 Publisher 網頁工作台完成獨立授權"}</small>
+        </div>
       </section>
       <section className="settings-card">
         <span className="step">2</span>
@@ -2353,6 +2468,107 @@ function SyncSettings({
     </div>
   );
 }
+
+function WorkspaceSearch({
+  tasks,
+  projects,
+  onClose,
+  onSelect,
+}: {
+  tasks: BrainTaskSnapshot[];
+  projects: BrainProjectSnapshot[];
+  onClose: () => void;
+  onSelect: (result: WorkspaceSearchResult) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<"relevance" | "date">("relevance");
+  const [statusFilter, setStatusFilter] = useState<"all" | "open" | "completed">("all");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => inputRef.current?.focus(), []);
+  const results = useMemo(() => searchWorkspace(
+    tasks.filter((task): task is BrainTaskSnapshot & { id: string } => Boolean(task.id)).map((task) => ({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      taskDate: task.taskDate ?? null,
+      completedAt: task.completedAt,
+      projectName: task.projectName,
+      sourcePath: task.sourcePath,
+      sourceHeading: task.sourceHeading,
+    })),
+    projects.filter((project): project is BrainProjectSnapshot & { id: string } => Boolean(project.id)).map((project) => ({
+      id: project.id,
+      name: project.name,
+      status: project.status,
+      area: project.area,
+      endDate: project.endDate ?? null,
+      completedAt: project.completedAt ?? null,
+    })),
+    { query, sort, status: statusFilter, today: taipeiDateKey() },
+  ), [projects, query, sort, statusFilter, tasks]);
+  useEffect(() => setActiveIndex(0), [query, sort, statusFilter]);
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section
+        className="modal workspace-search"
+        role="dialog"
+        aria-modal="true"
+        aria-label="搜尋任務與專案"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onClose();
+          if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((value) => Math.min(value + 1, results.length - 1)); }
+          if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((value) => Math.max(value - 1, 0)); }
+          if (event.key === "Enter" && results[activeIndex]) { event.preventDefault(); onSelect(results[activeIndex]); }
+        }}
+      >
+        <div className="search-input-row">
+          <Search aria-hidden="true" />
+          <input ref={inputRef} aria-label="搜尋關鍵字" placeholder="搜尋任務、專案、相對路徑…" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <button className="icon-button" aria-label="關閉搜尋" onClick={onClose}><X aria-hidden="true" /></button>
+        </div>
+        <div className="search-toolbar">
+          <div className="segmented-control" aria-label="排序方式">
+            <button className={sort === "relevance" ? "active" : ""} onClick={() => setSort("relevance")}>關聯性</button>
+            <button className={sort === "date" ? "active" : ""} onClick={() => setSort("date")}>日期</button>
+          </div>
+          <select aria-label="狀態篩選" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+            <option value="all">全部狀態</option>
+            <option value="open">進行中</option>
+            <option value="completed">已完成與封存</option>
+          </select>
+          <span>{results.length} 筆結果</span>
+        </div>
+        <div className="search-results" role="listbox">
+          {results.length === 0 ? <Empty text="找不到相符的任務或專案。" /> : results.map((result, index) => {
+            const isTask = result.kind === "task";
+            const title = isTask ? result.value.title : result.value.name;
+            const meta = isTask
+              ? [result.value.projectName, result.value.taskDate, result.value.sourcePath].filter(Boolean).join(" · ")
+              : [result.value.area, result.value.status, result.value.endDate].filter(Boolean).join(" · ");
+            return (
+              <button
+                key={`${result.kind}:${result.id}`}
+                role="option"
+                aria-selected={index === activeIndex}
+                className={index === activeIndex ? "active" : ""}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => onSelect(result)}
+              >
+                <span className="result-kind">{isTask ? "任務" : "專案"}</span>
+                <span><strong>{title}</strong><small>{meta || "未分類"}</small></span>
+                {result.date && <time>{result.date}</time>}
+              </button>
+            );
+          })}
+        </div>
+        <footer>↑↓ 選擇 · Enter 開啟 · Esc 關閉</footer>
+      </section>
+    </div>
+  );
+}
+
 function Empty({ text }: { text: string }) {
   return <div className="empty">{text}</div>;
 }

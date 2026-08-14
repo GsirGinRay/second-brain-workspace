@@ -46,7 +46,7 @@ export {
 } from "./today";
 export { projectColor } from "./visuals";
 export type { ProjectColor } from "./visuals";
-export { enforceDailyP1 } from "./rules";
+export { completeProject, enforceDailyP1 } from "./rules";
 export type { DailyPriorityTask } from "./rules";
 export {
   DEVICE_CANONICAL_VERSION,

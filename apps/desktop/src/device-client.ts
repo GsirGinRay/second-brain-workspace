@@ -128,7 +128,7 @@ export class DeviceClient {
   }
 
   async createPlan(input: {
-    schemaVersion: 2 | 3;
+    schemaVersion: 2 | 3 | 4;
     baseRevision: number;
     tasks: BrainTaskSnapshot[];
     projects: BrainProjectSnapshot[];
@@ -158,6 +158,12 @@ export class DeviceClient {
     if (!/^[0-9a-f-]{36}$/i.test(taskId)) throw new Error("TASK_ID_INVALID");
     const response = await this.signedRequest("DELETE", `/api/brain/device/tasks/${taskId}`);
     if (response.status < 200 || response.status >= 300) throw responseError(response);
+  }
+
+  async getCalendarIntegrationStatus(): Promise<{ enabled: boolean; connected: boolean }> {
+    const response = await this.signedRequest("GET", "/api/brain/device/integrations/calendar");
+    if (response.status < 200 || response.status >= 300) throw responseError(response);
+    return JSON.parse(response.body) as { enabled: boolean; connected: boolean };
   }
 
   private async unsignedJson<T>(path: string, body: unknown, expectedStatus = 200): Promise<T> {

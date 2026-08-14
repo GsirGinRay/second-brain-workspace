@@ -25,7 +25,7 @@ export interface MarkdownChange {
 interface TaskLocation { relativePath: string; lineIndex: number; rawLine: string }
 
 export interface StructuredVaultScan {
-  snapshot: SyncSnapshot & { schemaVersion: 3 };
+  snapshot: SyncSnapshot & { schemaVersion: 4 };
   bootstrapChanges: MarkdownChange[];
 }
 
@@ -107,7 +107,7 @@ export function scanStructuredVault(
     if (project) {
       const id = project.id ?? createId();
       const { frontmatterStart: _frontmatterStart, frontmatterEnd: _frontmatterEnd, ...snapshot } = project;
-      projects.push({ ...snapshot, id, schemaVersion: 3 });
+      projects.push({ ...snapshot, id, schemaVersion: 4 });
       if (!project.id) {
         const patched = updateProjectFrontmatter(source, { publisher_id: id });
         changedSources.set(file.relativePath, patched);
@@ -132,7 +132,7 @@ export function scanStructuredVault(
         id,
         rank,
         projectId: parsed.projectName ? projectIdByName.get(parsed.projectName) ?? null : null,
-        schemaVersion: 3,
+        schemaVersion: 4,
       };
       tasks.push(task);
       if (!parsed.id || !parsed.rank) {
@@ -147,7 +147,7 @@ export function scanStructuredVault(
   assertUnique(tasks.map((task) => task.id), "DUPLICATE_TASK_ID");
   return {
     snapshot: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       tasks,
       projects,
       fileHashes: Object.fromEntries(files.map((file) => [file.relativePath, file.sha256])),
@@ -222,6 +222,7 @@ export function applyDesiredSnapshot(
       start_date: project.startDate ?? null,
       end_date: project.endDate ?? null,
       target_date: null,
+      completed_at: project.completedAt ?? null,
     });
     if (next !== source) {
       currentSources.set(project.sourcePath, next);
