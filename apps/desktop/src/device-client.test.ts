@@ -135,3 +135,37 @@ test("sync commit carries plan choices and idempotency through signed native HTT
   assert.equal(captured?.headers["idempotency-key"], idempotencyKey);
   assert.match(captured?.body ?? "", /22222222-2222-4222-8222-222222222222/);
 });
+
+test("routine template sync uses signed structured requests without Markdown content", async () => {
+  const adapter = native();
+  const requests: Array<Parameters<NativeAdapter["publisherHttpRequest"]>[0]> = [];
+  const template = {
+    id: "55555555-5555-4555-8555-555555555555",
+    name: "Daily startup",
+    version: 1,
+    updatedAt: "2026-08-14T00:00:00.000Z",
+    items: [{
+      id: "66666666-6666-4666-8666-666666666666",
+      title: "Review today's schedule",
+      enabled: true,
+      projectId: null,
+      projectName: null,
+      priority: "normal" as const,
+      startTime: "10:00",
+      durationMinutes: 30,
+      rank: "00000000",
+    }],
+  };
+  adapter.publisherHttpRequest = async (request) => {
+    requests.push(request);
+    return { status: 200, headers: {}, body: JSON.stringify(template) };
+  };
+  const client = new DeviceClient("https://brain.example.com", adapter);
+  assert.deepEqual(await client.getRoutineTemplate(), template);
+  assert.deepEqual(await client.saveRoutineTemplate(template), template);
+  assert.deepEqual(requests.map(({ method, path, signed }) => ({ method, path, signed })), [
+    { method: "GET", path: "/api/brain/device/routine-template", signed: true },
+    { method: "POST", path: "/api/brain/device/routine-template", signed: true },
+  ]);
+  assert.doesNotMatch(JSON.stringify(requests), /markdownBody|attachment|absolutePath|privateKey/i);
+});

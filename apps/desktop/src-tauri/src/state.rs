@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 pub struct LocalState {
     connection: Mutex<Connection>,
@@ -114,6 +114,33 @@ impl LocalState {
                 |row| Ok((row.get(0)?, PathBuf::from(row.get::<_, String>(1)?))),
             )
             .optional()?)
+    }
+
+    pub fn setting(&self, key: &str) -> Result<Option<String>, NativeError> {
+        if key.is_empty() || key.len() > 100 {
+            return Err(NativeError::InvalidRequest);
+        }
+        let connection = self.connection.lock().map_err(|_| NativeError::Database)?;
+        Ok(connection
+            .query_row(
+                "SELECT value_json FROM settings WHERE key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn put_setting(&self, key: &str, value_json: &str) -> Result<(), NativeError> {
+        if key.is_empty()
+            || key.len() > 100
+            || value_json.len() > 65_536
+            || serde_json::from_str::<serde_json::Value>(value_json).is_err()
+        {
+            return Err(NativeError::InvalidRequest);
+        }
+        let connection = self.connection.lock().map_err(|_| NativeError::Database)?;
+        connection.execute("INSERT INTO settings(key, value_json, updated_at) VALUES (?1, ?2, unixepoch()) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at", params![key, value_json])?;
+        Ok(())
     }
 
     pub fn upsert_device_metadata(
@@ -362,8 +389,13 @@ impl LocalState {
                   created_at INTEGER NOT NULL,
                   commit_unknown INTEGER NOT NULL CHECK(commit_unknown IN (0, 1))
                 );
-                INSERT INTO schema_migrations(version, applied_at) VALUES (2, unixepoch());
-                PRAGMA user_version = 2;
+                CREATE TABLE IF NOT EXISTS settings(
+                  key TEXT PRIMARY KEY,
+                  value_json TEXT NOT NULL,
+                  updated_at INTEGER NOT NULL
+                );
+                INSERT INTO schema_migrations(version, applied_at) VALUES (3, unixepoch());
+                PRAGMA user_version = 3;
                 ",
             )?;
             transaction.commit()?;
@@ -376,10 +408,16 @@ impl LocalState {
                 ALTER TABLE projects ADD COLUMN snapshot_schema_version INTEGER NOT NULL DEFAULT 2 CHECK(snapshot_schema_version = 2);
                 ALTER TABLE outbox ADD COLUMN snapshot_schema_version INTEGER NOT NULL DEFAULT 2 CHECK(snapshot_schema_version = 2);
                 ALTER TABLE vaults ADD COLUMN selected INTEGER NOT NULL DEFAULT 0 CHECK(selected IN (0, 1));
-                INSERT INTO schema_migrations(version, applied_at) VALUES (2, unixepoch());
-                PRAGMA user_version = 2;
+                CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
+                INSERT INTO schema_migrations(version, applied_at) VALUES (3, unixepoch());
+                PRAGMA user_version = 3;
                 ",
             )?;
+            transaction.commit()?;
+        }
+        if version == 2 {
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL); INSERT INTO schema_migrations(version, applied_at) VALUES (3, unixepoch()); PRAGMA user_version = 3;")?;
             transaction.commit()?;
         }
         Ok(())

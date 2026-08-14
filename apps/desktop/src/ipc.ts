@@ -1,6 +1,8 @@
 import {
   canonicalizeDeviceRequest,
+  RoutineTemplateSchema,
   type DeviceCanonicalRequestInput,
+  type RoutineTemplate,
 } from "@second-brain/brain-core";
 
 export interface DeviceIdentity {
@@ -94,6 +96,8 @@ export interface NativeAdapter {
   loadPendingCommit(): Promise<PendingCommitRecord | null>;
   clearPendingCommit(): Promise<void>;
   pendingJournals(): Promise<string[]>;
+  loadRoutineTemplate?(): Promise<RoutineTemplate | null>;
+  saveRoutineTemplate?(template: RoutineTemplate): Promise<void>;
 }
 
 function assertRecord(value: unknown): Record<string, unknown> {
@@ -316,6 +320,14 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
     },
     async getDiagnostics() {
       return validateDiagnostics(await invoke("diagnostics"));
+    },
+    async loadRoutineTemplate() {
+      const value = await invoke("load_routine_template");
+      if (value === null) return null;
+      return RoutineTemplateSchema.parse(value);
+    },
+    async saveRoutineTemplate(template) {
+      await invoke("save_routine_template", { template: RoutineTemplateSchema.parse(template) });
     },
     async pickVaultFolder() {
       const value = await invoke("pick_vault_folder");

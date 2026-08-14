@@ -20,12 +20,17 @@ import {
   X,
 } from "lucide-react";
 import {
+  applyRoutineTemplate,
+  createDefaultRoutineTemplate,
   getTodayTasks,
+  splitTodayTasks,
   completeProject,
   projectColor,
   rankForIndex,
   type BrainProjectSnapshot,
   type BrainTaskSnapshot,
+  type RoutineTemplate,
+  type RoutineTemplateItem,
   type TaskStatus,
 } from "@second-brain/brain-core";
 import {
@@ -40,6 +45,7 @@ import {
 import {
   DeviceClient,
   DEFAULT_SERVER_ORIGIN,
+  PublisherHttpError,
   type ConflictChoice,
 } from "./device-client";
 import {
@@ -138,6 +144,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [vaultInput, setVaultInput] = useState("");
   const [tasks, setTasks] = useState<BrainTaskSnapshot[]>([]);
   const [projects, setProjects] = useState<BrainProjectSnapshot[]>([]);
+  const [routineTemplate, setRoutineTemplate] = useState<RoutineTemplate>(() => createDefaultRoutineTemplate(crypto.randomUUID()));
   const [files, setFiles] = useState<LocalMarkdownFile[]>([]);
   const [status, setStatus] = useState("正在啟動…");
   const [error, setError] = useState("");
@@ -167,6 +174,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [previewDismissed, setPreviewDismissed] = useState(false);
   const syncRunningRef = useRef(false);
   const cloudEtagRef = useRef<string | null>(null);
+  const routineTemplateRef = useRef(routineTemplate);
 
   const client = useMemo(
     () => (serverOrigin ? new DeviceClient(serverOrigin, native) : null),
@@ -176,6 +184,48 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     () => (client ? new SyncEngine(native, client) : null),
     [client, native],
   );
+
+  useEffect(() => {
+    void native.loadRoutineTemplate?.().then((value) => {
+      if (value) {
+        routineTemplateRef.current = value;
+        setRoutineTemplate(value);
+      }
+    }).catch(() => undefined);
+  }, [native]);
+
+  const saveRoutineTemplate = useCallback((value: RoutineTemplate) => {
+    const next = { ...value, version: value.version + 1, updatedAt: new Date().toISOString() };
+    routineTemplateRef.current = next;
+    setRoutineTemplate(next);
+    void native.saveRoutineTemplate?.(next);
+  }, [native]);
+
+  useEffect(() => {
+    if (!client || !devicePaired) return;
+    const timer = window.setTimeout(() => {
+      void client.getRoutineTemplate().then(async (remote) => {
+        const local = routineTemplateRef.current;
+        if (local.updatedAt > remote.updatedAt) {
+          const saved = await client.saveRoutineTemplate({ ...local, version: remote.version });
+          routineTemplateRef.current = saved;
+          setRoutineTemplate(saved);
+          await native.saveRoutineTemplate?.(saved);
+          return;
+        }
+        if (remote.version !== local.version || remote.updatedAt !== local.updatedAt) {
+          routineTemplateRef.current = remote;
+          setRoutineTemplate(remote);
+          await native.saveRoutineTemplate?.(remote);
+        }
+      }).catch((cause) => {
+        if (cause instanceof PublisherHttpError && cause.code === "ROUTINE_TEMPLATES_DISABLED") return;
+        const message = cause instanceof Error ? cause.message : "ROUTINE_TEMPLATE_SYNC_FAILED";
+        setError(`每日啟動模板同步失敗：${message}`);
+      });
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [client, devicePaired, native, routineTemplate]);
 
   useEffect(() => {
     const openGlobalAction = (event: KeyboardEvent) => {
@@ -379,7 +429,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     nextProjects = projects,
   ) {
     const changes = applyDesiredSnapshot(files, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       tasks: nextTasks,
       projects: nextProjects,
       fileHashes: {},
@@ -589,6 +639,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
         onQuickAdd={() => setQuickAddOpen(true)}
+        routineTemplate={routineTemplate}
+        onRoutineTemplateChange={saveRoutineTemplate}
       />
     ) : view === "calendar" ? (
       <Calendar
@@ -982,13 +1034,15 @@ function TaskActionBar({
   onComplete,
   onEdit,
   onDelete,
+  showEdit = true,
 }: {
   task: BrainTaskSnapshot;
   important: boolean;
   onImportant: () => void;
   onComplete: () => void;
-  onEdit: () => void;
+  onEdit?: () => void;
   onDelete: (task: BrainTaskSnapshot) => void;
+  showEdit?: boolean;
 }) {
   const done = task.status === "done";
   return (
@@ -996,12 +1050,12 @@ function TaskActionBar({
       <button className={`task-action-button ${important ? "active" : ""}`} aria-label="設為最重要" title="設為最重要" onClick={onImportant}>
         <Star aria-hidden="true" fill={important ? "currentColor" : "none"} />
       </button>
-      <button className="task-action-button" aria-label={done ? "重新開啟" : "標記完成"} title={done ? "重新開啟" : "標記完成"} onClick={onComplete}>
-        {done ? <RotateCcw aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
+      <button className="task-action-button completion-action" aria-label={done ? "重新開啟" : "標記完成"} title={done ? "重新開啟" : "標記完成"} onClick={onComplete}>
+        {done ? <RotateCcw aria-hidden="true" /> : <span className="action-checkmark" aria-hidden="true">✓</span>}
       </button>
-      <button className="task-action-button" aria-label="編輯任務" title="編輯任務" onClick={onEdit}>
+      {showEdit && <button className="task-action-button" aria-label="編輯任務" title="編輯任務" onClick={onEdit}>
         <Pencil aria-hidden="true" />
-      </button>
+      </button>}
       <button className="task-action-button danger" aria-label="永久刪除" title="永久刪除雲端與本機 Markdown" onClick={() => onDelete(task)}>
         <Trash2 aria-hidden="true" />
       </button>
@@ -1026,7 +1080,83 @@ function PriorityBadge({
   );
 }
 
-function Today({
+function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuickAdd, routineTemplate, onRoutineTemplateChange }: {
+  tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; showCompleted: boolean;
+  onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onQuickAdd: () => void;
+  routineTemplate: RoutineTemplate; onRoutineTemplateChange: (template: RoutineTemplate) => void;
+}) {
+  const today = taipeiDateKey();
+  const groups = splitTodayTasks(tasks, projects, today);
+  const completed = completedForDate(tasks, today);
+  const scheduled = groups.today.filter((task) => task.startTime).sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? ""));
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [draggedItem, setDraggedItem] = useState<string | null>(null);
+  const patchTask = (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => {
+    const changed = tasks.map((item) => item.id === task.id ? { ...item, ...patch } : item);
+    onSave(patch.priority === "highest" && task.id ? markMostImportant(changed, task.id, today) : changed);
+  };
+  const complete = (task: BrainTaskSnapshot) => patchTask(task, { status: task.status === "done" ? "todo" : "done", completedAt: task.status === "done" ? null : today });
+  const startToday = () => {
+    const result = applyRoutineTemplate(routineTemplate, tasks, today);
+    if (result.created.length) onSave(result.tasks);
+    setNotice(result.created.length ? `已建立 ${result.created.length} 項今日例行任務` : "今天的例行任務都已建立");
+  };
+  const updateItem = (id: string, patch: Partial<RoutineTemplateItem>) => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.map((item) => item.id === id ? { ...item, ...patch } : item) });
+  const dropItem = (targetId: string) => {
+    if (!draggedItem || draggedItem === targetId) return;
+    const items = [...routineTemplate.items];
+    const from = items.findIndex((item) => item.id === draggedItem);
+    const to = items.findIndex((item) => item.id === targetId);
+    const [moved] = items.splice(from, 1);
+    if (!moved) return;
+    items.splice(to, 0, moved);
+    onRoutineTemplateChange({ ...routineTemplate, items: items.map((item, index) => ({ ...item, rank: rankForIndex(index) })) });
+    setDraggedItem(null);
+  };
+  const important = groups.today.find((task) => task.priority === "highest") ?? null;
+  return <section className="command-center">
+    <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>安排精力，而不只是塞滿行程</h2><p>先選出今天最重要的事，再把低耗能工作留給下午。</p></div><button className="primary start-day-button" onClick={startToday}><Plus />開始今天</button></header>
+    {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
+    <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article><button className="template-settings-button" onClick={() => setTemplateOpen((open) => !open)}><Settings2 />編輯每日模板</button></div>
+    {templateOpen && <section className="routine-editor"><header><div><span className="eyebrow">DAILY ROUTINE</span><input aria-label="模板名稱" value={routineTemplate.name} onChange={(event) => onRoutineTemplateChange({ ...routineTemplate, name: event.target.value })} /></div><button onClick={() => setTemplateOpen(false)} aria-label="關閉模板"><X /></button></header><div className="routine-items">{routineTemplate.items.map((item) => <article key={item.id} draggable onDragStart={() => setDraggedItem(item.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropItem(item.id)}><GripVertical /><input type="checkbox" aria-label={`${item.title}啟用`} checked={item.enabled} onChange={(event) => updateItem(item.id, { enabled: event.target.checked })} /><input aria-label="例行任務名稱" value={item.title} onChange={(event) => updateItem(item.id, { title: event.target.value })} /><select aria-label="例行任務專案" value={item.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); updateItem(item.id, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><select aria-label="例行任務優先度" value={item.priority} onChange={(event) => updateItem(item.id, { priority: event.target.value as RoutineTemplateItem["priority"] })}>{(["highest","high","medium","normal","low"] as const).map((value) => <option key={value} value={value}>{priorityDisplay(value).code}</option>)}</select><input aria-label="開始時間" type="time" value={item.startTime ?? ""} onChange={(event) => updateItem(item.id, { startTime: event.target.value || null, durationMinutes: event.target.value ? item.durationMinutes ?? 30 : null })} /><select aria-label="持續時間" disabled={!item.startTime} value={item.durationMinutes ?? 30} onChange={(event) => updateItem(item.id, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select><button className="danger-icon" aria-label={`刪除${item.title}`} onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.filter((value) => value.id !== item.id) })}><Trash2 /></button></article>)}</div><button className="secondary" onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: [...routineTemplate.items, { id: crypto.randomUUID(), title: "新的例行任務", enabled: true, projectId: null, projectName: null, priority: "normal", startTime: null, durationMinutes: null, rank: rankForIndex(routineTemplate.items.length) }] })}><Plus />新增模板項目</button></section>}
+    <section className="timeline-section"><header><div><span className="eyebrow">TODAY TIMELINE</span><h3>今日時間軸</h3></div><button className="secondary" onClick={onQuickAdd}><Plus />新增任務 <kbd>N</kbd></button></header>{scheduled.length === 0 ? <Empty text="尚未安排時間。可直接在下方任務設定開始時間。" /> : <div className="timeline">{scheduled.map((task) => <article key={task.id ?? task.title} className={`${Number(task.startTime?.slice(0,2)) >= 13 && ["normal","low"].includes(task.priority) ? "low-energy" : ""}`}><time>{task.startTime}</time><div><strong>{task.title}</strong><small>{task.durationMinutes ?? 30} 分鐘 · {task.projectName ?? "無專案"}</small></div></article>)}</div>}</section>
+    <div className="today-columns"><TaskPanel title="逾期任務" tone="overdue" tasks={groups.overdue} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /><TaskPanel title="今日任務" tone="today" tasks={groups.today} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /></div>
+    {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} />)}</div></details>}
+  </section>;
+}
+
+function TaskPanel({ title, tone, tasks, projects, today, onPatch, onComplete, onDelete }: { title: string; tone: "overdue" | "today"; tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; today: string; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
+  return <section className={`today-panel ${tone}`}><header><div><span className="eyebrow">{tone === "overdue" ? "NEEDS A DECISION" : "TODAY'S FOCUS"}</span><h3>{title}</h3></div><strong>{tasks.length}</strong></header>{tasks.length === 0 ? <Empty text={tone === "overdue" ? "沒有逾期任務。" : "今天沒有待辦任務。"} /> : <div className="focus-task-list">{tasks.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} projects={projects} today={today} onPatch={onPatch} onComplete={onComplete} onDelete={onDelete} />)}</div>}</section>;
+}
+
+function InlineTaskCard({ task, projects, today, onPatch, onComplete, onDelete }: { task: BrainTaskSnapshot; projects: BrainProjectSnapshot[]; today: string; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [title, setTitle] = useState(task.title);
+  const saveTitle = () => { const next = title.trim(); if (next && next !== task.title) onPatch(task, { title: next }); else setTitle(task.title); setEditingTitle(false); };
+  const overdueDays = task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
+  return <article className={`inline-task-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityBadge priority={task.priority} />{editingTitle ? <input autoFocus aria-label="任務標題" value={title} onChange={(event) => setTitle(event.target.value)} onBlur={saveTitle} onKeyDown={(event) => { if (event.key === "Enter") saveTitle(); if (event.key === "Escape") { setTitle(task.title); setEditingTitle(false); } }} /> : <button className="inline-title-button" onClick={() => setEditingTitle(true)}>{task.title}</button>}</div><div className="inline-fields"><select aria-label={`${task.title}所屬專案`} value={task.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); onPatch(task, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><input aria-label={`${task.title}日期`} type="date" value={task.taskDate ?? ""} onChange={(event) => onPatch(task, { taskDate: event.target.value || null })} /><input aria-label={`${task.title}開始時間`} type="time" value={task.startTime ?? ""} onChange={(event) => onPatch(task, { startTime: event.target.value || null, durationMinutes: event.target.value ? task.durationMinutes ?? 30 : null, timeZone: "Asia/Taipei" })} /><select aria-label={`${task.title}持續時間`} disabled={!task.startTime} value={task.durationMinutes ?? 30} onChange={(event) => onPatch(task, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions"><button className={task.priority === "highest" ? "active" : ""} aria-label="設為今日最重要" title="設為今日最重要" onClick={() => onPatch(task, { priority: "highest", taskDate: today })}><Star fill={task.priority === "highest" ? "currentColor" : "none"} /></button>{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={() => onPatch(task, { taskDate: today })}><CalendarDays /></button>}<button className="danger-icon" aria-label="永久刪除" title="永久刪除" onClick={() => onDelete(task)}><Trash2 /></button></div></article>;
+}
+
+function AgendaInlineTitle({ task, onSave }: { task: BrainTaskSnapshot; onSave: (title: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(task.title);
+  const finish = () => {
+    const title = value.trim();
+    if (title && title !== task.title) onSave(title);
+    else setValue(task.title);
+    setEditing(false);
+  };
+  if (editing) {
+    return <input className="agenda-inline-title-input" autoFocus aria-label="任務名稱" value={value} onChange={(event) => setValue(event.target.value)} onBlur={finish} onKeyDown={(event) => {
+      if (event.key === "Enter") finish();
+      if (event.key === "Escape") { setValue(task.title); setEditing(false); }
+    }} />;
+  }
+  return <button className="agenda-inline-title" title="點一下直接編輯" onClick={() => setEditing(true)}>{task.status === "done" ? "✓ " : ""}{task.title}</button>;
+}
+
+function LegacyToday({
   tasks,
   projects,
   showCompleted,
@@ -1423,7 +1553,7 @@ function newTask(
   } = {},
 ): BrainTaskSnapshot {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     id: crypto.randomUUID(),
     title: title.trim(),
     status: "todo",
@@ -1699,7 +1829,6 @@ function Calendar({
   const [dragOriginDate, setDragOriginDate] = useState<string | null>(null);
   const [dropTargetDate, setDropTargetDate] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [ideasExpanded, setIdeasExpanded] = useState(false);
   const [ideaContextMenu, setIdeaContextMenu] = useState<{
     task: BrainTaskSnapshot;
@@ -1905,7 +2034,6 @@ function Calendar({
                           onDoubleClick={(event) => {
                             event.stopPropagation();
                             setSelected(entry.date);
-                            setEditingTaskId(entry.task.id);
                             setSideOpen(true);
                           }}
                           style={taskProjectStyle(entry.task)}
@@ -1985,7 +2113,6 @@ function Calendar({
                         }}
                         onDoubleClick={() => {
                           setSelected(entry.date);
-                          setEditingTaskId(entry.task.id);
                           setSideOpen(true);
                         }}
                         style={taskProjectStyle(entry.task)}
@@ -2147,27 +2274,48 @@ function Calendar({
           ) : (
             selectedTasks.map(({ task, date }) => (
               <article
-                draggable
-                onDragStart={() => setDragTaskId(task.id)}
-                onDragEnd={() => setDragTaskId(null)}
-                onPointerDown={(event) => { if (event.button === 0) { setDragTaskId(task.id); event.currentTarget.setPointerCapture(event.pointerId); } }}
-                onPointerUp={(event) => finishPointerDrag(event, task.id)}
                 style={taskProjectStyle(task)}
                 className={`${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
                 key={`${task.id}:${date}`}
               >
+                <button
+                  className="agenda-drag-handle"
+                  draggable
+                  aria-label={`拖曳 ${task.title}`}
+                  title="拖曳到其他日期"
+                  onDragStart={(event) => {
+                    setDragTaskId(task.id);
+                    event.dataTransfer.effectAllowed = "move";
+                    if (task.id) event.dataTransfer.setData("application/x-second-brain-task-id", task.id);
+                  }}
+                  onDragEnd={() => setDragTaskId(null)}
+                  onPointerDown={(event) => {
+                    if (event.button === 0) {
+                      setDragTaskId(task.id);
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    }
+                  }}
+                  onPointerUp={(event) => finishPointerDrag(event, task.id)}
+                >
+                  <GripVertical aria-hidden="true" />
+                </button>
                 <div>
                   <div className="task-title-row">
                     <PriorityBadge priority={task.priority} />
-                    <strong>
-                      {task.status === "done" ? "✓ " : ""}
-                      {task.title}
-                    </strong>
+                    <AgendaInlineTitle task={task} onSave={(title) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, title } : item))} />
                   </div>
-                  <small>
-                    {task.projectName ?? "無專案"}
-                    {task.taskDate ? " · 已排程" : ""}
-                  </small>
+                  <select
+                    className="agenda-project-select"
+                    aria-label={`${task.title} 所屬專案`}
+                    value={task.projectId ?? ""}
+                    onChange={(event) => {
+                      const project = projects.find((item) => item.id === event.target.value);
+                      void onSave(tasks.map((item) => item.id === task.id ? { ...item, projectId: project?.id ?? null, projectName: project?.name ?? null } : item));
+                    }}
+                  >
+                    <option value="">無專案</option>
+                    {projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}
+                  </select>
                 </div>
                 <input
                   aria-label={`${task.title}規劃日`}
@@ -2189,25 +2337,10 @@ function Calendar({
                     important={task.priority === "highest"}
                     onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, selected))}
                     onComplete={() => complete(task.id)}
-                    onEdit={() => setEditingTaskId(editingTaskId === task.id ? null : task.id)}
                     onDelete={remove}
+                    showEdit={false}
                   />
                 </div>
-                {editingTaskId === task.id && (
-                  <TaskEditor
-                    task={task}
-                    projects={projects}
-                    onSave={(next) => {
-                      setEditingTaskId(null);
-                      const changed = tasks.map((item) => item.id === task.id ? next : item);
-                      void onSave(
-                        next.priority === "highest" && next.id
-                          ? markMostImportant(changed, next.id, next.taskDate ?? selected)
-                          : changed,
-                      );
-                    }}
-                  />
-                )}
               </article>
             ))
           )}

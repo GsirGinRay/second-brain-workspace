@@ -78,7 +78,7 @@ export class SyncEngine {
     const stateResult = await this.client.getState(null);
     if (stateResult.kind !== "modified") throw new Error("DEVICE_STATE_NOT_MODIFIED_WITHOUT_ETAG");
     const plan = await this.client.createPlan({
-      schemaVersion: 4,
+      schemaVersion: 5,
       baseRevision: stateResult.state.revision,
       tasks: structured.snapshot.tasks,
       projects: structured.snapshot.projects,
@@ -108,7 +108,7 @@ export class SyncEngine {
   ): Promise<Extract<SyncResult, { kind: "synced" }>> {
     const desired = resolveDesired(plan, choices);
     const changes = applyDesiredSnapshot(files, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       tasks: desired.tasks,
       projects: desired.projects,
       fileHashes: {},

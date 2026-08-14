@@ -47,3 +47,14 @@ export function getTodayTasks<
       left.rank.localeCompare(right.rank),
   );
 }
+
+export function splitTodayTasks<
+  T extends Pick<BrainTaskSnapshot, "id" | "status" | "taskDate" | "priority" | "projectId" | "rank">,
+  P extends Pick<BrainProjectSnapshot, "id" | "focusToday">,
+>(tasks: readonly T[], projects: readonly P[], today: string): { overdue: T[]; today: T[] } {
+  const visible = getTodayTasks(tasks, projects, today);
+  return {
+    overdue: visible.filter((task) => Boolean(task.taskDate && task.taskDate < today)),
+    today: visible.filter((task) => !task.taskDate || task.taskDate >= today),
+  };
+}

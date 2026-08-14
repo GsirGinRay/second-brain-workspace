@@ -133,7 +133,10 @@ test("task actions are compact accessible icons and permanent delete is never ar
   assert.match(source, /onDelete=\{onDelete\}/);
   assert.doesNotMatch(source, /永久刪除[\s\S]{0,180}archive\(/);
   assert.match(styles, /\.task-action-button[^}]*min-width:\s*40px/);
-  assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(4/);
+  assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(3/);
+  assert.match(source, /function AgendaInlineTitle/);
+  assert.match(source, /showEdit=\{false\}/);
+  assert.match(source, /className="agenda-drag-handle"[\s\S]{0,160}draggable/);
 });
 
 test("desktop exposes global task and project search with keyboard shortcuts", () => {

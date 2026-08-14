@@ -74,7 +74,7 @@ test("V3 snapshots migrate to V4 with safe defaults", () => {
     timeZone: undefined,
     schemaVersion: 3,
   });
-  assert.equal(migratedTask.schemaVersion, 4);
+  assert.equal(migratedTask.schemaVersion, 5);
   assert.equal(migratedTask.startTime, null);
   assert.equal(migratedTask.durationMinutes, null);
   assert.equal(migratedTask.timeZone, "Asia/Taipei");
@@ -84,7 +84,7 @@ test("V3 snapshots migrate to V4 with safe defaults", () => {
     completedAt: undefined,
     schemaVersion: 3,
   });
-  assert.equal(migratedProject.schemaVersion, 4);
+  assert.equal(migratedProject.schemaVersion, 5);
   assert.equal(migratedProject.completedAt, null);
 });
 

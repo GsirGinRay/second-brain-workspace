@@ -158,10 +158,11 @@ fn sqlite_migrations_are_explicit_and_do_not_create_note_body_columns() {
     let dir = tempdir().unwrap();
     let state = LocalState::open(&dir.path().join("state.sqlite")).unwrap();
     assert_eq!(state.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
-    assert_eq!(CURRENT_SCHEMA_VERSION, 2);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 3);
     let tables = state.table_names().unwrap();
     assert!(tables.contains(&"outbox".to_owned()));
     assert!(tables.contains(&"recovery_journal".to_owned()));
+    assert!(tables.contains(&"settings".to_owned()));
     assert!(!state.has_column("files", "body").unwrap());
     assert!(!state.has_column("tasks", "markdown_body").unwrap());
     assert!(state
@@ -257,7 +258,20 @@ fn selected_vault_root_is_persisted_in_local_state() {
 }
 
 #[test]
-fn local_state_migrates_the_previous_version_to_baseline_v2() {
+fn routine_template_setting_round_trips_as_native_structured_json() {
+    let dir = tempdir().unwrap();
+    let state = LocalState::open(&dir.path().join("state.sqlite")).unwrap();
+    let value = r#"{"id":"template","name":"Daily","items":[]}"#;
+    state.put_setting("routine_template", value).unwrap();
+    assert_eq!(
+        state.setting("routine_template").unwrap().as_deref(),
+        Some(value)
+    );
+    assert!(!state.has_column("settings", "markdown_body").unwrap());
+}
+
+#[test]
+fn local_state_migrates_the_previous_version_to_current_baseline() {
     let dir = tempdir().unwrap();
     let state_path = dir.path().join("legacy.sqlite");
     let connection = rusqlite::Connection::open(&state_path).unwrap();

@@ -13,16 +13,16 @@ export type VersionedTaskSnapshot = Omit<BrainTaskSnapshot, "plannedDate" | "due
   startTime: string | null;
   durationMinutes: number | null;
   timeZone: string;
-  schemaVersion: 4;
+  schemaVersion: 5;
 };
 export type VersionedProjectSnapshot = Omit<BrainProjectSnapshot, "targetDate"> & {
   startDate: string | null;
   endDate: string | null;
   completedAt: string | null;
-  schemaVersion: 4;
+  schemaVersion: 5;
 };
 export type VersionedSyncSnapshot = Omit<SyncSnapshot, "schemaVersion" | "tasks" | "projects"> & {
-  schemaVersion: 4;
+  schemaVersion: 5;
   tasks: VersionedTaskSnapshot[];
   projects: VersionedProjectSnapshot[];
 };
@@ -59,6 +59,7 @@ export function migrateSyncSnapshot(value: unknown): VersionedSyncSnapshot {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     tasks: parsed.tasks.map(migrateTaskSnapshot),
     projects: parsed.projects.map(migrateProjectSnapshot),
+    routineTemplates: parsed.routineTemplates ?? [],
   };
 }
 

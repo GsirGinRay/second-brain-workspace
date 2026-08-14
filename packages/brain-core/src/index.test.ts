@@ -75,16 +75,16 @@ test("Zod DTO accepts taskDate and rejects malformed task snapshots", () => {
   assert.throws(() => parseSyncSnapshot({ tasks: [{ ...task, status: "invalid" }], projects: [] }));
 });
 
-test("migrates legacy task and sync snapshots to schemaVersion 4", () => {
+test("migrates legacy task and sync snapshots to schemaVersion 5", () => {
   const v1 = { ...task, taskDate: undefined, plannedDate: "2026-08-10" };
   const migratedTask = migrateTaskSnapshot(v1);
-  assert.equal(migratedTask.schemaVersion, 4);
+  assert.equal(migratedTask.schemaVersion, 5);
   assert.equal(migratedTask.taskDate, "2026-08-10");
 
   const migratedSync = migrateSyncSnapshot({ tasks: [v1], projects: [] });
-  assert.equal(migratedSync.schemaVersion, 4);
+  assert.equal(migratedSync.schemaVersion, 5);
   assert.equal(migratedSync.tasks[0]?.taskDate, "2026-08-10");
-  assert.equal(migratedSync.tasks[0]?.schemaVersion, 4);
+  assert.equal(migratedSync.tasks[0]?.schemaVersion, 5);
 });
 
 test("mergeEntity treats taskDate as a field when a legacy base omits it", () => {

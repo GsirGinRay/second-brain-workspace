@@ -1,6 +1,8 @@
 export {
   BrainProjectSnapshotSchema,
   BrainTaskSnapshotSchema,
+  RoutineTemplateSchema,
+  RoutineTemplateItemSchema,
   SyncSnapshotSchema,
   TaskPrioritySchema,
   TaskStatusSchema,
@@ -10,6 +12,8 @@ export { isValidDateKey } from "./dates";
 export type {
   BrainProjectSnapshot,
   BrainTaskSnapshot,
+  RoutineTemplate,
+  RoutineTemplateItem,
   ParsedMarkdownTask,
   ParsedProjectFrontmatter,
   SyncSnapshot,
@@ -42,8 +46,10 @@ export {
 export type { MergeResult, MergeStatus } from "./merge";
 export {
   getTodayTasks,
+  splitTodayTasks,
   rankForIndex,
 } from "./today";
+export { applyRoutineTemplate, createDefaultRoutineTemplate, routineTaskId } from "./routine";
 export { projectColor } from "./visuals";
 export type { ProjectColor } from "./visuals";
 export { completeProject, enforceDailyP1 } from "./rules";

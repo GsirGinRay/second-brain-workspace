@@ -3,6 +3,7 @@ import {
   type BrainTaskSnapshot,
   type DevicePairStartResultDto,
   type DevicePairStatusDto,
+  type RoutineTemplate,
 } from "@second-brain/brain-core";
 import type { NativeAdapter, PublisherHttpResponse } from "./ipc";
 export const DEFAULT_SERVER_ORIGIN = "";
@@ -128,7 +129,7 @@ export class DeviceClient {
   }
 
   async createPlan(input: {
-    schemaVersion: 2 | 3 | 4;
+    schemaVersion: 2 | 3 | 4 | 5;
     baseRevision: number;
     tasks: BrainTaskSnapshot[];
     projects: BrainProjectSnapshot[];
@@ -158,6 +159,16 @@ export class DeviceClient {
     if (!/^[0-9a-f-]{36}$/i.test(taskId)) throw new Error("TASK_ID_INVALID");
     const response = await this.signedRequest("DELETE", `/api/brain/device/tasks/${taskId}`);
     if (response.status < 200 || response.status >= 300) throw responseError(response);
+  }
+
+  async getRoutineTemplate(): Promise<RoutineTemplate> {
+    const response = await this.signedRequest("GET", "/api/brain/device/routine-template");
+    if (response.status < 200 || response.status >= 300) throw responseError(response);
+    return JSON.parse(response.body) as RoutineTemplate;
+  }
+
+  async saveRoutineTemplate(template: RoutineTemplate): Promise<RoutineTemplate> {
+    return this.signedJson("POST", "/api/brain/device/routine-template", template);
   }
 
   private async unsignedJson<T>(path: string, body: unknown, expectedStatus = 200): Promise<T> {

@@ -73,6 +73,63 @@ pub struct MarkdownReadResult {
     pub files: Vec<MarkdownFileContents>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoutineTemplateItemPayload {
+    pub id: String,
+    pub title: String,
+    pub enabled: bool,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub priority: String,
+    pub start_time: Option<String>,
+    pub duration_minutes: Option<u16>,
+    pub rank: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoutineTemplatePayload {
+    pub id: String,
+    pub name: String,
+    pub version: u64,
+    pub updated_at: String,
+    pub items: Vec<RoutineTemplateItemPayload>,
+}
+
+fn validate_routine_template(template: &RoutineTemplatePayload) -> Result<(), NativeError> {
+    if template.id.is_empty()
+        || template.id.len() > 100
+        || template.name.trim().is_empty()
+        || template.name.len() > 200
+        || template.items.len() > 100
+    {
+        return Err(NativeError::InvalidRequest);
+    }
+    for item in &template.items {
+        let valid_priority = matches!(
+            item.priority.as_str(),
+            "highest" | "high" | "medium" | "normal" | "low"
+        );
+        let valid_duration = match item.duration_minutes {
+            Some(value) => (5..=1440).contains(&value),
+            None => true,
+        };
+        if item.id.is_empty()
+            || item.id.len() > 100
+            || item.title.trim().is_empty()
+            || item.title.len() > 500
+            || !valid_priority
+            || !valid_duration
+            || item.rank.is_empty()
+            || item.rank.len() > 100
+        {
+            return Err(NativeError::InvalidRequest);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MarkdownChangeRequest {
@@ -471,6 +528,27 @@ fn diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsSnapshot, Native
 }
 
 #[tauri::command]
+fn load_routine_template(
+    state: State<'_, AppState>,
+) -> Result<Option<RoutineTemplatePayload>, NativeError> {
+    state
+        .local_state
+        .setting("routine_template")?
+        .map(|json| serde_json::from_str(&json).map_err(|_| NativeError::Database))
+        .transpose()
+}
+
+#[tauri::command]
+fn save_routine_template(
+    template: RoutineTemplatePayload,
+    state: State<'_, AppState>,
+) -> Result<(), NativeError> {
+    validate_routine_template(&template)?;
+    let json = serde_json::to_string(&template).map_err(|_| NativeError::InvalidRequest)?;
+    state.local_state.put_setting("routine_template", &json)
+}
+
+#[tauri::command]
 fn set_autostart_command(enabled: bool, state: State<'_, AppState>) -> Result<(), NativeError> {
     let executable = std::env::current_exe().map_err(|_| NativeError::Io)?;
     set_autostart(enabled, &executable)?;
@@ -572,7 +650,9 @@ pub fn run() -> tauri::Result<()> {
             pending_journals,
             diagnostics,
             set_autostart_command,
-            set_close_behavior
+            set_close_behavior,
+            load_routine_template,
+            save_routine_template
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
