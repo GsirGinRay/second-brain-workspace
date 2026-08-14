@@ -54,3 +54,24 @@ test("local-only deletion succeeds without a Publisher client", async () => {
     remoteError: null,
   });
 });
+
+test("an unpaired private build deletes locally without calling Publisher", async () => {
+  let remoteCalled = false;
+
+  const outcome = await deleteTaskLocalFirst({
+    deleteLocal: async () => true,
+    deleteRemote: async () => {
+      remoteCalled = true;
+      throw new Error("HTTP 401 · DEVICE_UNAUTHORIZED");
+    },
+    remoteEnabled: false,
+  });
+
+  assert.equal(remoteCalled, false);
+  assert.deepEqual(outcome, {
+    localDeleted: true,
+    remoteDeleted: null,
+    needsPairing: false,
+    remoteError: null,
+  });
+});

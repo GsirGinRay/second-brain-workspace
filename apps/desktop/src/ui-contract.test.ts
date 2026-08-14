@@ -137,6 +137,8 @@ test("task actions are compact accessible icons and permanent delete is never ar
   assert.match(source, /function AgendaInlineTitle/);
   assert.match(source, /showEdit=\{false\}/);
   assert.match(source, /className="agenda-drag-handle"[\s\S]{0,160}draggable/);
+  assert.match(source, /remoteEnabled:\s*devicePaired/);
+  assert.match(source, /if \(devicePaired\) \{[\s\S]{0,160}runSync\(\{ background: true \}\)/);
 });
 
 test("today command center makes the daily template visible and understandable", () => {

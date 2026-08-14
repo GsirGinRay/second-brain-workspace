@@ -446,7 +446,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       await native.applyMarkdownChanges(changes);
       setStatus("已儲存在本機 · 等待同步");
       await reloadLocal();
-      window.setTimeout(() => void runSync({ background: true }), 50);
+      if (devicePaired) {
+        window.setTimeout(() => void runSync({ background: true }), 50);
+      }
       return true;
     } catch (cause) {
       setError(
@@ -474,6 +476,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     const outcome = await deleteTaskLocalFirst({
       deleteLocal: () => persistLocal(tasks.filter((item) => task.id ? item.id !== task.id : item !== task)),
       deleteRemote: client && task.id ? () => client.deleteTaskPermanently(task.id!) : undefined,
+      remoteEnabled: devicePaired,
     });
     if (!outcome.localDeleted) {
       setWorking(false);

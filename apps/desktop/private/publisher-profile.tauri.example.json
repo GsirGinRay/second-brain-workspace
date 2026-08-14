@@ -1,6 +1,6 @@
 {
   "productName": "Second Brain Workspace Publisher Preview",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "identifier": "app.example.secondbrain.publisher-preview",
   "app": {
     "windows": [

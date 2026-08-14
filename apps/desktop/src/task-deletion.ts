@@ -1,6 +1,7 @@
 export interface DeleteTaskLocalFirstOptions {
   deleteLocal: () => Promise<boolean>;
   deleteRemote?: () => Promise<void>;
+  remoteEnabled?: boolean;
 }
 
 export interface DeleteTaskOutcome {
@@ -13,12 +14,13 @@ export interface DeleteTaskOutcome {
 export async function deleteTaskLocalFirst({
   deleteLocal,
   deleteRemote,
+  remoteEnabled = true,
 }: DeleteTaskLocalFirstOptions): Promise<DeleteTaskOutcome> {
   const localDeleted = await deleteLocal();
   if (!localDeleted) {
     return { localDeleted: false, remoteDeleted: false, needsPairing: false, remoteError: null };
   }
-  if (!deleteRemote) {
+  if (!remoteEnabled || !deleteRemote) {
     return { localDeleted: true, remoteDeleted: null, needsPairing: false, remoteError: null };
   }
   try {
