@@ -21,7 +21,6 @@ const task: BrainTaskSnapshot = {
   startTime: "09:30",
   durationMinutes: 45,
   timeZone: "Asia/Taipei",
-  calendarSyncEnabled: true,
   priority: "normal",
   projectId: "project-1",
   projectName: "Launch",
@@ -51,14 +50,12 @@ test("V4 task metadata round-trips only through the structured marker", () => {
   const line = formatTaskLine(task);
   assert.match(line, /"startTime":"09:30"/);
   assert.match(line, /"durationMinutes":45/);
-  assert.match(line, /"calendarSyncEnabled":true/);
   assert.doesNotMatch(line, /accessToken|refreshToken|eventId/i);
 
   const parsed = parseTaskLine(line, "tasks.md", 0);
   assert.equal(parsed?.startTime, "09:30");
   assert.equal(parsed?.durationMinutes, 45);
   assert.equal(parsed?.timeZone, "Asia/Taipei");
-  assert.equal(parsed?.calendarSyncEnabled, true);
 });
 
 test("V4 minimal patch preserves unrelated Markdown body and unknown marker fields", () => {
@@ -75,14 +72,12 @@ test("V3 snapshots migrate to V4 with safe defaults", () => {
     startTime: undefined,
     durationMinutes: undefined,
     timeZone: undefined,
-    calendarSyncEnabled: undefined,
     schemaVersion: 3,
   });
   assert.equal(migratedTask.schemaVersion, 4);
   assert.equal(migratedTask.startTime, null);
   assert.equal(migratedTask.durationMinutes, null);
   assert.equal(migratedTask.timeZone, "Asia/Taipei");
-  assert.equal(migratedTask.calendarSyncEnabled, false);
 
   const migratedProject = migrateProjectSnapshot({
     ...project,

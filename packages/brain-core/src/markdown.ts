@@ -89,9 +89,6 @@ function parseMarker(value: string | undefined): Partial<BrainTaskSnapshot> {
       ...(typeof parsed.timeZone === "string" && parsed.timeZone.length <= 100
         ? { timeZone: parsed.timeZone }
         : {}),
-      ...(typeof parsed.calendarSyncEnabled === "boolean"
-        ? { calendarSyncEnabled: parsed.calendarSyncEnabled }
-        : {}),
     };
   } catch {
     return {};
@@ -300,7 +297,6 @@ function parsedTaskFromAnalysis(
       ? (markerValues.durationMinutes ?? 30)
       : null,
     timeZone: markerValues.timeZone ?? "Asia/Taipei",
-    calendarSyncEnabled: markerValues.calendarSyncEnabled ?? false,
     lineIndex,
     rawLine: analysis.rawLine,
   };
@@ -337,7 +333,6 @@ export function formatTaskLine(task: TaskLineInput): string {
       durationMinutes: task.durationMinutes ?? 30,
       timeZone: task.timeZone ?? "Asia/Taipei",
     } : {}),
-    ...(task.calendarSyncEnabled ? { calendarSyncEnabled: true } : {}),
   };
   parts.push(
     "<!-- publisher-task:" +
@@ -415,10 +410,9 @@ function patchMarker(
       durationMinutes: desired.durationMinutes ?? 30,
       timeZone: desired.timeZone ?? "Asia/Taipei",
     } : {}),
-    ...(desired.calendarSyncEnabled ? { calendarSyncEnabled: true } : {}),
   };
   if (analysis.marker) {
-    const managedKeys = ["id", "status", "rank", "startTime", "durationMinutes", "timeZone", "calendarSyncEnabled"];
+    const managedKeys = ["id", "status", "rank", "startTime", "durationMinutes", "timeZone"];
     const nextMarker = { ...analysis.marker.value };
     for (const key of managedKeys) delete nextMarker[key];
     Object.assign(nextMarker, values);
@@ -437,7 +431,6 @@ function patchMarker(
     && (desired.startTime ?? null) === (current.startTime ?? null)
     && (desired.durationMinutes ?? null) === (current.durationMinutes ?? null)
     && (desired.timeZone ?? "Asia/Taipei") === (current.timeZone ?? "Asia/Taipei")
-    && (desired.calendarSyncEnabled ?? false) === (current.calendarSyncEnabled ?? false)
   ) {
     return [];
   }

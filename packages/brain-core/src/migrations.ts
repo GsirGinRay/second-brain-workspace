@@ -13,7 +13,6 @@ export type VersionedTaskSnapshot = Omit<BrainTaskSnapshot, "plannedDate" | "due
   startTime: string | null;
   durationMinutes: number | null;
   timeZone: string;
-  calendarSyncEnabled: boolean;
   schemaVersion: 4;
 };
 export type VersionedProjectSnapshot = Omit<BrainProjectSnapshot, "targetDate"> & {
@@ -37,7 +36,6 @@ export function migrateTaskSnapshot(value: unknown): VersionedTaskSnapshot {
     startTime: parsed.startTime ?? null,
     durationMinutes: parsed.startTime ? (parsed.durationMinutes ?? 30) : null,
     timeZone: parsed.timeZone ?? "Asia/Taipei",
-    calendarSyncEnabled: parsed.calendarSyncEnabled ?? false,
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
   };
 }

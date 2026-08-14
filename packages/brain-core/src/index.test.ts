@@ -36,7 +36,6 @@ test("taskDate round-trips as the Obsidian Tasks ⏳ token", () => {
     startTime: null,
     durationMinutes: null,
     timeZone: "Asia/Taipei",
-    calendarSyncEnabled: false,
     lineIndex: 2,
     rawLine: line,
   });

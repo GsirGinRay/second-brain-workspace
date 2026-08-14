@@ -26,6 +26,37 @@ test("desktop supports quick add, editing, task actions and readable icons", () 
   assert.match(source, /markMostImportant/);
 });
 
+test("desktop has no Google Calendar integration surface", () => {
+  const source = app();
+  assert.doesNotMatch(source, /Google Calendar|calendarSyncEnabled|CalendarIntegration/);
+  assert.doesNotMatch(readFileSync(resolve(import.meta.dirname, "device-client.ts"), "utf8"), /getCalendarIntegrationStatus/);
+});
+
+test("quick add opens with N outside editable controls", () => {
+  const source = app();
+  assert.match(source, /event\.key\.toLowerCase\(\) === "n"/);
+  assert.match(source, /!isEditableElement\(event\.target\)/);
+});
+
+test("board and calendar expose direct date editing and task-level drag feedback", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /className="board-date-input"/);
+  assert.match(source, /className="calendar-task-drag-handle"/);
+  assert.match(source, /dragTaskId === entry\.task\.id \? "dragging"/);
+  assert.match(source, /event\.stopPropagation\(\)/);
+  assert.match(styles, /\.calendar-task-title\.dragging/);
+  assert.match(styles, /\.week-task-list article\.dragging/);
+});
+
+test("week calendar and idea inbox use compact responsive cards", () => {
+  const styles = css();
+  assert.match(styles, /\.idea-drawer>div\{display:grid/);
+  assert.match(styles, /grid-template-columns:repeat\(auto-fill,minmax\(240px,1fr\)\)/);
+  assert.match(styles, /\.week-task-list article[^}]*min-height:0/);
+  assert.doesNotMatch(styles, /\.idea-drawer article[^}]*min-width:220px/);
+});
+
 test("task actions are compact accessible icons and permanent delete is never archived", () => {
   const source = app();
   const styles = css();

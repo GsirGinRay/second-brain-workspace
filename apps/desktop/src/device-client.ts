@@ -160,12 +160,6 @@ export class DeviceClient {
     if (response.status < 200 || response.status >= 300) throw responseError(response);
   }
 
-  async getCalendarIntegrationStatus(): Promise<{ enabled: boolean; connected: boolean }> {
-    const response = await this.signedRequest("GET", "/api/brain/device/integrations/calendar");
-    if (response.status < 200 || response.status >= 300) throw responseError(response);
-    return JSON.parse(response.body) as { enabled: boolean; connected: boolean };
-  }
-
   private async unsignedJson<T>(path: string, body: unknown, expectedStatus = 200): Promise<T> {
     const response = await this.native.publisherHttpRequest({
       origin: this.origin, method: "POST", path, body: JSON.stringify(body), headers: {}, signed: false,

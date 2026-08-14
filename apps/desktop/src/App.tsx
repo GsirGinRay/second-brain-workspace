@@ -5,6 +5,7 @@ import {
   Columns3,
   Eye,
   FolderKanban,
+  GripVertical,
   Home,
   Menu,
   Pencil,
@@ -156,7 +157,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     expiresAt: string;
   } | null>(null);
   const [devicePaired, setDevicePaired] = useState(false);
-  const [calendarIntegration, setCalendarIntegration] = useState<{ enabled: boolean; connected: boolean } | null>(null);
   const [writeApproved, setWriteApproved] = useState(
     () => localStorage.getItem("second-brain.agentWriteApproved") === "true",
   );
@@ -178,22 +178,20 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   );
 
   useEffect(() => {
-    if (!client || !devicePaired) { setCalendarIntegration(null); return; }
-    void client.getCalendarIntegrationStatus().then(setCalendarIntegration).catch(() => setCalendarIntegration(null));
-  }, [client, devicePaired]);
-
-  useEffect(() => {
-    const openSearch = (event: KeyboardEvent) => {
+    const openGlobalAction = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setSearchOpen(true);
       } else if (event.key === "/" && !isEditableElement(event.target)) {
         event.preventDefault();
         setSearchOpen(true);
+      } else if (event.key.toLowerCase() === "n" && !isEditableElement(event.target)) {
+        event.preventDefault();
+        setQuickAddOpen(true);
       }
     };
-    window.addEventListener("keydown", openSearch);
-    return () => window.removeEventListener("keydown", openSearch);
+    window.addEventListener("keydown", openGlobalAction);
+    return () => window.removeEventListener("keydown", openGlobalAction);
   }, []);
 
   const reloadLocal = useCallback(
@@ -626,7 +624,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         devicePaired={devicePaired}
         working={working}
         writeApproved={writeApproved}
-        calendarIntegration={calendarIntegration}
         onBrowseVault={browseVault}
         onSelectVault={() => selectVault()}
         onConfigureServer={configureServer}
@@ -928,7 +925,6 @@ function TaskEditor({
             startTime: event.target.value || null,
             durationMinutes: event.target.value ? (value.durationMinutes ?? 30) : null,
             timeZone: "Asia/Taipei",
-            calendarSyncEnabled: event.target.value ? (value.calendarSyncEnabled ?? false) : false,
           })}
         />
         <select
@@ -939,15 +935,6 @@ function TaskEditor({
         >
           {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分鐘</option>)}
         </select>
-        <label className="calendar-sync-toggle" title="完成 Publisher 配對及 Google Calendar 連線後會自動同步">
-          <input
-            type="checkbox"
-            disabled={!value.startTime}
-            checked={value.calendarSyncEnabled ?? false}
-            onChange={(event) => setValue({ ...value, calendarSyncEnabled: event.target.checked })}
-          />
-          同步 Google Calendar
-        </label>
         <select
           aria-label="優先度"
           value={value.priority}
@@ -1275,7 +1262,6 @@ function QuickAddModal({
   const [taskDate, setTaskDate] = useState(taipeiDateKey());
   const [startTime, setStartTime] = useState("");
   const [durationMinutes, setDurationMinutes] = useState(30);
-  const [calendarSyncEnabled, setCalendarSyncEnabled] = useState(false);
   const [important, setImportant] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   useEffect(() => titleRef.current?.focus(), []);
@@ -1286,7 +1272,6 @@ function QuickAddModal({
       taskDate: ideaInbox ? null : taskDate || null,
       startTime: ideaInbox ? null : startTime || null,
       durationMinutes: startTime ? durationMinutes : null,
-      calendarSyncEnabled: Boolean(startTime) && calendarSyncEnabled,
       project,
     });
     const next = [
@@ -1389,10 +1374,7 @@ function QuickAddModal({
               type="time"
               disabled={ideaInbox}
               value={ideaInbox ? "" : startTime}
-              onChange={(event) => {
-                setStartTime(event.target.value);
-                if (!event.target.value) setCalendarSyncEnabled(false);
-              }}
+              onChange={(event) => setStartTime(event.target.value)}
             />
           </label>
           <label>
@@ -1402,10 +1384,6 @@ function QuickAddModal({
             </select>
           </label>
         </div>
-        <label className="calendar-sync-toggle">
-          <input type="checkbox" disabled={ideaInbox || !startTime} checked={calendarSyncEnabled} onChange={(event) => setCalendarSyncEnabled(event.target.checked)} />
-          <span><strong>同步 Google Calendar</strong><small>需要 Publisher 已配對且網頁端已連線 Google Calendar</small></span>
-        </label>
         <label className="important-toggle">
           <input
             type="checkbox"
@@ -1441,7 +1419,6 @@ function newTask(
     taskDate?: string | null;
     startTime?: string | null;
     durationMinutes?: number | null;
-    calendarSyncEnabled?: boolean;
     project?: BrainProjectSnapshot;
   } = {},
 ): BrainTaskSnapshot {
@@ -1462,7 +1439,6 @@ function newTask(
     startTime: options.startTime ?? null,
     durationMinutes: options.startTime ? (options.durationMinutes ?? 30) : null,
     timeZone: "Asia/Taipei",
-    calendarSyncEnabled: options.calendarSyncEnabled ?? false,
   };
 }
 
@@ -1630,9 +1606,16 @@ function Board({
                       </strong>
                     </div>
                     <small>{task.projectName ?? "無專案"}</small>
-                    <div>
-                      {task.taskDate && <span>⏳ {task.taskDate}</span>}
-                    </div>
+                    <label className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
+                      <CalendarDays aria-hidden="true" />
+                      <input
+                        className="board-date-input"
+                        aria-label={`修改 ${task.title} 日期`}
+                        type="date"
+                        value={task.taskDate ?? ""}
+                        onChange={(event) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, taskDate: event.target.value || null } : item))}
+                      />
+                    </label>
                     <div className="board-actions">
                       <select
                         aria-label={`移動 ${task.title} 到其他狀態`}
@@ -1713,6 +1696,7 @@ function Calendar({
   const [sideOpen, setSideOpen] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const month = anchor.slice(0, 7);
   const cells = buildMonthCells(month);
@@ -1872,12 +1856,21 @@ function Calendar({
                             setDragTaskId(entry.task.id);
                           }}
                           onDragEnd={() => setDragTaskId(null)}
-                          onPointerDown={(event) => { if (event.button === 0) { setDragTaskId(entry.task.id); event.currentTarget.setPointerCapture(event.pointerId); } }}
-                          onPointerUp={(event) => finishPointerDrag(event, entry.task.id)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setActiveTaskId(entry.task.id);
+                          }}
+                          onDoubleClick={(event) => {
+                            event.stopPropagation();
+                            setSelected(entry.date);
+                            setEditingTaskId(entry.task.id);
+                            setSideOpen(true);
+                          }}
                           style={taskProjectStyle(entry.task)}
                           key={`${entry.task.id}:${entry.date}`}
-                          className={`calendar-task-title ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
+                          className={`calendar-task-title ${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragTaskId === entry.task.id ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
                         >
+                          <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
                           {entry.task.status === "done"
                             ? "✓ "
                             : `${priorityDisplay(entry.task.priority).code} `}
@@ -1933,13 +1926,21 @@ function Calendar({
                         draggable
                         onDragStart={() => setDragTaskId(entry.task.id)}
                         onDragEnd={() => setDragTaskId(null)}
-                        onPointerDown={(event) => { if (event.button === 0) { setDragTaskId(entry.task.id); event.currentTarget.setPointerCapture(event.pointerId); } }}
-                        onPointerUp={(event) => finishPointerDrag(event, entry.task.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setActiveTaskId(entry.task.id);
+                        }}
+                        onDoubleClick={() => {
+                          setSelected(entry.date);
+                          setEditingTaskId(entry.task.id);
+                          setSideOpen(true);
+                        }}
                         style={taskProjectStyle(entry.task)}
-                        className={`${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
+                        className={`${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragTaskId === entry.task.id ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
                         key={`${entry.task.id}:${entry.date}`}
                       >
                         <div className="task-title-row">
+                          <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
                           <PriorityBadge priority={entry.task.priority} />
                           <strong>
                             {entry.task.status === "done" ? "✓ " : ""}
@@ -1986,11 +1987,12 @@ function Calendar({
                   draggable
                   onDragStart={() => setDragTaskId(task.id)}
                   onDragEnd={() => setDragTaskId(null)}
-                  onPointerDown={(event) => { if (event.button === 0) { setDragTaskId(task.id); event.currentTarget.setPointerCapture(event.pointerId); } }}
-                  onPointerUp={(event) => finishPointerDrag(event, task.id)}
+                  onClick={() => setActiveTaskId(task.id)}
                   style={taskProjectStyle(task)}
+                  className={`${activeTaskId === task.id ? "selected-task" : ""} ${dragTaskId === task.id ? "dragging" : ""}`}
                   key={task.id ?? task.title}
                 >
+                  <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
                   <PriorityBadge priority={task.priority} />
                   <strong>{task.title}</strong>
                   <small>{task.projectName ?? "無專案"}</small>
@@ -2302,7 +2304,6 @@ function SyncSettings({
   devicePaired,
   working,
   writeApproved,
-  calendarIntegration,
   onBrowseVault,
   onSelectVault,
   onConfigureServer,
@@ -2320,7 +2321,6 @@ function SyncSettings({
   devicePaired: boolean;
   working: boolean;
   writeApproved: boolean;
-  calendarIntegration: { enabled: boolean; connected: boolean } | null;
   onBrowseVault: () => void;
   onSelectVault: () => void;
   onConfigureServer: () => void;
@@ -2360,15 +2360,6 @@ function SyncSettings({
             </button>
           </div>
         </details>
-      </section>
-      <section className="settings-card">
-        <span className="step">5</span>
-        <h2>Google Calendar</h2>
-        <p>Calendar 授權只保留在 Publisher；桌面不會取得 Google token。</p>
-        <div className={calendarIntegration?.connected ? "paired-ok" : "first-sync-hint"}>
-          <strong>{calendarIntegration?.connected ? "✓ Google Calendar 已連線" : calendarIntegration?.enabled ? "尚未在 Publisher 連線" : "Calendar 整合尚未啟用"}</strong>
-          <small>{calendarIntegration?.connected ? "有勾選的時段任務會自動建立或更新事件" : "請在 Publisher 網頁工作台完成獨立授權"}</small>
-        </div>
       </section>
       <section className="settings-card">
         <span className="step">2</span>

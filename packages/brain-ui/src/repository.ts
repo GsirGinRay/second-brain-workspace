@@ -19,7 +19,6 @@ export interface BrainTaskDto {
   startTime: string | null;
   durationMinutes: number | null;
   timeZone: string;
-  calendarSyncEnabled: boolean;
   schemaVersion?: 1 | 2 | 3 | 4;
   ownerEmail: string;
   version: number;

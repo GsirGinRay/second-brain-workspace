@@ -43,7 +43,6 @@ export const BrainTaskSnapshotSchema = z.object({
   startTime: TimeSchema.optional(),
   durationMinutes: z.number().int().min(5).max(1440).nullable().optional(),
   timeZone: z.string().min(1).max(100).nullable().optional(),
-  calendarSyncEnabled: z.boolean().optional(),
   schemaVersion: SchemaVersionSchema,
 }).strict();
 
