@@ -5,6 +5,13 @@ import test from "node:test";
 
 const app = () => readFileSync(resolve(import.meta.dirname, "App.tsx"), "utf8");
 const css = () => readFileSync(resolve(import.meta.dirname, "styles.css"), "utf8");
+const tauriConfig = () =>
+  JSON.parse(
+    readFileSync(
+      resolve(import.meta.dirname, "../src-tauri/tauri.conf.json"),
+      "utf8",
+    ),
+  ) as { app?: { windows?: Array<{ dragDropEnabled?: boolean }> } };
 
 test("desktop includes today, calendar, board, projects and settings views", () => {
   const source = app();
@@ -47,6 +54,13 @@ test("board and calendar expose direct date editing and task-level drag feedback
   assert.match(source, /event\.stopPropagation\(\)/);
   assert.match(styles, /\.calendar-task-title\.dragging/);
   assert.match(styles, /\.week-task-list article\.dragging/);
+});
+
+test("Windows WebView permits HTML task drag and carries the task id through dataTransfer", () => {
+  const source = app();
+  assert.equal(tauriConfig().app?.windows?.[0]?.dragDropEnabled, false);
+  assert.match(source, /dataTransfer\.setData\("text\/plain"/);
+  assert.match(source, /dataTransfer\.getData\("text\/plain"\)/);
 });
 
 test("calendar drag feedback dims the source day, raises the task, and marks the drop target", () => {

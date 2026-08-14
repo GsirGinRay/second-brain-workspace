@@ -1873,7 +1873,10 @@ function Calendar({
                     }}
                     onDrop={(event) => {
                       event.preventDefault();
-                      schedule(dragTaskId, cell.date);
+                      schedule(
+                        event.dataTransfer.getData("text/plain") || dragTaskId,
+                        cell.date,
+                      );
                       resetDrag();
                     }}
                     onClick={() => {
@@ -1891,6 +1894,7 @@ function Calendar({
                           onDragStart={(event) => {
                             event.stopPropagation();
                             event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", entry.task.id);
                             beginDrag(entry.task.id, entry.date);
                           }}
                           onDragEnd={resetDrag}
@@ -1941,7 +1945,10 @@ function Calendar({
                   }}
                   onDrop={(event) => {
                     event.preventDefault();
-                    schedule(dragTaskId, date);
+                    schedule(
+                      event.dataTransfer.getData("text/plain") || dragTaskId,
+                      date,
+                    );
                     resetDrag();
                   }}
                 >
@@ -1968,6 +1975,7 @@ function Calendar({
                         draggable
                         onDragStart={(event) => {
                           event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", entry.task.id);
                           beginDrag(entry.task.id, entry.date);
                         }}
                         onDragEnd={resetDrag}
@@ -2012,7 +2020,7 @@ function Calendar({
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
             event.preventDefault();
-            unschedule(dragTaskId);
+            unschedule(event.dataTransfer.getData("text/plain") || dragTaskId);
             resetDrag();
           }}
         >
@@ -2039,6 +2047,7 @@ function Calendar({
                   draggable
                   onDragStart={(event) => {
                     event.dataTransfer.effectAllowed = "move";
+                    if (task.id) event.dataTransfer.setData("text/plain", task.id);
                     beginDrag(task.id, null);
                   }}
                   onDragEnd={resetDrag}
