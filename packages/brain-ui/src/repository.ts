@@ -19,7 +19,7 @@ export interface BrainTaskDto {
   startTime: string | null;
   durationMinutes: number | null;
   timeZone: string;
-  schemaVersion?: 1 | 2 | 3 | 4;
+  schemaVersion?: 1 | 2 | 3 | 4 | 5 | 6;
   ownerEmail: string;
   version: number;
   pendingSync: boolean;
@@ -41,7 +41,7 @@ export interface BrainProjectDto {
   /** @deprecated V2 response compatibility; mirrors endDate during rollout. */
   targetDate?: string | null;
   completedAt: string | null;
-  schemaVersion?: 1 | 2 | 3 | 4;
+  schemaVersion?: 1 | 2 | 3 | 4 | 5 | 6;
   ownerEmail: string;
   version: number;
   pendingSync: boolean;

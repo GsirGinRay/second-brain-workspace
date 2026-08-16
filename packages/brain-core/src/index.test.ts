@@ -6,12 +6,16 @@ import {
   getTodayTasks,
   migrateSyncSnapshot,
   migrateTaskSnapshot,
+  migrateCollectionSnapshot,
   mergeSnapshots,
   patchTaskLine,
   parseProjectFrontmatter,
   parseTaskLine,
   parseSyncSnapshot,
   updateProjectFrontmatter,
+  tryMigrateCollectionSnapshot,
+  tryMigrateProjectSnapshot,
+  tryMigrateTaskSnapshot,
 } from "./index";
 
 const task = {
@@ -75,16 +79,35 @@ test("Zod DTO accepts taskDate and rejects malformed task snapshots", () => {
   assert.throws(() => parseSyncSnapshot({ tasks: [{ ...task, status: "invalid" }], projects: [] }));
 });
 
-test("migrates legacy task and sync snapshots to schemaVersion 5", () => {
+test("migrates legacy task and sync snapshots to schemaVersion 6", () => {
   const v1 = { ...task, taskDate: undefined, plannedDate: "2026-08-10" };
   const migratedTask = migrateTaskSnapshot(v1);
-  assert.equal(migratedTask.schemaVersion, 5);
+  assert.equal(migratedTask.schemaVersion, 6);
   assert.equal(migratedTask.taskDate, "2026-08-10");
 
   const migratedSync = migrateSyncSnapshot({ tasks: [v1], projects: [] });
-  assert.equal(migratedSync.schemaVersion, 5);
+  assert.equal(migratedSync.schemaVersion, 6);
   assert.equal(migratedSync.tasks[0]?.taskDate, "2026-08-10");
-  assert.equal(migratedSync.tasks[0]?.schemaVersion, 5);
+  assert.equal(migratedSync.tasks[0]?.schemaVersion, 6);
+  assert.deepEqual(migratedSync.collections, []);
+});
+
+test("collection migration and safe migration helpers cover valid and invalid entities", () => {
+  const collection = migrateCollectionSnapshot({
+    id: "collection-1",
+    name: "Prompts",
+    sourcePath: "Collections/Prompts.md",
+    category: "AI",
+    importance: 1,
+    body: "Reusable prompt",
+    schemaVersion: 5,
+  });
+  assert.equal(collection.schemaVersion, 6);
+  assert.equal(tryMigrateCollectionSnapshot(collection)?.name, "Prompts");
+  assert.equal(tryMigrateCollectionSnapshot({ name: "missing fields" }), null);
+  assert.equal(tryMigrateTaskSnapshot(task)?.schemaVersion, 6);
+  assert.equal(tryMigrateTaskSnapshot({ ...task, status: "invalid" }), null);
+  assert.equal(tryMigrateProjectSnapshot({ id: null }), null);
 });
 
 test("mergeEntity treats taskDate as a field when a legacy base omits it", () => {

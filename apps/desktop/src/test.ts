@@ -7,3 +7,5 @@ import "./sync-engine.test";
 import "./ui-contract.test";
 import "./task-actions.test";
 import "./task-deletion.test";
+import "./markdown-editor.test";
+import "./draft-workspace.test";

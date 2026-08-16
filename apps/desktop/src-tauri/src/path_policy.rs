@@ -134,6 +134,44 @@ pub fn validate_path_under_root(root: &Path, relative: &Path) -> Result<PathBuf,
     Ok(candidate)
 }
 
+/// Prepares only the missing parent directories for a new Markdown file. Every
+/// existing and newly created component is revalidated to prevent junction or
+/// symlink traversal before the caller writes any content.
+pub fn prepare_path_for_create(root: &Path, relative: &Path) -> Result<PathBuf, NativeError> {
+    let canonical_root = validate_vault_root(root)?;
+    validate_relative_path(relative)?;
+    let parent = relative.parent().ok_or(NativeError::UnsafePath)?;
+    let mut current = canonical_root.clone();
+    for component in parent.components() {
+        let Component::Normal(name) = component else {
+            return Err(NativeError::UnsafePath);
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if !metadata.is_dir()
+                    || is_reparse_or_symlink(&current, &metadata)
+                    || is_hidden(&current)
+                {
+                    return Err(NativeError::UnsafePath);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current)?;
+                let metadata = fs::symlink_metadata(&current)?;
+                if !metadata.is_dir()
+                    || is_reparse_or_symlink(&current, &metadata)
+                    || is_hidden(&current)
+                {
+                    return Err(NativeError::UnsafePath);
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    validate_path_under_root(&canonical_root, relative)
+}
+
 pub fn scan_markdown(
     root: &Path,
     limits: ScanLimits,

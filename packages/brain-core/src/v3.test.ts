@@ -29,7 +29,7 @@ const legacyTask = {
 
 test("V3 task migration prefers plannedDate and removes the legacy due token", () => {
   const migrated = migrateTaskSnapshot(legacyTask);
-  assert.equal(migrated.schemaVersion, 5);
+  assert.equal(migrated.schemaVersion, 6);
   assert.equal(migrated.taskDate, "2026-08-15");
 
   const raw = "  - [ ] #task V3 task [[Project A]] 📅 2026-08-20 ⏳ 2026-08-15 <!-- publisher-task:{\"id\":\"task-1\",\"status\":\"todo\",\"rank\":\"00000001\"} -->\r";

@@ -135,7 +135,9 @@ export class DeviceClient {
     projects: BrainProjectSnapshot[];
     fileHashes: Record<string, string>;
   }): Promise<DevicePlanResponse> {
-    return this.signedJson("POST", "/api/brain/device/sync/plan", input);
+    const tasks = input.tasks.map(({ body: _body, ...task }) => task);
+    const projects = input.projects.map(({ body: _body, ...project }) => project);
+    return this.signedJson("POST", "/api/brain/device/sync/plan", { ...input, tasks, projects });
   }
 
   async commitPlan(planId: string, choices: ConflictChoice[], idempotencyKey: string = crypto.randomUUID()): Promise<unknown> {
@@ -158,6 +160,12 @@ export class DeviceClient {
   async deleteTaskPermanently(taskId: string): Promise<void> {
     if (!/^[0-9a-f-]{36}$/i.test(taskId)) throw new Error("TASK_ID_INVALID");
     const response = await this.signedRequest("DELETE", `/api/brain/device/tasks/${taskId}`);
+    if (response.status < 200 || response.status >= 300) throw responseError(response);
+  }
+
+  async deleteProjectPermanently(projectId: string): Promise<void> {
+    if (!/^[0-9a-f-]{36}$/i.test(projectId)) throw new Error("PROJECT_ID_INVALID");
+    const response = await this.signedRequest("DELETE", `/api/brain/device/projects/${projectId}`);
     if (response.status < 200 || response.status >= 300) throw responseError(response);
   }
 

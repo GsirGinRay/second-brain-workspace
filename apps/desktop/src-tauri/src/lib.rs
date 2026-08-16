@@ -135,7 +135,18 @@ fn validate_routine_template(template: &RoutineTemplatePayload) -> Result<(), Na
 pub struct MarkdownChangeRequest {
     pub relative_path: String,
     pub expected_sha256: String,
-    pub replacement_base64: String,
+    #[serde(default)]
+    pub operation: MarkdownMutationKind,
+    pub replacement_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum MarkdownMutationKind {
+    #[default]
+    Write,
+    Create,
+    Delete,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -370,24 +381,65 @@ fn apply_markdown_changes(
             return Err(NativeError::InvalidRequest);
         }
         let relative = PathBuf::from(&change.relative_path);
-        let target = crate::path_policy::validate_path_under_root(&root, &relative)?;
-        let current = fs::read(&target)?;
-        if hex::encode(Sha256::digest(&current)) != change.expected_sha256.to_ascii_lowercase() {
+        let target = if matches!(change.operation, MarkdownMutationKind::Create) {
+            crate::path_policy::prepare_path_for_create(&root, &relative)?
+        } else {
+            crate::path_policy::validate_path_under_root(&root, &relative)?
+        };
+        let current = if target.exists() {
+            Some(fs::read(&target)?)
+        } else {
+            None
+        };
+        let expected_empty = hex::encode(Sha256::digest([]));
+        let precondition_matches = match (&change.operation, &current) {
+            (MarkdownMutationKind::Create, None) => {
+                change.expected_sha256.eq_ignore_ascii_case(&expected_empty)
+            }
+            (MarkdownMutationKind::Write | MarkdownMutationKind::Delete, Some(bytes)) => {
+                hex::encode(Sha256::digest(bytes)).eq_ignore_ascii_case(&change.expected_sha256)
+            }
+            _ => false,
+        };
+        if !precondition_matches {
             return Err(NativeError::HashPrecondition);
         }
-        let replacement = STANDARD
-            .decode(change.replacement_base64)
-            .map_err(|_| NativeError::InvalidRequest)?;
-        if replacement.len() as u64 > ScanLimits::default().max_file_bytes {
+        let replacement = match change.operation {
+            MarkdownMutationKind::Delete => {
+                if change
+                    .replacement_base64
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                {
+                    return Err(NativeError::InvalidRequest);
+                }
+                None
+            }
+            MarkdownMutationKind::Write | MarkdownMutationKind::Create => Some(
+                STANDARD
+                    .decode(
+                        change
+                            .replacement_base64
+                            .ok_or(NativeError::InvalidRequest)?,
+                    )
+                    .map_err(|_| NativeError::InvalidRequest)?,
+            ),
+        };
+        if replacement
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() as u64 > ScanLimits::default().max_file_bytes)
+        {
             return Err(NativeError::LimitExceeded);
         }
         total = total
-            .checked_add(replacement.len() as u64)
+            .checked_add(replacement.as_ref().map_or(0, |bytes| bytes.len() as u64))
             .ok_or(NativeError::LimitExceeded)?;
         if total > MAX_NATIVE_TOTAL_BYTES {
             return Err(NativeError::LimitExceeded);
         }
-        relative_paths.push(relative);
+        if current.is_some() {
+            relative_paths.push(relative);
+        }
         file_changes.push(FileChange {
             target,
             expected_bytes: current,

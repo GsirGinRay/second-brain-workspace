@@ -9,9 +9,22 @@ use second_brain_workspace_lib::canonical::{
 use second_brain_workspace_lib::error::NativeError;
 use second_brain_workspace_lib::key_store::{KeyBackend, KeyStore};
 use second_brain_workspace_lib::path_policy::{
-    scan_markdown, scan_markdown_with_hook, validate_path_under_root, validate_relative_path,
-    validate_vault_root, ScanLimits,
+    prepare_path_for_create, scan_markdown, scan_markdown_with_hook, validate_path_under_root,
+    validate_relative_path, validate_vault_root, ScanLimits,
 };
+
+#[test]
+fn create_path_prepares_missing_safe_parent_directories() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("vault");
+    fs::create_dir(&root).unwrap();
+    let target = prepare_path_for_create(&root, Path::new("Collections/Prompts.md")).unwrap();
+    assert_eq!(
+        target,
+        root.canonicalize().unwrap().join("Collections/Prompts.md")
+    );
+    assert!(root.join("Collections").is_dir());
+}
 use second_brain_workspace_lib::scheduler::{SyncCoordinator, SyncTrigger};
 use second_brain_workspace_lib::state::{
     LocalState, ProjectCacheRecord, RecoveryJournalMetadata, TaskCacheRecord,
@@ -20,7 +33,7 @@ use second_brain_workspace_lib::state::{
 use second_brain_workspace_lib::watcher::WatcherController;
 use serde_json::Value;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
@@ -375,13 +388,13 @@ fn batch_local_failure_restores_all_affected_files_from_verified_backup() {
         &[
             FileChange {
                 target: first.clone(),
-                expected_bytes: b"first-old".to_vec(),
-                replacement: b"first-new".to_vec(),
+                expected_bytes: Some(b"first-old".to_vec()),
+                replacement: Some(b"first-new".to_vec()),
             },
             FileChange {
                 target: second.clone(),
-                expected_bytes: b"stale-second".to_vec(),
-                replacement: b"second-new".to_vec(),
+                expected_bytes: Some(b"stale-second".to_vec()),
+                replacement: Some(b"second-new".to_vec()),
             },
         ],
         &backup,
@@ -409,8 +422,8 @@ fn successful_batch_keeps_recovery_journal_until_server_confirmation() {
         .write_batch_with_backup(
             &[FileChange {
                 target: task.clone(),
-                expected_bytes: b"old".to_vec(),
-                replacement: b"new".to_vec(),
+                expected_bytes: Some(b"old".to_vec()),
+                replacement: Some(b"new".to_vec()),
             }],
             &backup,
             &archive,
@@ -423,6 +436,44 @@ fn successful_batch_keeps_recovery_journal_until_server_confirmation() {
     assert_eq!(writer.pending_journals().unwrap(), vec![journal.clone()]);
     writer.confirm_server_commit(&journal).unwrap();
     assert!(writer.pending_journals().unwrap().is_empty());
+}
+
+#[test]
+fn batch_supports_a_safe_create_and_delete_with_verified_backup() {
+    let root = tempdir().unwrap();
+    let vault = root.path().join("vault");
+    fs::create_dir_all(vault.join("Projects")).unwrap();
+    let deleted = vault.join("Projects").join("Old.md");
+    let created = vault.join("Projects").join("New.md");
+    fs::write(&deleted, b"old project").unwrap();
+    let backup = BackupManager::new(root.path().join("backups"), "test-vault").unwrap();
+    let archive = backup
+        .create_backup_from_root(&vault, &[PathBuf::from("Projects/Old.md")])
+        .unwrap();
+    let writer = AtomicWriter::new(root.path().join("journals")).unwrap();
+    let journal = writer
+        .write_batch_with_backup(
+            &[
+                FileChange {
+                    target: deleted.clone(),
+                    expected_bytes: Some(b"old project".to_vec()),
+                    replacement: None,
+                },
+                FileChange {
+                    target: created.clone(),
+                    expected_bytes: None,
+                    replacement: Some(b"new project".to_vec()),
+                },
+            ],
+            &backup,
+            &archive,
+            &vault,
+            None,
+        )
+        .unwrap();
+    assert!(!deleted.exists());
+    assert_eq!(fs::read(&created).unwrap(), b"new project");
+    assert!(journal.exists());
 }
 
 #[test]

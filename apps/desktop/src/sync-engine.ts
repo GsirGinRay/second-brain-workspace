@@ -1,4 +1,4 @@
-import type { BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
+import type { BrainCollectionSnapshot, BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
 import type { DeviceClient, DeviceOwnerState, DevicePlanResponse, ConflictChoice } from "./device-client";
 import type { NativeAdapter, PendingCommitRecord } from "./ipc";
 import { applyDesiredSnapshot, scanStructuredVault, type LocalMarkdownFile } from "./vault";
@@ -34,12 +34,12 @@ export class SyncEngine {
     return this.applyAndCommit(result.plan, result.files, result.journalPaths, result.state, choices);
   }
 
-  async loadLocal(): Promise<{ files: LocalMarkdownFile[]; tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[] }> {
+  async loadLocal(): Promise<{ files: LocalMarkdownFile[]; tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; collections: BrainCollectionSnapshot[] }> {
     const scan = await this.native.scanVault();
-    if (scan.length === 0) return { files: [], tasks: [], projects: [] };
+    if (scan.length === 0) return { files: [], tasks: [], projects: [], collections: [] };
     const files = await this.native.readMarkdownFiles(scan.map((file) => file.relativePath));
     const structured = scanStructuredVault(files);
-    return { files, tasks: structured.snapshot.tasks, projects: structured.snapshot.projects };
+    return { files, tasks: structured.snapshot.tasks, projects: structured.snapshot.projects, collections: structured.snapshot.collections };
   }
 
   private async run(previewOnly: boolean): Promise<SyncResult> {
@@ -80,8 +80,8 @@ export class SyncEngine {
     const plan = await this.client.createPlan({
       schemaVersion: 5,
       baseRevision: stateResult.state.revision,
-      tasks: structured.snapshot.tasks,
-      projects: structured.snapshot.projects,
+      tasks: structured.snapshot.tasks.map((task) => ({ ...task, schemaVersion: 5 })),
+      projects: structured.snapshot.projects.map((project) => ({ ...project, schemaVersion: 5 })),
       fileHashes: structured.snapshot.fileHashes ?? {},
     });
     if (previewOnly) {
@@ -108,9 +108,10 @@ export class SyncEngine {
   ): Promise<Extract<SyncResult, { kind: "synced" }>> {
     const desired = resolveDesired(plan, choices);
     const changes = applyDesiredSnapshot(files, {
-      schemaVersion: 5,
+      schemaVersion: 6,
       tasks: desired.tasks,
       projects: desired.projects,
+      collections: scanStructuredVault(files).snapshot.collections,
       fileHashes: {},
     });
     const journalPaths = [...existingJournals];

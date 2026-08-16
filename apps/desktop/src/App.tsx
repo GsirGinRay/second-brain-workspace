@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import {
+  Archive,
   CalendarDays,
   CheckCircle2,
   Columns3,
   Eye,
   FolderKanban,
+  Library,
   GripVertical,
   Home,
+  Languages,
+  List,
   Menu,
+  Moon,
   Pencil,
   Plus,
   RefreshCw,
@@ -16,6 +21,7 @@ import {
   Search,
   Settings2,
   Star,
+  Sun,
   Trash2,
   X,
 } from "lucide-react";
@@ -28,6 +34,7 @@ import {
   projectColor,
   rankForIndex,
   type BrainProjectSnapshot,
+  type BrainCollectionSnapshot,
   type BrainTaskSnapshot,
   type RoutineTemplate,
   type RoutineTemplateItem,
@@ -40,6 +47,8 @@ import {
   getCalendarTaskEntries as buildCalendarTaskEntries,
   taipeiDateKey as dateKeyForTaipei,
   searchWorkspace,
+  parseWorkspaceQuery,
+  type WorkspaceSearchKind,
   type WorkspaceSearchResult,
 } from "@second-brain/brain-ui";
 import {
@@ -70,39 +79,85 @@ import {
   scheduleTask,
   type BoardLane,
 } from "./task-actions";
-import { applyDesiredSnapshot, type LocalMarkdownFile } from "./vault";
+import {
+  applyDesiredSnapshot,
+  buildCollectionCreateChange,
+  buildProjectCreateChange,
+  buildProjectDeleteChanges,
+  type LocalMarkdownFile,
+} from "./vault";
+import {
+  DEFAULT_UI_PREFERENCES,
+  normalizeUiPreferences,
+  translate,
+  UI_PREFERENCES_KEY,
+  type UiPreferences,
+} from "./ui-preferences";
+import appLogo from "./assets/app-logo.png";
+import { MarkdownEditor } from "./markdown-editor";
+import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
 import "./styles.css";
 
-type View = "today" | "calendar" | "board" | "projects" | "sync";
-const STATUS_LABELS: Record<TaskStatus, string> = {
-  todo: "待辦",
-  doing: "執行中",
-  waiting: "等待中",
-  done: "完成",
+type View = "today" | "calendar" | "board" | "projects" | "collections" | "sync";
+const STATUS_KEYS: Record<TaskStatus, string> = {
+  todo: "task.status.todo",
+  doing: "task.status.doing",
+  waiting: "task.status.waiting",
+  done: "task.status.done",
 };
-const VIEW_LABELS: Record<View, string> = {
-  today: "今日",
-  calendar: "日曆",
-  board: "看板",
-  projects: "專案",
-  sync: "同步與設定",
+const VIEW_KEYS: Record<View, string> = {
+  today: "view.today",
+  calendar: "view.calendar",
+  board: "view.board",
+  projects: "view.projects",
+  collections: "view.collections",
+  sync: "view.sync",
 };
-const VIEW_TITLES: Record<View, string> = {
-  today: "今日焦點",
-  calendar: "任務日曆",
-  board: "工作看板",
-  projects: "專案總覽",
-  sync: "同步中心",
+const VIEW_TITLE_KEYS: Record<View, string> = {
+  today: "view.today.title",
+  calendar: "view.calendar.title",
+  board: "view.board.title",
+  projects: "view.projects.title",
+  collections: "view.collections.title",
+  sync: "view.sync.title",
 };
+type Translate = (key: string, values?: Record<string, string | number>) => string;
+const UiPreferencesContext = createContext<{ preferences: UiPreferences; t: Translate }>({
+  preferences: DEFAULT_UI_PREFERENCES,
+  t: (key, values) => translate(DEFAULT_UI_PREFERENCES.language, key, values),
+});
+function useUiPreferences() {
+  return useContext(UiPreferencesContext);
+}
 function ViewIcon({ view }: { view: View }) {
   const className = "nav-icon";
   if (view === "today") return <Home className={className} />;
   if (view === "calendar") return <CalendarDays className={className} />;
   if (view === "board") return <Columns3 className={className} />;
   if (view === "projects") return <FolderKanban className={className} />;
+  if (view === "collections") return <Library className={className} />;
   return <Settings2 className={className} />;
 }
 const taipeiDateKey = () => dateKeyForTaipei(new Date());
+const PENDING_PROJECT_DELETIONS_KEY = "second-brain.pendingProjectDeletions";
+function loadUiPreferences(): UiPreferences {
+  try {
+    return normalizeUiPreferences(JSON.parse(localStorage.getItem(UI_PREFERENCES_KEY) ?? "null"));
+  } catch {
+    return DEFAULT_UI_PREFERENCES;
+  }
+}
+function pendingProjectDeletions(): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(PENDING_PROJECT_DELETIONS_KEY) ?? "[]");
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && /^[0-9a-f-]{36}$/i.test(item)) : [];
+  } catch {
+    return [];
+  }
+}
+function setPendingProjectDeletions(ids: string[]): void {
+  localStorage.setItem(PENDING_PROJECT_DELETIONS_KEY, JSON.stringify([...new Set(ids)]));
+}
 const getCalendarTaskEntries = (tasks: BrainTaskSnapshot[], today: string) =>
   buildCalendarTaskEntries(
     tasks.filter(
@@ -124,11 +179,17 @@ function taskProjectStyle(task: BrainTaskSnapshot): CSSProperties {
 }
 
 export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
+  const initialDraft = useMemo(() => loadDraftWorkspace(), []);
   const native = useMemo(
     () => providedAdapter ?? createNativeAdapter(),
     [providedAdapter],
   );
   const [view, setView] = useState<View>("today");
+  const [preferences, setPreferences] = useState<UiPreferences>(loadUiPreferences);
+  const t = useCallback<Translate>(
+    (key, values) => translate(preferences.language, key, values),
+    [preferences.language],
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -143,8 +204,15 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       localStorage.getItem("second-brain.serverOrigin") ?? DEFAULT_SERVER_ORIGIN,
   );
   const [vaultInput, setVaultInput] = useState("");
-  const [tasks, setTasks] = useState<BrainTaskSnapshot[]>([]);
-  const [projects, setProjects] = useState<BrainProjectSnapshot[]>([]);
+  const [tasks, setTasks] = useState<BrainTaskSnapshot[]>(initialDraft.tasks);
+  const [projects, setProjects] = useState<BrainProjectSnapshot[]>(initialDraft.projects);
+  const [collections, setCollections] = useState<BrainCollectionSnapshot[]>(initialDraft.collections);
+  const [onboardingOpen, setOnboardingOpen] = useState(() => localStorage.getItem("second-brain.onboardingCompleted") !== "true");
+  const [closeGuardOpen, setCloseGuardOpen] = useState(false);
+  const [selectedBoardProjectId, setSelectedBoardProjectId] = useState<string | null>(null);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
+  const [createEntity, setCreateEntity] = useState<"project" | "collection" | null>(null);
+  const [promotedTask, setPromotedTask] = useState<BrainTaskSnapshot | null>(null);
   const [routineTemplate, setRoutineTemplate] = useState<RoutineTemplate>(() => createDefaultRoutineTemplate(crypto.randomUUID()));
   const [files, setFiles] = useState<LocalMarkdownFile[]>([]);
   const [status, setStatus] = useState("正在啟動…");
@@ -176,6 +244,36 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const syncRunningRef = useRef(false);
   const cloudEtagRef = useRef<string | null>(null);
   const routineTemplateRef = useRef(routineTemplate);
+  const allowCloseRef = useRef(false);
+
+  useEffect(() => {
+    if (providedAdapter) return;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+      getCurrentWindow().onCloseRequested((event) => {
+        if (allowCloseRef.current || diagnostics?.selectedVault || !hasDraftContent(loadDraftWorkspace())) return;
+        event.preventDefault();
+        setCloseGuardOpen(true);
+      }),
+    ).then((value) => { unlisten = value; }).catch(() => undefined);
+    return () => unlisten?.();
+  }, [diagnostics?.selectedVault, providedAdapter]);
+
+  async function leaveWithLocalDraft(): Promise<void> {
+    allowCloseRef.current = true;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().close();
+    } catch {
+      setCloseGuardOpen(false);
+    }
+  }
+
+  useEffect(() => {
+    localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(preferences));
+    document.documentElement.lang = preferences.language;
+    document.documentElement.dataset.theme = preferences.theme;
+  }, [preferences]);
 
   const client = useMemo(
     () => (serverOrigin ? new DeviceClient(serverOrigin, native) : null),
@@ -229,6 +327,19 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   }, [client, devicePaired, native, routineTemplate]);
 
   useEffect(() => {
+    if (!client || !devicePaired) return;
+    const pending = pendingProjectDeletions();
+    if (pending.length === 0) return;
+    void Promise.allSettled(pending.map(async (id) => {
+      await client.deleteProjectPermanently(id);
+      return id;
+    })).then((results) => {
+      const completed = new Set(results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
+      setPendingProjectDeletions(pending.filter((id) => !completed.has(id)));
+    });
+  }, [client, devicePaired]);
+
+  useEffect(() => {
     const openGlobalAction = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -253,9 +364,14 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         setServerOrigin(nextDiagnostics.publisherOrigin);
       }
       if (!nextDiagnostics.selectedVault) {
-        if (updateStatus) setStatus("請先選擇 Markdown 資料夾");
+        const draft = loadDraftWorkspace();
+        setTasks(draft.tasks);
+        setProjects(draft.projects);
+        setCollections(draft.collections);
+        if (updateStatus) setStatus(hasDraftContent(draft) ? "內容已暫存在這台裝置；關閉前請選擇 Markdown 資料夾" : "可先建立內容，關閉前再選擇 Markdown 資料夾");
         return;
       }
+      if (hasDraftContent(loadDraftWorkspace())) await flushDraftsToSelectedVault();
       const loader =
         engine ??
         new SyncEngine(native, {
@@ -276,9 +392,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setFiles(local.files);
       setTasks(local.tasks);
       setProjects(local.projects);
+      setCollections(local.collections ?? []);
       if (updateStatus)
         setStatus(
-          `已載入 ${local.tasks.length} 項任務 · ${local.projects.length} 個專案`,
+          `已載入 ${local.tasks.length} 項任務 · ${local.projects.length} 個專案 · ${local.collections.length} 個收藏`,
         );
     },
     [engine, native],
@@ -428,16 +545,27 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   async function persistLocal(
     nextTasks: BrainTaskSnapshot[],
     nextProjects = projects,
+    nextCollections = collections,
   ): Promise<boolean> {
+    if (!diagnostics?.selectedVault) {
+      saveDraftWorkspace({ tasks: nextTasks, projects: nextProjects, collections: nextCollections });
+      setTasks(nextTasks);
+      setProjects(nextProjects);
+      setCollections(nextCollections);
+      setStatus("已暫存在這台裝置；關閉前請選擇 Markdown 資料夾");
+      return true;
+    }
     const changes = applyDesiredSnapshot(files, {
-      schemaVersion: 5,
+      schemaVersion: 6,
       tasks: nextTasks,
       projects: nextProjects,
+      collections: nextCollections,
       fileHashes: {},
     });
     if (changes.length === 0) {
       setTasks(nextTasks);
       setProjects(nextProjects);
+      setCollections(nextCollections);
       return true;
     }
     setWorking(true);
@@ -455,6 +583,105 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         `本機寫入失敗：${cause instanceof Error ? cause.message : "WRITE_FAILED"}`,
       );
       return false;
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function createProject(
+    name: string,
+    area: string | null,
+    priority: number | null,
+    promotedTask?: BrainTaskSnapshot,
+    body = "",
+  ): Promise<boolean> {
+    const id = crypto.randomUUID();
+    if (!diagnostics?.selectedVault) {
+      const project: BrainProjectSnapshot = { schemaVersion: 6, id, name: name.trim(), sourcePath: null, status: "planning", area, priority, progress: 0, focusToday: false, startDate: null, endDate: null, completedAt: null, body };
+      const nextProjects = [...projects, project];
+      const nextTasks = promotedTask ? tasks.map((task) => task.id === promotedTask.id ? { ...task, projectId: id, projectName: name.trim() } : task) : tasks;
+      await persistLocal(nextTasks, nextProjects);
+      setStatus(promotedTask ? "想法已升級為規劃中專案草稿" : "已建立規劃中專案草稿");
+      return true;
+    }
+    const create = buildProjectCreateChange(name, area, priority, files.map((file) => file.relativePath), () => id, body);
+    const nextTasks = promotedTask
+      ? tasks.map((task) => task.id === promotedTask.id ? { ...task, projectId: id, projectName: name.trim() } : task)
+      : tasks;
+    const taskChanges = promotedTask ? applyDesiredSnapshot(files, {
+      schemaVersion: 6,
+      tasks: nextTasks,
+      projects,
+      collections,
+      fileHashes: {},
+    }) : [];
+    setWorking(true);
+    setError("");
+    try {
+      await native.applyMarkdownChanges([...taskChanges, create]);
+      await reloadLocal();
+      setStatus(promotedTask ? "想法已升級為規劃中專案" : "已建立規劃中專案");
+      return true;
+    } catch (cause) {
+      setError(`建立專案失敗：${cause instanceof Error ? cause.message : "CREATE_PROJECT_FAILED"}`);
+      return false;
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function createCollection(name: string, category: string | null, importance: number | null, body = ""): Promise<boolean> {
+    if (!diagnostics?.selectedVault) {
+      const collection: BrainCollectionSnapshot = { schemaVersion: 6, id: crypto.randomUUID(), name: name.trim(), sourcePath: null, category, importance, body };
+      await persistLocal(tasks, projects, [...collections, collection]);
+      setStatus("已建立收藏草稿；關閉前請選擇 Markdown 資料夾");
+      return true;
+    }
+    const change = buildCollectionCreateChange(name, category, importance, files.map((file) => file.relativePath), undefined, body);
+    setWorking(true);
+    setError("");
+    try {
+      await native.applyMarkdownChanges([change]);
+      await reloadLocal();
+      setStatus("收藏已建立；內容保留在本機 Markdown");
+      return true;
+    } catch (cause) {
+      setError(`建立收藏失敗：${cause instanceof Error ? cause.message : "CREATE_COLLECTION_FAILED"}`);
+      return false;
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function permanentlyDeleteProject(project: BrainProjectSnapshot): Promise<void> {
+    const openCount = tasks.filter((task) => task.projectId === project.id && task.status !== "done").length;
+    if (!project.id || !window.confirm(
+      `永久刪除「${project.name}」？\n\n將刪除專案 Markdown，保留 ${openCount} 項未完成任務並解除專案連結。刪除前會建立可驗證備份。\n來源：${project.sourcePath ?? "未知"}`,
+    )) return;
+    setWorking(true);
+    setError("");
+    try {
+      const changes = buildProjectDeleteChanges(files, {
+        schemaVersion: 6,
+        tasks,
+        projects,
+        collections,
+        fileHashes: {},
+      }, project.id);
+      await native.applyMarkdownChanges(changes);
+      await reloadLocal();
+      if (devicePaired && client) {
+        try {
+          await client.deleteProjectPermanently(project.id);
+          setPendingProjectDeletions(pendingProjectDeletions().filter((id) => id !== project.id));
+        } catch (cause) {
+          setPendingProjectDeletions([...pendingProjectDeletions(), project.id]);
+          setError(`本機專案已刪除；遠端刪除待重試：${cause instanceof Error ? cause.message : "DELETE_FAILED"}`);
+        }
+      }
+      setStatus("專案已刪除，關聯任務已保留並解除連結");
+    } catch (cause) {
+      setError(`刪除專案失敗：${cause instanceof Error ? cause.message : "DELETE_PROJECT_FAILED"}`);
     } finally {
       setWorking(false);
     }
@@ -496,11 +723,45 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     setWorking(false);
   }
 
+  async function flushDraftsToSelectedVault(): Promise<void> {
+    const draft = loadDraftWorkspace();
+    if (!hasDraftContent(draft)) return;
+    const loader = engine ?? new SyncEngine(native, {
+      async getState() { throw new Error("SERVER_NOT_CONFIGURED"); },
+      async createPlan() { throw new Error("SERVER_NOT_CONFIGURED"); },
+      async commitPlan() { throw new Error("SERVER_NOT_CONFIGURED"); },
+      async getPlanStatus() { throw new Error("SERVER_NOT_CONFIGURED"); },
+    });
+    const local = await loader.loadLocal();
+    const usedPaths = local.files.map((file) => file.relativePath);
+    const creates = [];
+    for (const project of draft.projects) {
+      const change = buildProjectCreateChange(project.name, project.area, project.priority, usedPaths, () => project.id ?? crypto.randomUUID(), project.body ?? "");
+      usedPaths.push(change.relativePath);
+      creates.push(change);
+    }
+    for (const collection of draft.collections) {
+      const change = buildCollectionCreateChange(collection.name, collection.category, collection.importance, usedPaths, () => collection.id ?? crypto.randomUUID(), collection.body);
+      usedPaths.push(change.relativePath);
+      creates.push(change);
+    }
+    const taskChanges = draft.tasks.length ? applyDesiredSnapshot(local.files, {
+      schemaVersion: 6,
+      tasks: [...local.tasks, ...draft.tasks],
+      projects: local.projects,
+      collections: local.collections,
+      fileHashes: {},
+    }) : [];
+    if (creates.length || taskChanges.length) await native.applyMarkdownChanges([...taskChanges, ...creates]);
+    saveDraftWorkspace({ tasks: [], projects: [], collections: [] });
+  }
+
   async function selectVault(path = vaultInput) {
     setWorking(true);
     setError("");
     try {
       await native.selectVault(path);
+      await flushDraftsToSelectedVault();
       setVaultInput("");
       await reloadLocal();
     } catch (cause) {
@@ -512,20 +773,23 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     }
   }
 
-  async function browseVault() {
+  async function browseVault(): Promise<boolean> {
     setWorking(true);
     setError("");
     try {
       const path = await native.pickVaultFolder();
-      if (!path) return;
+      if (!path) return false;
       setVaultInput(path);
       await native.selectVault(path);
+      await flushDraftsToSelectedVault();
       setVaultInput("");
       await reloadLocal();
+      return true;
     } catch (cause) {
       setError(
         `無法選擇資料夾：${cause instanceof Error ? cause.message : "FOLDER_PICKER_FAILED"}`,
       );
+      return false;
     } finally {
       setWorking(false);
     }
@@ -664,6 +928,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         showCompleted={showCompleted}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
+        onPromote={(task) => {
+          setPromotedTask(task);
+          setCreateEntity("project");
+        }}
       />
     ) : view === "board" ? (
       <Board
@@ -673,12 +941,29 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onShowCompletedChange={setCompletedVisibility}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
+        selectedProjectId={selectedBoardProjectId}
+        onProjectFilterChange={setSelectedBoardProjectId}
+        onBackToProjects={() => setView("projects")}
       />
     ) : view === "projects" ? (
       <Projects
         projects={projects}
         tasks={tasks}
         onSave={(nextProjects, nextTasks) => persistLocal(nextTasks, nextProjects)}
+        onOpen={(projectId) => {
+          setSelectedBoardProjectId(projectId);
+          setView("board");
+        }}
+        onCreate={() => setCreateEntity("project")}
+        onDelete={(project) => void permanentlyDeleteProject(project)}
+      />
+    ) : view === "collections" ? (
+      <Collections
+        collections={collections}
+        selectedId={selectedCollectionId}
+        onSelect={setSelectedCollectionId}
+        onCreate={() => setCreateEntity("collection")}
+        onSave={(collection) => void persistLocal(tasks, projects, collections.map((item) => item.id === collection.id ? collection : item))}
       />
     ) : (
       <SyncSettings
@@ -702,30 +987,33 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     );
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+    <UiPreferencesContext.Provider value={{ preferences, t }}>
+    <div data-theme={preferences.theme} className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark">腦</span>
+          <img className="brand-logo" src={appLogo} alt="" aria-hidden="true" />
           <div>
-            <strong>第二大腦工作台</strong>
-            <small>任務與專案中心</small>
+            <strong>{t("app.name")}</strong>
+            <small>{t("app.tagline")}</small>
           </div>
         </div>
         <nav>
-          {(Object.keys(VIEW_LABELS) as View[]).map((item) => (
+          {(Object.keys(VIEW_KEYS) as View[]).map((item) => (
             <button
               key={item}
               className={view === item ? "active" : ""}
               onClick={() => setView(item)}
+              aria-label={t(VIEW_KEYS[item])}
+              title={t(VIEW_KEYS[item])}
             >
               <ViewIcon view={item} />
-              <span>{VIEW_LABELS[item]}</span>
+              <span>{t(VIEW_KEYS[item])}</span>
             </button>
           ))}
         </nav>
         <div className="sidebar-foot">
           <span className={`dot ${navigator.onLine ? "online" : ""}`} />
-          <span>{navigator.onLine ? "網路已連線" : "離線模式"}</span>
+          <span>{navigator.onLine ? t("app.online") : t("app.offline")}</span>
         </div>
       </aside>
       <main className="main">
@@ -733,53 +1021,77 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           <div className="title-row">
             <button
               className="icon-button"
-              aria-label="切換側面板"
-              title="側面板"
+              aria-label={t("app.sidebar")}
+              title={t("app.sidebar")}
               onClick={() => setSidebarCollapsed((value) => !value)}
             >
               <Menu aria-hidden="true" />
             </button>
             <div>
-              <h1>{VIEW_TITLES[view]}</h1>
+              <h1>{t(VIEW_TITLE_KEYS[view])}</h1>
               <p>{status}</p>
             </div>
           </div>
           <div className="top-actions">
-            <button className="search-button" onClick={() => setSearchOpen(true)}>
-              <Search aria-hidden="true" />搜尋任務與專案 <kbd>Ctrl/Cmd+K</kbd>
+            <button className="icon-button top-icon-action" aria-label={t("app.search")} title={`${t("app.search")} · Ctrl/Cmd+K`} onClick={() => setSearchOpen(true)}>
+              <Search aria-hidden="true" />
             </button>
-            <label className="completed-visibility-toggle">
+            <label className={`icon-button top-icon-action completed-visibility-toggle ${showCompleted ? "active" : ""}`} aria-label={t("app.showCompleted")} title={t("app.showCompleted")}>
               <input
                 type="checkbox"
                 checked={showCompleted}
                 onChange={(event) => setCompletedVisibility(event.target.checked)}
               />
               <Eye aria-hidden="true" />
-              顯示已完成
             </label>
             <button
-              className="quick-add-button"
+              className="icon-button top-icon-action"
+              aria-label={t("app.quickAdd")}
+              title={`${t("app.quickAdd")} · N`}
               onClick={() => setQuickAddOpen(true)}
             >
-              <Plus aria-hidden="true" />快速新增任務 <kbd>N</kbd>
+              <Plus aria-hidden="true" />
+            </button>
+            <button
+              className="icon-button top-icon-action"
+              aria-label={t("app.language")}
+              title={t("app.language")}
+              onClick={() => setPreferences((value) => ({ ...value, language: value.language === "zh-TW" ? "en" : "zh-TW" }))}
+            >
+              <Languages aria-hidden="true" />
+              <small aria-hidden="true">{preferences.language === "zh-TW" ? "中" : "EN"}</small>
+            </button>
+            <button
+              className="icon-button top-icon-action"
+              aria-label={t("app.theme")}
+              title={preferences.theme === "light" ? t("app.theme.dark") : t("app.theme.light")}
+              onClick={() => setPreferences((value) => ({ ...value, theme: value.theme === "light" ? "dark" : "light" }))}
+            >
+              {preferences.theme === "light" ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
             </button>
             <div className="sync-state">
-              <span>
+              <span className="visually-hidden">
                 {lastSync
-                  ? `已同步 ${new Date(lastSync).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" })}`
+                  ? `${preferences.language === "zh-TW" ? "已同步" : "Synced"} ${new Date(lastSync).toLocaleTimeString(preferences.language, { hour: "2-digit", minute: "2-digit" })}`
                   : devicePaired
-                    ? "已配對，等待完成首次同步"
-                    : "尚未配對桌面 App"}
+                    ? (preferences.language === "zh-TW" ? "已配對，等待完成首次同步" : "Paired; first sync pending")
+                    : (preferences.language === "zh-TW" ? "尚未配對桌面 App" : "Desktop app not paired")}
               </span>
-              <button disabled={working || !engine} onClick={requestManualSync}>
+              <button
+                className="icon-button top-icon-action sync-icon-action"
+                disabled={working || !engine}
+                aria-label={devicePaired ? (writeApproved ? t("sync.full") : t("sync.first")) : t("sync.pairFirst")}
+                title={devicePaired ? (writeApproved ? t("sync.full") : t("sync.first")) : t("sync.pairFirst")}
+                onClick={requestManualSync}
+              >
                 <RefreshCw className={working ? "spin" : ""} aria-hidden="true" />
                 {working
-                  ? "處理中…"
+                  ? (preferences.language === "zh-TW" ? "處理中…" : "Working…")
                   : !devicePaired
-                    ? "先完成配對"
+                    ? t("sync.pairFirst")
                     : writeApproved
-                      ? "立即同步"
-                      : "完成首次同步"}
+                      ? t("sync.full")
+                      : t("sync.first")}
               </button>
             </div>
           </div>
@@ -793,14 +1105,15 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         <div className="workspace">{content}</div>
       </main>
       <nav className="mobile-nav">
-        {(Object.keys(VIEW_LABELS) as View[]).map((item) => (
+        {(Object.keys(VIEW_KEYS) as View[]).map((item) => (
           <button
             key={item}
             className={view === item ? "active" : ""}
             onClick={() => setView(item)}
+            aria-label={t(VIEW_KEYS[item])}
           >
             <ViewIcon view={item} />
-            {item === "sync" ? "更多" : VIEW_LABELS[item]}
+            {item === "sync" ? t("app.more") : t(VIEW_KEYS[item])}
           </button>
         ))}
       </nav>
@@ -819,12 +1132,62 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         <WorkspaceSearch
           tasks={tasks}
           projects={projects}
+          collections={collections}
           onClose={() => setSearchOpen(false)}
           onSelect={(result) => {
             setSearchOpen(false);
-            setView(result.kind === "project" ? "projects" : result.value.taskDate ? "calendar" : "today");
+            if (result.kind === "project") {
+              setSelectedBoardProjectId(result.id);
+              setView("board");
+            } else if (result.kind === "collection") {
+              setSelectedCollectionId(result.id);
+              setView("collections");
+            } else {
+              setView(result.value.taskDate ? "calendar" : "today");
+            }
           }}
         />
+      )}
+      {createEntity && (
+        <CreateEntityModal
+          kind={createEntity}
+          initialName={promotedTask?.title ?? ""}
+          onClose={() => {
+            setCreateEntity(null);
+            setPromotedTask(null);
+          }}
+          onCreate={async (name, category, importance, body) => {
+            const created = createEntity === "project"
+              ? await createProject(name, category, importance, promotedTask ?? undefined, body)
+              : await createCollection(name, category, importance, body);
+            if (created) {
+              setCreateEntity(null);
+              setPromotedTask(null);
+            }
+          }}
+        />
+      )}
+      {onboardingOpen && (
+        <div className="modal-backdrop">
+          <section className="modal onboarding-modal" role="dialog" aria-modal="true" aria-label={preferences.language === "zh-TW" ? "開始使用" : "Getting started"}>
+            <div className="modal-header"><div><span className="eyebrow">LOCAL-FIRST MARKDOWN</span><h2>{preferences.language === "zh-TW" ? "三步開始你的第二大腦" : "Start your second brain in three steps"}</h2></div></div>
+            <ol className="onboarding-steps">
+              <li><strong>{preferences.language === "zh-TW" ? "先記下來" : "Capture first"}</strong><span>{preferences.language === "zh-TW" ? "新增任務、專案或收藏，不必先理解資料夾。" : "Create a task, project, or collection before choosing a folder."}</span></li>
+              <li><strong>{preferences.language === "zh-TW" ? "自由寫 Markdown" : "Write Markdown"}</strong><span>{preferences.language === "zh-TW" ? "每種內容都能編輯與預覽完整 Markdown。" : "Every item supports full Markdown editing and preview."}</span></li>
+              <li><strong>{preferences.language === "zh-TW" ? "選擇保存位置" : "Choose storage"}</strong><span>{preferences.language === "zh-TW" ? "關閉前指定一個資料夾，檔案永遠由你掌握。" : "Choose a folder before closing; your files remain yours."}</span></li>
+            </ol>
+            <div className="modal-actions"><button className="secondary-button" onClick={() => { localStorage.setItem("second-brain.onboardingCompleted", "true"); setOnboardingOpen(false); }}>{preferences.language === "zh-TW" ? "先建立內容" : "Create content first"}</button><button className="primary" onClick={() => { localStorage.setItem("second-brain.onboardingCompleted", "true"); setOnboardingOpen(false); void browseVault(); }}>{preferences.language === "zh-TW" ? "選擇資料夾" : "Choose folder"}</button></div>
+          </section>
+        </div>
+      )}
+      {closeGuardOpen && (
+        <div className="modal-backdrop">
+          <section className="modal" role="dialog" aria-modal="true" aria-label={preferences.language === "zh-TW" ? "保存草稿" : "Save drafts"}>
+            <h2>{preferences.language === "zh-TW" ? "關閉前保存 Markdown" : "Save Markdown before closing"}</h2>
+            <p>{preferences.language === "zh-TW" ? "你建立的內容目前是這台裝置上的暫存草稿。建議現在選擇資料夾，轉成可攜、可備份的 Markdown 檔案。" : "Your content is currently a local draft. Choose a folder now to create portable Markdown files."}</p>
+            <div className="modal-actions"><button className="secondary-button" onClick={() => setCloseGuardOpen(false)}>{t("app.cancel")}</button><button className="secondary-button" onClick={() => void leaveWithLocalDraft()}>{preferences.language === "zh-TW" ? "保留草稿並離開" : "Keep draft and leave"}</button><button className="primary" onClick={() => void (async () => { if (await browseVault()) await leaveWithLocalDraft(); })()}>{preferences.language === "zh-TW" ? "選擇資料夾、保存並關閉" : "Choose folder, save, and close"}</button></div>
+          </section>
+        </div>
       )}
       {conflict && (
         <div className="modal-backdrop">
@@ -923,6 +1286,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         </div>
       )}
     </div>
+    </UiPreferencesContext.Provider>
   );
 
   function setCompletedVisibility(value: boolean) {
@@ -940,6 +1304,7 @@ function TaskEditor({
   projects: BrainProjectSnapshot[];
   onSave: (task: BrainTaskSnapshot) => void;
 }) {
+  const { t, preferences } = useUiPreferences();
   const [value, setValue] = useState(task);
   const chooseProject = (id: string) => {
     const project = projects.find((item) => item.id === id);
@@ -952,13 +1317,14 @@ function TaskEditor({
   return (
     <div className="task-editor">
       <input
-        aria-label="任務名稱"
+        aria-label={t("task.field.title")}
         value={value.title}
         onChange={(event) => setValue({ ...value, title: event.target.value })}
       />
+      <MarkdownEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} />
       <div className="form-row">
         <select
-          aria-label="狀態"
+          aria-label={t("task.field.status")}
           value={value.status}
           onChange={(event) =>
             setValue({
@@ -969,14 +1335,14 @@ function TaskEditor({
             })
           }
         >
-          {Object.entries(STATUS_LABELS).map(([key, label]) => (
+          {Object.entries(STATUS_KEYS).map(([key, labelKey]) => (
             <option key={key} value={key}>
-              {label}
+              {t(labelKey)}
             </option>
           ))}
         </select>
         <input
-          aria-label="規劃日"
+          aria-label={t("task.field.date")}
           type="date"
           value={value.taskDate ?? ""}
           onChange={(event) =>
@@ -984,7 +1350,7 @@ function TaskEditor({
           }
         />
         <input
-          aria-label="開始時間"
+          aria-label={t("task.field.startTime")}
           type="time"
           value={value.startTime ?? ""}
           onChange={(event) => setValue({
@@ -995,7 +1361,7 @@ function TaskEditor({
           })}
         />
         <select
-          aria-label="持續時間"
+          aria-label={t("task.field.duration")}
           disabled={!value.startTime}
           value={value.durationMinutes ?? 30}
           onChange={(event) => setValue({ ...value, durationMinutes: Number(event.target.value) })}
@@ -1003,7 +1369,7 @@ function TaskEditor({
           {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分鐘</option>)}
         </select>
         <select
-          aria-label="優先度"
+          aria-label={t("task.field.priority")}
           value={value.priority}
           onChange={(event) =>
             setValue({
@@ -1019,11 +1385,11 @@ function TaskEditor({
           <option value="low">P5 · 低</option>
         </select>
         <select
-          aria-label="關聯專案"
+          aria-label={t("task.field.project")}
           value={value.projectId ?? ""}
           onChange={(event) => chooseProject(event.target.value)}
         >
-          <option value="">無專案</option>
+          <option value="">{t("app.unassigned")}</option>
           {projects.map((project) => (
             <option key={project.id ?? project.name} value={project.id ?? ""}>
               {project.name}
@@ -1035,7 +1401,7 @@ function TaskEditor({
           disabled={!value.title.trim()}
           onClick={() => onSave({ ...value, title: value.title.trim() })}
         >
-          <Save aria-hidden="true" />儲存變更
+          <Save aria-hidden="true" />{t("app.save")}
         </button>
       </div>
     </div>
@@ -1059,19 +1425,20 @@ function TaskActionBar({
   onDelete: (task: BrainTaskSnapshot) => void;
   showEdit?: boolean;
 }) {
+  const { t } = useUiPreferences();
   const done = task.status === "done";
   return (
-    <div className="task-action-bar" aria-label={`${task.title}的操作`}>
-      <button className={`task-action-button ${important ? "active" : ""}`} aria-label="設為最重要" title="設為最重要" onClick={onImportant}>
+    <div className="task-action-bar" aria-label={`${task.title} actions`}>
+      <button className={`task-action-button ${important ? "active" : ""}`} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={onImportant}>
         <Star aria-hidden="true" fill={important ? "currentColor" : "none"} />
       </button>
-      <button className="task-action-button completion-action" aria-label={done ? "重新開啟" : "標記完成"} title={done ? "重新開啟" : "標記完成"} onClick={onComplete}>
+      <button className="task-action-button completion-action" aria-label={done ? t("task.action.reopen") : t("task.action.complete")} title={done ? t("task.action.reopen") : t("task.action.complete")} onClick={onComplete}>
         {done ? <RotateCcw aria-hidden="true" /> : <span className="action-checkmark" aria-hidden="true">✓</span>}
       </button>
-      {showEdit && <button className="task-action-button" aria-label="編輯任務" title="編輯任務" onClick={onEdit}>
+      {showEdit && <button className="task-action-button" aria-label={t("task.action.edit")} title={t("task.action.edit")} onClick={onEdit}>
         <Pencil aria-hidden="true" />
       </button>}
-      <button className="task-action-button danger" aria-label="永久刪除" title="永久刪除雲端與本機 Markdown" onClick={() => onDelete(task)}>
+      <button className="task-action-button danger" aria-label={t("task.action.delete")} title={t("task.action.delete")} onClick={() => onDelete(task)}>
         <Trash2 aria-hidden="true" />
       </button>
     </div>
@@ -1083,14 +1450,16 @@ function PriorityBadge({
 }: {
   priority: BrainTaskSnapshot["priority"];
 }) {
+  const { t } = useUiPreferences();
   const item = priorityDisplay(priority);
+  const label = t(`task.priority.${priority}`);
   return (
     <span
       className={`priority-badge priority-${priority}`}
-      title={`優先序 ${item.code}：${item.label}`}
+      title={t("task.priority.label", { code: item.code, label })}
     >
       {item.code}
-      <small>{item.label}</small>
+      <small>{label}</small>
     </span>
   );
 }
@@ -1100,6 +1469,7 @@ function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuickAdd, r
   onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onQuickAdd: () => void;
   routineTemplate: RoutineTemplate; onRoutineTemplateChange: (template: RoutineTemplate) => void;
 }) {
+  const { t } = useUiPreferences();
   const today = taipeiDateKey();
   const groups = splitTodayTasks(tasks, projects, today);
   const completed = completedForDate(tasks, today);
@@ -1133,23 +1503,24 @@ function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuickAdd, r
   const enabledRoutineItems = routineTemplate.items.filter((item) => item.enabled);
   const scheduledRoutineItems = enabledRoutineItems.filter((item) => item.startTime);
   return <section className="command-center">
-    <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>安排精力，而不只是塞滿行程</h2><p>先選出今天最重要的事，再把低耗能工作留給下午。</p></div><button className="primary start-day-button" onClick={startToday}><Plus />開始今天</button></header>
+    <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
-    <section className="routine-template-card" aria-label="每日任務模板">
+    <section className="routine-template-card" aria-label={t("today.template")}>
       <div className="routine-template-icon"><Settings2 /></div>
-      <div><span className="eyebrow">每日任務模板</span><strong>{routineTemplate.name}</strong><small>{enabledRoutineItems.length} 個啟用項目 · {scheduledRoutineItems.length} 個已排時間</small></div>
-      <button className="routine-template-action" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{templateOpen ? "收合模板" : "管理模板"}</button>
+      <div><span className="eyebrow">{t("today.template")}</span><strong>{routineTemplate.name}</strong><small>{enabledRoutineItems.length} · {scheduledRoutineItems.length}</small></div>
+      <button className="routine-template-action" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button>
     </section>
     <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article></div>
     {templateOpen && <section className="routine-editor"><header><div><span className="eyebrow">DAILY ROUTINE</span><input aria-label="模板名稱" value={routineTemplate.name} onChange={(event) => onRoutineTemplateChange({ ...routineTemplate, name: event.target.value })} /></div><button onClick={() => setTemplateOpen(false)} aria-label="關閉模板"><X /></button></header><div className="routine-items">{routineTemplate.items.map((item) => <article key={item.id} draggable onDragStart={() => setDraggedItem(item.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropItem(item.id)}><GripVertical /><input type="checkbox" aria-label={`${item.title}啟用`} checked={item.enabled} onChange={(event) => updateItem(item.id, { enabled: event.target.checked })} /><input aria-label="例行任務名稱" value={item.title} onChange={(event) => updateItem(item.id, { title: event.target.value })} /><select aria-label="例行任務專案" value={item.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); updateItem(item.id, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><select aria-label="例行任務優先度" value={item.priority} onChange={(event) => updateItem(item.id, { priority: event.target.value as RoutineTemplateItem["priority"] })}>{(["highest","high","medium","normal","low"] as const).map((value) => <option key={value} value={value}>{priorityDisplay(value).code}</option>)}</select><input aria-label="開始時間" type="time" value={item.startTime ?? ""} onChange={(event) => updateItem(item.id, { startTime: event.target.value || null, durationMinutes: event.target.value ? item.durationMinutes ?? 30 : null })} /><select aria-label="持續時間" disabled={!item.startTime} value={item.durationMinutes ?? 30} onChange={(event) => updateItem(item.id, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select><button className="danger-icon" aria-label={`刪除${item.title}`} onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.filter((value) => value.id !== item.id) })}><Trash2 /></button></article>)}</div><button className="secondary" onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: [...routineTemplate.items, { id: crypto.randomUUID(), title: "新的例行任務", enabled: true, projectId: null, projectName: null, priority: "normal", startTime: null, durationMinutes: null, rank: rankForIndex(routineTemplate.items.length) }] })}><Plus />新增模板項目</button></section>}
-    <section className="timeline-section"><header><div><span className="eyebrow">TODAY TIMELINE</span><h3>今日時間軸</h3></div><button className="secondary" onClick={onQuickAdd}><Plus />新增任務 <kbd>N</kbd></button></header>{scheduled.length === 0 ? <Empty text="尚未安排時間。可直接在下方任務設定開始時間。" /> : <div className="timeline">{scheduled.map((task) => <article key={task.id ?? task.title} className={`${Number(task.startTime?.slice(0,2)) >= 13 && ["normal","low"].includes(task.priority) ? "low-energy" : ""}`}><time>{task.startTime}</time><div><strong>{task.title}</strong><small>{task.durationMinutes ?? 30} 分鐘 · {task.projectName ?? "無專案"}</small></div></article>)}</div>}</section>
-    <div className="today-columns"><TaskPanel title="逾期任務" tone="overdue" tasks={groups.overdue} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /><TaskPanel title="今日任務" tone="today" tasks={groups.today} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /></div>
+    <section className="timeline-section"><header><div><span className="eyebrow">TODAY TIMELINE</span><h3>{t("today.timeline")}</h3></div><button className="secondary icon-action" aria-label={t("app.quickAdd")} title={t("app.quickAdd")} onClick={onQuickAdd}><Plus /></button></header>{scheduled.length === 0 ? <Empty text={t("today.empty")} /> : <div className="timeline">{scheduled.map((task) => <article key={task.id ?? task.title} className={`${Number(task.startTime?.slice(0,2)) >= 13 && ["normal","low"].includes(task.priority) ? "low-energy" : ""}`}><time>{task.startTime}</time><div><strong>{task.title}</strong><small>{task.durationMinutes ?? 30} · {task.projectName ?? t("app.unassigned")}</small></div></article>)}</div>}</section>
+    <div className="today-columns"><TaskPanel title={t("today.overdue")} tone="overdue" tasks={groups.overdue} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /><TaskPanel title={t("today.tasks")} tone="today" tasks={groups.today} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /></div>
     {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} />)}</div></details>}
   </section>;
 }
 
 function TaskPanel({ title, tone, tasks, projects, today, onPatch, onComplete, onDelete }: { title: string; tone: "overdue" | "today"; tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; today: string; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
-  return <section className={`today-panel ${tone}`}><header><div><span className="eyebrow">{tone === "overdue" ? "NEEDS A DECISION" : "TODAY'S FOCUS"}</span><h3>{title}</h3></div><strong>{tasks.length}</strong></header>{tasks.length === 0 ? <Empty text={tone === "overdue" ? "沒有逾期任務。" : "今天沒有待辦任務。"} /> : <div className="focus-task-list">{tasks.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} projects={projects} today={today} onPatch={onPatch} onComplete={onComplete} onDelete={onDelete} />)}</div>}</section>;
+  const { t } = useUiPreferences();
+  return <section className={`today-panel ${tone}`}><header><div><span className="eyebrow">{tone === "overdue" ? "NEEDS A DECISION" : "TODAY'S FOCUS"}</span><h3>{title}</h3></div><strong>{tasks.length}</strong></header>{tasks.length === 0 ? <Empty text={t(tone === "overdue" ? "today.emptyOverdue" : "today.empty")} /> : <div className="focus-task-list">{tasks.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} projects={projects} today={today} onPatch={onPatch} onComplete={onComplete} onDelete={onDelete} />)}</div>}</section>;
 }
 
 function InlineTaskCard({ task, projects, today, onPatch, onComplete, onDelete }: { task: BrainTaskSnapshot; projects: BrainProjectSnapshot[]; today: string; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
@@ -1408,7 +1779,9 @@ function QuickAddModal({
   onClose: () => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void;
 }) {
+  const { t, preferences } = useUiPreferences();
   const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
   const [projectId, setProjectId] = useState("");
   const [ideaInbox, setIdeaInbox] = useState(true);
   const [taskDate, setTaskDate] = useState(taipeiDateKey());
@@ -1426,6 +1799,7 @@ function QuickAddModal({
       durationMinutes: startTime ? durationMinutes : null,
       project,
     });
+    task.body = body;
     const next = [
       ...tasks,
       important ? { ...task, priority: "highest" as const } : task,
@@ -1447,7 +1821,7 @@ function QuickAddModal({
         className="modal quick-add-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="快速新增任務"
+        aria-label={t("quick.title")}
         onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === "Enter")
             submit();
@@ -1456,19 +1830,19 @@ function QuickAddModal({
         <div className="modal-header">
           <div>
             <span className="eyebrow">QUICK CAPTURE</span>
-            <h2>快速新增任務</h2>
+            <h2>{t("quick.title")}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="關閉新增任務">
+          <button className="icon-button" onClick={onClose} aria-label={t("app.close")} title={t("app.close")}>
             <X aria-hidden="true" />
           </button>
         </div>
         <label>
-          任務內容
+          {t("quick.content")}
           <input
             ref={titleRef}
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="現在想到什麼？"
+            placeholder={t("quick.placeholder")}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
@@ -1477,6 +1851,7 @@ function QuickAddModal({
             }}
           />
         </label>
+        <MarkdownEditor value={body} onChange={setBody} locale={preferences.language} minRows={7} />
         <label className="idea-toggle">
           <input
             type="checkbox"
@@ -1487,20 +1862,18 @@ function QuickAddModal({
             }}
           />
           <span>
-            <strong>先放想法匣</strong>
-            <small>
-              還不確定要執行，不安排規劃日；之後可拖到日曆或看板待辦。
-            </small>
+            <strong>{t("quick.idea")}</strong>
+            <small>{t("quick.ideaHelp")}</small>
           </span>
         </label>
         <div className="quick-grid">
           <label>
-            關聯專案
+            {t("task.field.project")}
             <select
               value={projectId}
               onChange={(event) => setProjectId(event.target.value)}
             >
-              <option value="">無專案</option>
+              <option value="">{t("app.unassigned")}</option>
               {projects.map((project) => (
                 <option
                   key={project.id ?? project.name}
@@ -1512,7 +1885,7 @@ function QuickAddModal({
             </select>
           </label>
           <label>
-            規劃日
+            {t("task.field.date")}
             <input
               type="date"
               disabled={ideaInbox}
@@ -1521,7 +1894,7 @@ function QuickAddModal({
             />
           </label>
           <label>
-            開始時間
+            {t("task.field.startTime")}
             <input
               type="time"
               disabled={ideaInbox}
@@ -1530,7 +1903,7 @@ function QuickAddModal({
             />
           </label>
           <label>
-            持續時間
+            {t("task.field.duration")}
             <select disabled={ideaInbox || !startTime} value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))}>
               {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分鐘</option>)}
             </select>
@@ -1544,20 +1917,25 @@ function QuickAddModal({
             onChange={(event) => setImportant(event.target.checked)}
           />
           <span>
-            <strong>設為今日最重要</strong>
+            <strong>{t("quick.important")}</strong>
             <small>
               {ideaInbox
-                ? "先取消想法匣並安排日期"
-                : "同一天只能有一項，原本的會自動降為高優先"}
+                ? t("quick.importantDisabled")
+                : t("quick.importantHelp")}
             </small>
           </span>
         </label>
+        <aside className="capture-guidance" aria-label={t("quick.guidance")}>
+          <span><strong>{t("quick.guidance.taskTitle")}</strong>{t("quick.guidance.task")}</span>
+          <span><strong>{t("quick.guidance.projectTitle")}</strong>{t("quick.guidance.project")}</span>
+          <span><strong>{t("quick.guidance.collectionTitle")}</strong>{t("quick.guidance.collection")}</span>
+        </aside>
         <div className="modal-actions">
           <span>
-            <kbd>Enter</kbd> 建立 · <kbd>Esc</kbd> 關閉
+            {t("quick.keyboard")}
           </span>
           <button className="primary action-with-icon" disabled={!title.trim()} onClick={submit}>
-            <Plus aria-hidden="true" />建立任務
+            <Plus aria-hidden="true" />{t("quick.create")}
           </button>
         </div>
       </section>
@@ -1601,6 +1979,9 @@ function Board({
   onShowCompletedChange,
   onSave,
   onDelete,
+  selectedProjectId,
+  onProjectFilterChange,
+  onBackToProjects,
 }: {
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
@@ -1608,27 +1989,24 @@ function Board({
   onShowCompletedChange: (value: boolean) => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void;
   onDelete: (task: BrainTaskSnapshot) => void;
+  selectedProjectId: string | null;
+  onProjectFilterChange: (projectId: string | null) => void;
+  onBackToProjects: () => void;
 }) {
+  const { t } = useUiPreferences();
   const [drag, setDrag] = useState<string | null>(null);
-  const [projectFilter, setProjectFilter] = useState("all");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const today = taipeiDateKey();
-  const projectNames = [
-    ...new Set(
-      tasks
-        .map((task) => task.projectName)
-        .filter((name): name is string => Boolean(name)),
-    ),
-  ].sort();
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const lanes: Array<{ id: BoardLane; label: string; hint: string }> = [
-    { id: "idea", label: "想法匣", hint: "還沒確定要執行" },
-    { id: "todo", label: "待辦", hint: "已規劃、準備開始" },
-    { id: "doing", label: "執行中", hint: "現在正在推進" },
-    { id: "waiting", label: "等待", hint: "等待回覆或條件" },
-    { id: "done", label: "完成", hint: "已完成並保留歷史" },
+    { id: "idea", label: t("task.status.idea"), hint: t("task.status.ideaHelp") },
+    { id: "todo", label: t("task.status.todo"), hint: t("task.status.todoHelp") },
+    { id: "doing", label: t("task.status.doing"), hint: t("task.status.doingHelp") },
+    { id: "waiting", label: t("task.status.waiting"), hint: t("task.status.waitingHelp") },
+    { id: "done", label: t("task.status.done"), hint: t("task.status.doneHelp") },
   ];
   const filtered = tasks.filter(
-    (task) => projectFilter === "all" || task.projectName === projectFilter,
+    (task) => !selectedProjectId || task.projectId === selectedProjectId,
   );
   const moveToLane = (id: string | null, lane: BoardLane) => {
     if (id)
@@ -1669,19 +2047,20 @@ function Board({
     <section>
       <div className="board-toolbar">
         <div>
-          <h2>專案任務看板</h2>
-          <p>拖曳卡片即可改變階段；想法匣代表尚未承諾執行。</p>
+          <h2>{selectedProject ? t("board.filteredTitle", { name: selectedProject.name }) : t("board.title")}</h2>
+          <p>{selectedProject ? t("board.filteredDescription") : t("board.description")}</p>
         </div>
         <div>
+          {selectedProject && <button className="secondary-button" onClick={onBackToProjects}>{t("board.back")}</button>}
           <select
-            aria-label="篩選專案"
-            value={projectFilter}
-            onChange={(event) => setProjectFilter(event.target.value)}
+            aria-label={t("board.projectFilter")}
+            value={selectedProjectId ?? "all"}
+            onChange={(event) => onProjectFilterChange(event.target.value === "all" ? null : event.target.value)}
           >
-            <option value="all">全部專案</option>
-            {projectNames.map((name) => (
-              <option key={name} value={name}>
-                {name}
+            <option value="all">{t("board.allProjects")}</option>
+            {projects.filter((project) => project.id).sort((a, b) => a.name.localeCompare(b.name)).map((project) => (
+              <option key={project.id!} value={project.id!}>
+                {project.name}
               </option>
             ))}
           </select>
@@ -1691,7 +2070,7 @@ function Board({
               checked={showCompleted}
               onChange={(event) => onShowCompletedChange(event.target.checked)}
             />
-            顯示完成
+            {t("app.showCompleted")}
           </label>
         </div>
       </div>
@@ -1726,7 +2105,7 @@ function Board({
                   <small>{laneTasks.length}</small>
                 </header>
                 {laneTasks.length === 0 && (
-                  <div className="lane-empty">拖到這裡</div>
+                  <div className="lane-empty">{t("board.dropHere")}</div>
                 )}
                 {laneTasks.map((task) => (
                   <article
@@ -1757,7 +2136,7 @@ function Board({
                         {task.title}
                       </strong>
                     </div>
-                    <small>{task.projectName ?? "無專案"}</small>
+                    <small>{task.projectName ?? t("app.unassigned")}</small>
                     <label className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
                       <CalendarDays aria-hidden="true" />
                       <input
@@ -1783,13 +2162,15 @@ function Board({
                         ))}
                       </select>
                       <button
-                        title="往上"
+                        aria-label={t("board.moveUp")}
+                        title={t("board.moveUp")}
                         onClick={() => moveWithinColumn(task.id, -1)}
                       >
                         ↑
                       </button>
                       <button
-                        title="往下"
+                        aria-label={t("board.moveDown")}
+                        title={t("board.moveDown")}
                         onClick={() => moveWithinColumn(task.id, 1)}
                       >
                         ↓
@@ -1834,13 +2215,16 @@ function Calendar({
   showCompleted,
   onSave,
   onDelete,
+  onPromote,
 }: {
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
   showCompleted: boolean;
   onSave: (tasks: BrainTaskSnapshot[]) => void;
   onDelete: (task: BrainTaskSnapshot) => void;
+  onPromote: (task: BrainTaskSnapshot) => void;
 }) {
+  const { preferences, t } = useUiPreferences();
   const today = taipeiDateKey();
   const [mode, setMode] = useState<"month" | "week">("month");
   const [anchor, setAnchor] = useState(today);
@@ -1943,7 +2327,7 @@ function Calendar({
     resetDrag();
   };
   const dateLabel = (date: string) =>
-    new Intl.DateTimeFormat("zh-TW", {
+    new Intl.DateTimeFormat(preferences.language, {
       month: "numeric",
       day: "numeric",
       weekday: "short",
@@ -1956,7 +2340,7 @@ function Calendar({
       <section className="calendar-card">
         <header className="calendar-toolbar">
           <div>
-            <button onClick={() => shift(-1)} aria-label="上一個日期範圍">‹</button>
+            <button onClick={() => shift(-1)} aria-label={t("calendar.previous")} title={t("calendar.previous")}>‹</button>
             <button
               className="today-button"
               onClick={() => {
@@ -1964,13 +2348,13 @@ function Calendar({
                 setSelected(today);
               }}
             >
-              今天
+              {t("calendar.today")}
             </button>
-            <button onClick={() => shift(1)} aria-label="下一個日期範圍">›</button>
+            <button onClick={() => shift(1)} aria-label={t("calendar.next")} title={t("calendar.next")}>›</button>
           </div>
           <h2>
             {mode === "month"
-              ? `${month.replace("-", " 年 ")} 月`
+              ? new Intl.DateTimeFormat(preferences.language, { year: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`))
               : `${dateLabel(weekDates[0]!)}－${dateLabel(weekDates[6]!)}`}
           </h2>
           <div>
@@ -1979,33 +2363,37 @@ function Calendar({
                 className={mode === "month" ? "active" : ""}
                 onClick={() => setMode("month")}
               >
-                月曆
+                {t("calendar.month")}
               </button>
               <button
                 className={mode === "week" ? "active" : ""}
                 onClick={() => setMode("week")}
               >
-                週曆
+                {t("calendar.week")}
               </button>
             </div>
             <button
-              className="text-button"
+              className="icon-action"
+              aria-label={t("calendar.sidebar")}
+              title={t("calendar.sidebar")}
               onClick={() => setSideOpen((value) => !value)}
             >
-              <Columns3 aria-hidden="true" />側面板
+              <Columns3 aria-hidden="true" />
             </button>
             <button
-              className="text-button"
+              className="icon-action"
+              aria-label={t(fullscreen ? "calendar.exitFullscreen" : "calendar.fullscreen")}
+              title={t(fullscreen ? "calendar.exitFullscreen" : "calendar.fullscreen")}
               onClick={() => setFullscreen((value) => !value)}
             >
-              <Eye aria-hidden="true" />{fullscreen ? "離開全螢幕" : "全螢幕"}
+              <Eye aria-hidden="true" />
             </button>
           </div>
         </header>
         {mode === "month" ? (
           <>
             <div className="weekdays">
-              {["日", "一", "二", "三", "四", "五", "六"].map((day) => (
+              {Array.from({ length: 7 }, (_, day) => new Intl.DateTimeFormat(preferences.language, { weekday: "short", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 7, 2 + day)))).map((day) => (
                 <span key={day}>{day}</span>
               ))}
             </div>
@@ -2175,8 +2563,8 @@ function Calendar({
         >
           <header>
             <div>
-              <h3>想法匣</h3>
-              <p>尚未承諾執行的草稿任務；拖到月曆或週曆即可排程。</p>
+              <h3>{t("calendar.ideaTitle")}</h3>
+              <p>{t("calendar.ideaHelp")}</p>
             </div>
             <button
               type="button"
@@ -2184,12 +2572,12 @@ function Calendar({
               onClick={() => setIdeasExpanded((value) => !value)}
               aria-expanded={ideasExpanded}
             >
-              {ideasExpanded ? "收合" : `${ideas.length} 項`}
+              {ideasExpanded ? t("calendar.collapse") : t("calendar.items", { count: ideas.length })}
             </button>
           </header>
           <div className="idea-grid">
             {ideas.length === 0 ? (
-              <small>目前沒有未排程想法</small>
+              <small>{t("calendar.noIdeas")}</small>
             ) : (
               visibleIdeas.map((task) => (
                 <article
@@ -2220,8 +2608,18 @@ function Calendar({
                     <strong>{task.title}</strong>
                     <span>
                       <PriorityBadge priority={task.priority} />
-                      <small>{task.projectName ?? "無專案"}</small>
+                      <small>{task.projectName ?? t("app.unassigned")}</small>
                     </span>
+                    <button
+                      type="button"
+                      className="idea-promote-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onPromote(task);
+                      }}
+                    >
+                      {t("task.action.promote")}
+                    </button>
                   </div>
                   <button
                     type="button"
@@ -2375,27 +2773,43 @@ function Calendar({
 function ProjectEditor({
   project,
   openTasks,
+  doingTasks,
   onSave,
   onFocus,
   onComplete,
   onReopen,
   onArchive,
+  onOpen,
+  onDelete,
 }: {
   project: BrainProjectSnapshot;
   openTasks: number;
+  doingTasks: number;
   onSave: (value: BrainProjectSnapshot) => void;
   onFocus: (enabled: boolean) => void;
   onComplete: () => void;
   onReopen: () => void;
   onArchive: () => void;
+  onOpen: () => void;
+  onDelete: () => void;
 }) {
+  const { t, preferences } = useUiPreferences();
   const [value, setValue] = useState(project);
   useEffect(() => setValue(project), [project]);
   return (
-    <article className="project-card">
+    <article
+      className="project-card"
+      tabIndex={0}
+      onClick={(event) => {
+        if (!(event.target as HTMLElement).closest("button,input,select,textarea,label,a")) onOpen();
+      }}
+      onKeyDown={(event) => {
+        if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) onOpen();
+      }}
+    >
       <div className="project-head">
         <div>
-          <span className="eyebrow">{value.area ?? "未分類"}</span>
+          <span className="eyebrow">{value.area ?? t("app.uncategorized")}</span>
           <h3>{value.name}</h3>
         </div>
         <label className="focus">
@@ -2404,7 +2818,7 @@ function ProjectEditor({
             checked={value.focusToday}
             onChange={(event) => onFocus(event.target.checked)}
           />
-          今日焦點
+          {t("project.focusToday")}
         </label>
       </div>
       <div className="progress">
@@ -2412,26 +2826,28 @@ function ProjectEditor({
       </div>
       <div className="project-meta">
         <span>{value.progress ?? 0}%</span>
-        <span>{openTasks} 項未完成</span>
-        <span>{value.startDate || value.endDate ? `${value.startDate ?? "未定"} — ${value.endDate ?? "未定"}` : "未設期間"}</span>
+        <span>{t("task.count.open", { count: openTasks })}</span>
+        <span>{t("task.count.doing", { count: doingTasks })}</span>
+        <span>{value.startDate || value.endDate ? `${value.startDate ?? t("project.date.undecided")} — ${value.endDate ?? t("project.date.undecided")}` : t("project.period.none")}</span>
       </div>
       <div className="project-editor-grid">
         <label>
-          狀態
+          {t("project.field.status")}
           <select
             value={value.status}
             onChange={(event) =>
               setValue({ ...value, status: event.target.value })
             }
           >
-            <option value="active">進行中</option>
-            <option value="paused">暫停</option>
-            {value.status === "done" && <option value="done">完成</option>}
-            {value.status === "archived" && <option value="archived">封存</option>}
+            <option value="planning">{t("project.status.planning")}</option>
+            <option value="active">{t("project.status.active")}</option>
+            <option value="paused">{t("project.status.paused")}</option>
+            {value.status === "done" && <option value="done">{t("project.status.done")}</option>}
+            {value.status === "archived" && <option value="archived">{t("project.status.archived")}</option>}
           </select>
         </label>
         <label>
-          領域
+          {t("project.field.category")}
           <input
             value={value.area ?? ""}
             onChange={(event) =>
@@ -2440,21 +2856,24 @@ function ProjectEditor({
           />
         </label>
         <label>
-          優先序
-          <input
-            type="number"
+          {t("project.field.importance")}
+          <select
             value={value.priority ?? ""}
             onChange={(event) =>
               setValue({
                 ...value,
-                priority:
-                  event.target.value === "" ? null : Number(event.target.value),
-              })
-            }
-          />
+                  priority: event.target.value === "" ? null : Number(event.target.value),
+                })
+              }
+          >
+            <option value="">{t("project.importance.unset")}</option>
+            <option value="1">{t("project.importance.high")}</option>
+            <option value="2">{t("project.importance.medium")}</option>
+            <option value="3">{t("project.importance.low")}</option>
+          </select>
         </label>
         <label>
-          開始日
+          {t("project.field.startDate")}
           <input
             type="date"
             value={value.startDate ?? ""}
@@ -2464,7 +2883,7 @@ function ProjectEditor({
           />
         </label>
         <label>
-          結束日
+          {t("project.field.endDate")}
           <input
             type="date"
             value={value.endDate ?? ""}
@@ -2474,7 +2893,7 @@ function ProjectEditor({
           />
         </label>
         <label className="project-progress">
-          進度 {value.progress ?? 0}%
+          {t("project.field.progress", { value: value.progress ?? 0 })}
           <input
             type="range"
             min="0"
@@ -2485,16 +2904,18 @@ function ProjectEditor({
             }
           />
         </label>
-        <div className="project-actions">
-          <button className="primary" onClick={() => onSave(value)}>儲存變更</button>
+        <div className="project-actions project-icon-actions">
+          <button className="primary icon-action" aria-label={t("project.action.save")} title={t("project.action.save")} onClick={() => onSave(value)}><Save aria-hidden="true" /></button>
           {value.status === "done" || value.status === "archived" ? (
-            <button className="secondary-button" onClick={onReopen}>重新啟用</button>
+            <button className="secondary-button icon-action" aria-label={t("project.action.reopen")} title={t("project.action.reopen")} onClick={onReopen}><RotateCcw aria-hidden="true" /></button>
           ) : (
-            <button className="secondary-button" onClick={onComplete}><CheckCircle2 aria-hidden="true" />完成專案</button>
+            <button className="secondary-button icon-action" aria-label={t("project.action.complete")} title={t("project.action.complete")} onClick={onComplete}><CheckCircle2 aria-hidden="true" /></button>
           )}
-          {value.status !== "archived" && <button className="archive-button" onClick={onArchive}>封存</button>}
+          {value.status !== "archived" && <button className="archive-button icon-action" aria-label={t("project.action.archive")} title={t("project.action.archive")} onClick={onArchive}><Archive aria-hidden="true" /></button>}
+          <button className="danger icon-action" aria-label={t("project.action.delete")} title={t("project.action.delete")} onClick={onDelete}><Trash2 aria-hidden="true" /></button>
         </div>
       </div>
+      <MarkdownEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} minRows={8} />
     </article>
   );
 }
@@ -2502,18 +2923,44 @@ function Projects({
   projects,
   tasks,
   onSave,
+  onOpen,
+  onCreate,
+  onDelete,
 }: {
   projects: BrainProjectSnapshot[];
   tasks: BrainTaskSnapshot[];
   onSave: (projects: BrainProjectSnapshot[], tasks: BrainTaskSnapshot[]) => void;
+  onOpen: (projectId: string) => void;
+  onCreate: () => void;
+  onDelete: (project: BrainProjectSnapshot) => void;
 }) {
+  const { t } = useUiPreferences();
   const [tab, setTab] = useState<"current" | "completed" | "archived">("current");
+  const [mode, setMode] = useState<"list" | "status">(() => localStorage.getItem("second-brain.projectView") === "status" ? "status" : "list");
+  const [statusFilter, setStatusFilter] = useState(() => localStorage.getItem("second-brain.projectStatusFilter") ?? "all");
+  const [priorityFilter, setPriorityFilter] = useState(() => localStorage.getItem("second-brain.projectPriorityFilter") ?? "all");
+  const [areaFilter, setAreaFilter] = useState(() => localStorage.getItem("second-brain.projectAreaFilter") ?? "all");
+  const [sort, setSort] = useState<"priority" | "status" | "name" | "endDate">(() => {
+    const saved = localStorage.getItem("second-brain.projectSort");
+    return saved === "status" || saved === "name" || saved === "endDate" ? saved : "priority";
+  });
   const groups = {
     current: projects.filter((project) => project.status !== "done" && project.status !== "archived"),
     completed: projects.filter((project) => project.status === "done"),
     archived: projects.filter((project) => project.status === "archived"),
   };
-  const visibleProjects = groups[tab];
+  const areas = [...new Set(projects.map((project) => project.area).filter((area): area is string => Boolean(area)))].sort();
+  const statusRank = new Map([["planning", 0], ["active", 1], ["paused", 2], ["done", 3], ["archived", 4]]);
+  const visibleProjects = groups[tab]
+    .filter((project) => statusFilter === "all" || project.status === statusFilter)
+    .filter((project) => priorityFilter === "all" || String(project.priority ?? "unset") === priorityFilter)
+    .filter((project) => areaFilter === "all" || project.area === areaFilter)
+    .sort((left, right) => {
+      if (sort === "priority") return (left.priority ?? 99) - (right.priority ?? 99) || left.name.localeCompare(right.name);
+      if (sort === "status") return (statusRank.get(left.status) ?? 99) - (statusRank.get(right.status) ?? 99) || left.name.localeCompare(right.name);
+      if (sort === "endDate") return (left.endDate ?? "9999-12-31").localeCompare(right.endDate ?? "9999-12-31") || left.name.localeCompare(right.name);
+      return left.name.localeCompare(right.name);
+    });
   const saveProject = (project: BrainProjectSnapshot, value: BrainProjectSnapshot) =>
     onSave(projects.map((item) => item.id === project.id ? value : item), tasks);
   const finishProject = (project: BrainProjectSnapshot) => {
@@ -2523,51 +2970,159 @@ function Projects({
     onSave(projects.map((item) => item.id === project.id ? completed.project : item), completed.tasks);
     setTab("completed");
   };
+  const renderProject = (project: BrainProjectSnapshot) => {
+    const projectTasks = tasks.filter((task) => task.projectId === project.id);
+    const openTasks = projectTasks.filter((task) => task.status !== "done").length;
+    const doingTasks = projectTasks.filter((task) => task.status === "doing").length;
+    return (
+      <ProjectEditor
+        key={project.id ?? project.name}
+        project={project}
+        openTasks={openTasks}
+        doingTasks={doingTasks}
+        onOpen={() => project.id && onOpen(project.id)}
+        onDelete={() => onDelete(project)}
+        onSave={(value) => saveProject(project, value)}
+        onFocus={(enabled) => void onSave(projects.map((item) => ({
+          ...item,
+          focusToday: item.id === project.id ? enabled : false,
+        })), tasks)}
+        onComplete={() => finishProject(project)}
+        onReopen={() => saveProject(project, { ...project, status: "active", completedAt: null, focusToday: false })}
+        onArchive={() => saveProject(project, { ...project, status: "archived", focusToday: false })}
+      />
+    );
+  };
   return (
     <section className="projects-workspace">
-      <header className="project-tabs" role="tablist" aria-label="專案狀態">
-        {([
-          ["current", "進行中"],
-          ["completed", "已完成"],
-          ["archived", "封存"],
-        ] as const).map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>
-            {label}<span>{groups[id].length}</span>
-          </button>
-        ))}
+      <header className="project-workspace-header">
+        <div className="project-tabs" role="tablist" aria-label={t("project.field.status")}>
+          {([["current", "project.tab.current"], ["completed", "project.tab.completed"], ["archived", "project.tab.archived"]] as const).map(([id, labelKey]) => (
+            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => { setTab(id); setStatusFilter("all"); localStorage.setItem("second-brain.projectStatusFilter", "all"); }}>{t(labelKey)}<span>{groups[id].length}</span></button>
+          ))}
+        </div>
+        <button className="primary icon-action" aria-label={t("project.action.add")} title={t("project.action.add")} onClick={onCreate}><Plus aria-hidden="true" /></button>
       </header>
-      <div className="project-grid">
-      {visibleProjects.length === 0 ? (
-        <Empty text="尚未找到 type: project 的 Markdown。" />
-      ) : (
-        visibleProjects.map((project) => (
-          <ProjectEditor
-            key={project.id ?? project.name}
-            project={project}
-            openTasks={
-              tasks.filter(
-                (task) =>
-                  task.projectId === project.id && task.status !== "done",
-              ).length
-            }
-            onSave={(value) => saveProject(project, value)}
-            onFocus={(enabled) =>
-              void onSave(
-                projects.map((item) => ({
-                  ...item,
-                  focusToday: item.id === project.id ? enabled : false,
-                })),
-                tasks,
-              )
-            }
-            onComplete={() => finishProject(project)}
-            onReopen={() => saveProject(project, { ...project, status: "active", completedAt: null, focusToday: false })}
-            onArchive={() => saveProject(project, { ...project, status: "archived", focusToday: false })}
-          />
-        ))
-      )}
+      <div className="project-filters">
+        <div className="segmented-control icon-segmented-control" aria-label={t("project.view.board")}>
+          <button className={mode === "list" ? "active" : ""} aria-label={t("project.view.list")} title={t("project.view.list")} onClick={() => { setMode("list"); localStorage.setItem("second-brain.projectView", "list"); }}><List aria-hidden="true" /></button>
+          <button className={mode === "status" ? "active" : ""} aria-label={t("project.view.board")} title={t("project.view.board")} onClick={() => { setMode("status"); localStorage.setItem("second-brain.projectView", "status"); }}><Columns3 aria-hidden="true" /></button>
+        </div>
+        <select aria-label={t("project.filter.status")} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); localStorage.setItem("second-brain.projectStatusFilter", event.target.value); }}><option value="all">{t("project.filter.allStatuses")}</option><option value="planning">{t("project.status.planning")}</option><option value="active">{t("project.status.active")}</option><option value="paused">{t("project.status.paused")}</option></select>
+        <select aria-label={t("project.filter.importance")} value={priorityFilter} onChange={(event) => { setPriorityFilter(event.target.value); localStorage.setItem("second-brain.projectPriorityFilter", event.target.value); }}><option value="all">{t("project.filter.allImportance")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option><option value="unset">{t("project.importance.unset")}</option></select>
+        <select aria-label={t("project.filter.category")} value={areaFilter} onChange={(event) => { setAreaFilter(event.target.value); localStorage.setItem("second-brain.projectAreaFilter", event.target.value); }}><option value="all">{t("project.filter.allCategories")}</option>{areas.map((area) => <option key={area}>{area}</option>)}</select>
+        <select aria-label={t("project.sort")} value={sort} onChange={(event) => { const value = event.target.value as typeof sort; setSort(value); localStorage.setItem("second-brain.projectSort", value); }}><option value="priority">{t("project.sort.importance")}</option><option value="status">{t("project.sort.status")}</option><option value="name">{t("project.sort.name")}</option><option value="endDate">{t("project.sort.endDate")}</option></select>
+      </div>
+      {visibleProjects.length === 0 ? <Empty text={t("project.empty")} /> : mode === "status" && tab === "current" ? (
+        <div className="project-status-board">
+          {(["planning", "active", "paused"] as const).map((status) => <section key={status}><header><strong>{t(`project.status.${status}`)}</strong><span>{visibleProjects.filter((project) => project.status === status).length}</span></header>{visibleProjects.filter((project) => project.status === status).map(renderProject)}</section>)}
+        </div>
+      ) : <div className={mode === "list" ? "project-list" : "project-grid"}>{visibleProjects.map(renderProject)}</div>}
+    </section>
+  );
+}
+
+function Collections({
+  collections,
+  selectedId,
+  onSelect,
+  onCreate,
+  onSave,
+}: {
+  collections: BrainCollectionSnapshot[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  onCreate: () => void;
+  onSave: (collection: BrainCollectionSnapshot) => void;
+}) {
+  const { t, preferences } = useUiPreferences();
+  const [category, setCategory] = useState("all");
+  const [importance, setImportance] = useState("all");
+  const categories = [...new Set(collections.map((item) => item.category).filter((item): item is string => Boolean(item)))].sort();
+  const visible = collections
+    .filter((item) => category === "all" || item.category === category)
+    .filter((item) => importance === "all" || String(item.importance ?? "unset") === importance)
+    .sort((left, right) => (left.importance ?? 99) - (right.importance ?? 99) || left.name.localeCompare(right.name));
+  const selected = collections.find((item) => item.id === selectedId) ?? null;
+  return (
+    <section className="collections-workspace">
+      <header className="project-workspace-header">
+        <div><h2>{t("collection.title")}</h2><p>{t("collection.description")}</p></div>
+        <button className="primary icon-action" aria-label={t("collection.action.add")} title={t("collection.action.add")} onClick={onCreate}><Plus aria-hidden="true" /></button>
+      </header>
+      <div className="project-filters">
+        <select aria-label={t("collection.filter.category")} value={category} onChange={(event) => setCategory(event.target.value)}><option value="all">{t("project.filter.allCategories")}</option>{categories.map((item) => <option key={item}>{item}</option>)}</select>
+        <select aria-label={t("collection.filter.importance")} value={importance} onChange={(event) => setImportance(event.target.value)}><option value="all">{t("project.filter.allImportance")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option><option value="unset">{t("project.importance.unset")}</option></select>
+      </div>
+      <div className="collection-layout">
+        <div className="collection-list">
+          {visible.length === 0 ? <Empty text={t("collection.empty")} /> : visible.map((item) => (
+            <button key={item.id ?? item.sourcePath} className={selected?.id === item.id ? "active" : ""} onClick={() => onSelect(item.id)}>
+              <span><strong>{item.name}</strong><small>{item.category ?? t("app.uncategorized")} · {item.importance ? `${t("project.field.importance")} ${item.importance}` : t("project.importance.unset")}</small></span>
+              <small>{item.body.slice(0, 100) || t("app.noContent")}</small>
+            </button>
+          ))}
+        </div>
+        <article className="collection-preview">
+          {selected ? <CollectionEditor key={selected.id ?? selected.name} collection={selected} locale={preferences.language} onSave={onSave} /> : <Empty text={t("collection.select")} />}
+        </article>
       </div>
     </section>
+  );
+}
+
+function CollectionEditor({ collection, locale, onSave }: { collection: BrainCollectionSnapshot; locale: UiPreferences["language"]; onSave: (collection: BrainCollectionSnapshot) => void }) {
+  const { t } = useUiPreferences();
+  const [value, setValue] = useState(collection);
+  return <>
+    <div className="project-editor-grid">
+      <label>{t("entity.field.name")}<input value={value.name} maxLength={200} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
+      <label>{t("entity.field.category")}<input value={value.category ?? ""} maxLength={200} onChange={(event) => setValue({ ...value, category: event.target.value || null })} /></label>
+      <label>{t("entity.field.importance")}<select value={value.importance ?? ""} onChange={(event) => setValue({ ...value, importance: event.target.value ? Number(event.target.value) : null })}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
+    </div>
+    <MarkdownEditor value={value.body} onChange={(body) => setValue({ ...value, body })} locale={locale} />
+    <button className="primary action-with-icon" disabled={!value.name.trim()} onClick={() => onSave({ ...value, name: value.name.trim() })}><Save aria-hidden="true" />{t("app.save")}</button>
+  </>;
+}
+
+function CreateEntityModal({
+  kind,
+  initialName,
+  onClose,
+  onCreate,
+}: {
+  kind: "project" | "collection";
+  initialName: string;
+  onClose: () => void;
+  onCreate: (name: string, category: string | null, importance: number | null, body: string) => Promise<void>;
+}) {
+  const { t, preferences } = useUiPreferences();
+  const [name, setName] = useState(initialName);
+  const [category, setCategory] = useState("");
+  const [importance, setImportance] = useState("");
+  const [body, setBody] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const submit = async () => {
+    if (!name.trim() || name.trim().length > 200 || submitting) return;
+    setSubmitting(true);
+    try {
+      await onCreate(name.trim(), category.trim() || null, importance ? Number(importance) : null, body);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="modal entity-modal" role="dialog" aria-modal="true" aria-label={t(kind === "project" ? "entity.project.title" : "entity.collection.title")}>
+        <div className="modal-header"><div><span className="eyebrow">{kind === "project" ? "OUTCOME" : "REFERENCE"}</span><h2>{t(kind === "project" ? "entity.project.title" : "entity.collection.title")}</h2></div><button className="icon-button" aria-label={t("app.close")} title={t("app.close")} onClick={onClose}><X aria-hidden="true" /></button></div>
+        <p className="entity-guidance">{t(kind === "project" ? "entity.project.help" : "entity.collection.help")}</p>
+        <label>{t("entity.field.name")}<input autoFocus maxLength={200} value={name} onChange={(event) => setName(event.target.value)} /></label>
+        <label>{t("entity.field.category")}<input maxLength={200} value={category} onChange={(event) => setCategory(event.target.value)} /></label>
+        <label>{t("entity.field.importance")}<select value={importance} onChange={(event) => setImportance(event.target.value)}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
+        <MarkdownEditor value={body} onChange={setBody} locale={preferences.language} minRows={8} />
+        <div className="modal-actions"><button className="secondary-button" onClick={onClose}>{t("app.cancel")}</button><button className="primary" disabled={!name.trim() || submitting} onClick={() => void submit()}>{t(submitting ? "app.creating" : "app.create")}</button></div>
+      </section>
+    </div>
   );
 }
 
@@ -2606,22 +3161,23 @@ function SyncSettings({
   onSync: () => void;
   onShadow: () => void;
 }) {
+  const { preferences, t } = useUiPreferences();
   return (
     <div className="settings-grid">
       <section className="settings-card">
         <span className="step">1</span>
-        <h2>Markdown 資料夾</h2>
-        <p>按瀏覽資料夾即可用 Windows 選擇器，不需要手動貼路徑。</p>
-        <code>{diagnostics?.selectedVault ?? "尚未選擇"}</code>
+        <h2>{t("sync.folder")}</h2>
+        <p>{t("sync.folderHelp")}</p>
+        <code>{diagnostics?.selectedVault ?? t("sync.notSelected")}</code>
         <button
           className="browse-button wide"
           disabled={working}
           onClick={onBrowseVault}
         >
-          瀏覽資料夾
+          {t("sync.browse")}
         </button>
         <details>
-          <summary>或手動輸入路徑</summary>
+          <summary>{t("sync.manualPath")}</summary>
           <div className="input-action">
             <input
               placeholder="C:\Users\name\Documents\SecondBrain"
@@ -2633,15 +3189,15 @@ function SyncSettings({
               disabled={working || !vaultInput.trim()}
               onClick={onSelectVault}
             >
-              使用此資料夾
+              {t("sync.useFolder")}
             </button>
           </div>
         </details>
       </section>
       <section className="settings-card">
         <span className="step">2</span>
-        <h2>雲端同步服務</h2>
-        <p>雲端同步是選用功能；此開源版本預設為本機模式，Markdown 正文不會上傳。</p>
+        <h2>{t("sync.cloud")}</h2>
+        <p>{t("sync.cloudHelp")}</p>
         <div className="input-action">
           <input
             value={serverOrigin}
@@ -2650,7 +3206,7 @@ function SyncSettings({
             placeholder="選用：localhost 開發伺服器"
           />
           <button className="primary" disabled={diagnostics?.syncEnabled === true} onClick={onConfigureServer}>
-            儲存
+            {t("sync.save")}
           </button>
         </div>
         {diagnostics?.syncEnabled && (
@@ -2662,22 +3218,22 @@ function SyncSettings({
       </section>
       <section className="settings-card">
         <span className="step">3</span>
-        <h2>安全配對</h2>
-        <p>網站現在只需要下方 8 位碼；不需要填 UUID 或其他安全密碼。</p>
+        <h2>{t("sync.pairing")}</h2>
+        <p>{t("sync.pairingHelp")}</p>
         {devicePaired ? (
           <div className="paired-ok">
-            <strong>✓ 已完成安全配對</strong>
-            <small>現在可以執行首次同步</small>
+            <strong>✓ {t("sync.paired")}</strong>
+            <small>{t("sync.pairedHelp")}</small>
           </div>
         ) : pairing ? (
           <div className="pair-code">
-            <small>請到網站輸入</small>
+            <small>{t("sync.enterCode")}</small>
             <strong>{pairing.userCode}</strong>
             <span>
-              有效至 {new Date(pairing.expiresAt).toLocaleTimeString("zh-TW")}
+              {new Date(pairing.expiresAt).toLocaleTimeString(preferences.language)}
             </span>
             <button className="primary wide" onClick={onOpenPairingWebsite}>
-              在網站輸入配對碼
+              {t("sync.openPairing")}
             </button>
           </div>
         ) : (
@@ -2686,20 +3242,18 @@ function SyncSettings({
             disabled={working || !serverOrigin}
             onClick={onStartPairing}
           >
-            開始配對
+            {t("sync.startPairing")}
           </button>
         )}
       </section>
       <section className="settings-card">
         <span className="step">4</span>
-        <h2>同步與復原</h2>
-        <p>
-          寫入前自動建立 SHA-256 驗證 ZIP；背景只安靜檢查版本，有變更才同步。
-        </p>
+        <h2>{t("sync.recovery")}</h2>
+        <p>{t("sync.recoveryHelp")}</p>
         {!writeApproved && devicePaired && (
           <div className="first-sync-hint">
-            <strong>還差最後一次確認</strong>
-            <span>先產生安全預覽；第一次同步完成後，才會啟用自動同步。</span>
+            <strong>{t("sync.firstConfirm")}</strong>
+            <span>{t("sync.firstConfirmHelp")}</span>
           </div>
         )}
         <div className="diagnostic-list">
@@ -2722,14 +3276,14 @@ function SyncSettings({
           onClick={onSync}
         >
           {!devicePaired
-            ? "請先完成配對"
+            ? t("sync.pairFirst")
             : writeApproved
-              ? "立即完整同步"
-              : "完成首次同步"}
+              ? t("sync.full")
+              : t("sync.first")}
         </button>
         {writeApproved && (
           <button className="secondary-button wide" onClick={onShadow}>
-            切回 Shadow 模式
+            {t("sync.shadow")}
           </button>
         )}
       </section>
@@ -2740,17 +3294,21 @@ function SyncSettings({
 function WorkspaceSearch({
   tasks,
   projects,
+  collections,
   onClose,
   onSelect,
 }: {
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
+  collections: BrainCollectionSnapshot[];
   onClose: () => void;
   onSelect: (result: WorkspaceSearchResult) => void;
 }) {
+  const { t } = useUiPreferences();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"relevance" | "date">("relevance");
   const [statusFilter, setStatusFilter] = useState<"all" | "open" | "completed">("all");
+  const [kindFilter, setKindFilter] = useState<"all" | WorkspaceSearchKind>("all");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => inputRef.current?.focus(), []);
@@ -2773,9 +3331,18 @@ function WorkspaceSearch({
       endDate: project.endDate ?? null,
       completedAt: project.completedAt ?? null,
     })),
-    { query, sort, status: statusFilter, today: taipeiDateKey() },
-  ), [projects, query, sort, statusFilter, tasks]);
-  useEffect(() => setActiveIndex(0), [query, sort, statusFilter]);
+    collections.filter((collection): collection is BrainCollectionSnapshot & { id: string } => Boolean(collection.id)).map((collection) => ({
+      id: collection.id,
+      name: collection.name,
+      category: collection.category,
+      importance: collection.importance,
+      sourcePath: collection.sourcePath,
+      body: collection.body,
+    })),
+    { query, sort, status: statusFilter, kinds: kindFilter === "all" ? undefined : [kindFilter], today: taipeiDateKey() },
+  ), [collections, kindFilter, projects, query, sort, statusFilter, tasks]);
+  const queryError = parseWorkspaceQuery(query).error;
+  useEffect(() => setActiveIndex(0), [query, sort, statusFilter, kindFilter]);
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -2783,7 +3350,7 @@ function WorkspaceSearch({
         className="modal workspace-search"
         role="dialog"
         aria-modal="true"
-        aria-label="搜尋任務與專案"
+        aria-label={t("search.dialog")}
         onKeyDown={(event) => {
           if (event.key === "Escape") onClose();
           if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((value) => Math.min(value + 1, results.length - 1)); }
@@ -2793,28 +3360,32 @@ function WorkspaceSearch({
       >
         <div className="search-input-row">
           <Search aria-hidden="true" />
-          <input ref={inputRef} aria-label="搜尋關鍵字" placeholder="搜尋任務、專案、相對路徑…" value={query} onChange={(event) => setQuery(event.target.value)} />
-          <button className="icon-button" aria-label="關閉搜尋" onClick={onClose}><X aria-hidden="true" /></button>
+          <input ref={inputRef} aria-label={t("search.keyword")} aria-invalid={Boolean(queryError)} placeholder={t("search.placeholder")} value={query} onChange={(event) => setQuery(event.target.value)} />
+          <button className="icon-button" aria-label={t("app.close")} title={t("app.close")} onClick={onClose}><X aria-hidden="true" /></button>
         </div>
         <div className="search-toolbar">
-          <div className="segmented-control" aria-label="排序方式">
-            <button className={sort === "relevance" ? "active" : ""} onClick={() => setSort("relevance")}>關聯性</button>
-            <button className={sort === "date" ? "active" : ""} onClick={() => setSort("date")}>日期</button>
+          <div className="segmented-control" aria-label={t("search.sort")}>
+            <button className={sort === "relevance" ? "active" : ""} onClick={() => setSort("relevance")}>{t("search.relevance")}</button>
+            <button className={sort === "date" ? "active" : ""} onClick={() => setSort("date")}>{t("search.date")}</button>
           </div>
-          <select aria-label="狀態篩選" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
-            <option value="all">全部狀態</option>
-            <option value="open">進行中</option>
-            <option value="completed">已完成與封存</option>
+          <select aria-label={t("search.filter.status")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+            <option value="all">{t("search.allStatuses")}</option>
+            <option value="open">{t("search.open")}</option>
+            <option value="completed">{t("search.completed")}</option>
           </select>
-          <span>{results.length} 筆結果</span>
+          <select aria-label={t("search.filter.kind")} value={kindFilter} onChange={(event) => setKindFilter(event.target.value as typeof kindFilter)}><option value="all">{t("search.allKinds")}</option><option value="task">{t("search.kind.task")}</option><option value="project">{t("search.kind.project")}</option><option value="collection">{t("search.kind.collection")}</option></select>
+          <span>{t("search.results", { count: results.length })}</span>
         </div>
+        {queryError && <div className="search-error" role="status">{queryError}</div>}
         <div className="search-results" role="listbox">
-          {results.length === 0 ? <Empty text="找不到相符的任務或專案。" /> : results.map((result, index) => {
+          {results.length === 0 ? <Empty text={t("search.empty")} /> : results.map((result, index) => {
             const isTask = result.kind === "task";
             const title = isTask ? result.value.title : result.value.name;
-            const meta = isTask
+            const meta = result.kind === "task"
               ? [result.value.projectName, result.value.taskDate, result.value.sourcePath].filter(Boolean).join(" · ")
-              : [result.value.area, result.value.status, result.value.endDate].filter(Boolean).join(" · ");
+              : result.kind === "project"
+                ? [result.value.area, result.value.status, result.value.endDate].filter(Boolean).join(" · ")
+                : [result.value.category, result.value.sourcePath].filter(Boolean).join(" · ");
             return (
               <button
                 key={`${result.kind}:${result.id}`}
@@ -2824,14 +3395,14 @@ function WorkspaceSearch({
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => onSelect(result)}
               >
-                <span className="result-kind">{isTask ? "任務" : "專案"}</span>
-                <span><strong>{title}</strong><small>{meta || "未分類"}</small></span>
+                <span className="result-kind">{t(`search.kind.${result.kind}`)}</span>
+                <span><strong>{title}</strong><small>{meta || t("app.uncategorized")}</small></span>
                 {result.date && <time>{result.date}</time>}
               </button>
             );
           })}
         </div>
-        <footer>↑↓ 選擇 · Enter 開啟 · Esc 關閉</footer>
+        <footer>{t("search.help")}</footer>
       </section>
     </div>
   );

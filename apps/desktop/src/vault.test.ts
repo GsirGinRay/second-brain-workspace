@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { formatTaskLine } from "@second-brain/brain-core";
-import { applyDesiredSnapshot, scanStructuredVault, type LocalMarkdownFile } from "./vault";
+import {
+  applyDesiredSnapshot,
+  buildCollectionCreateChange,
+  buildProjectCreateChange,
+  buildProjectDeleteChanges,
+  scanStructuredVault,
+  type LocalMarkdownFile,
+} from "./vault";
 
 const taskId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
@@ -44,6 +51,31 @@ test("structured vault scan links tasks to project ids and rejects duplicate ids
     () => scanStructuredVault([file("a.md", task), file("b.md", task)]),
     /DUPLICATE_TASK_ID/,
   );
+});
+
+test("structured vault scan indexes collection metadata and body without treating it as a project", () => {
+  const collectionId = "44444444-4444-4444-8444-444444444444";
+  const source = `---\r\ntype: collection\r\npublisher_id: ${collectionId}\r\ncategory: AI\r\nimportance: 1\r\n---\r\n# 常用提示詞\r\n\r\n影片腳本與股票分析\r\n`;
+  const result = scanStructuredVault([file("Collections/Prompts.md", source)]);
+  assert.equal(result.snapshot.projects.length, 0);
+  assert.deepEqual(result.snapshot.collections, [{
+    schemaVersion: 6,
+    id: collectionId,
+    name: "常用提示詞",
+    sourcePath: "Collections/Prompts.md",
+    category: "AI",
+    importance: 1,
+    body: "影片腳本與股票分析",
+  }]);
+});
+
+test("structured vault scan bootstraps a missing collection id while preserving CRLF", () => {
+  const collectionId = "55555555-5555-4555-8555-555555555555";
+  const source = "---\r\ntype: collection\r\ncategory: 參考\r\n---\r\n# 剪輯資料\r\n正文\r\n";
+  const result = scanStructuredVault([file("Collections/Editing.md", source)], () => collectionId);
+  const patched = base64ToText(result.bootstrapChanges[0]!.replacementBase64);
+  assert.match(patched, new RegExp(`publisher_id: ${collectionId}`));
+  assert.ok(patched.includes("\r\n"));
 });
 
 test("structured vault snapshot never uploads parser-only location metadata", () => {
@@ -108,4 +140,85 @@ test("desired snapshot permanently removes a missing task line while preserving 
   const changes = applyDesiredSnapshot(files, { ...scanned.snapshot, tasks: [] });
   assert.equal(changes.length, 1);
   assert.equal(base64ToText(changes[0]!.replacementBase64), "# Tasks\r\nkeep before\r\nkeep after\r\n");
+});
+
+test("project and collection creation use safe unique Markdown paths", () => {
+  const project = buildProjectCreateChange("Launch: Q4", "Work", 1, ["Projects/Launch Q4.md"]);
+  assert.equal(project.relativePath, "Projects/Launch Q4-2.md");
+  assert.equal(project.operation, "create");
+  assert.match(base64ToText(project.replacementBase64), /status: planning/);
+
+  const collection = buildCollectionCreateChange("Prompt/Library", "AI", 2, []);
+  assert.equal(collection.relativePath, "Collections/Prompt Library.md");
+  assert.match(base64ToText(collection.replacementBase64), /type: collection/);
+});
+
+test("project and collection creation includes full Markdown body", () => {
+  const project = buildProjectCreateChange("Launch", null, null, [], undefined, "## Goal\n\nShip it");
+  const collection = buildCollectionCreateChange("Prompt", null, null, [], undefined, "```text\nhello\n```");
+  assert.match(base64ToText(project.replacementBase64), /## Goal\r\n\r\nShip it/);
+  assert.match(base64ToText(collection.replacementBase64), /```text\r\nhello\r\n```/);
+});
+
+test("desired snapshot creates a beginner inbox when the selected folder is empty", () => {
+  const desired = {
+    schemaVersion: 6 as const,
+    tasks: [{
+      schemaVersion: 6 as const, id: taskId, title: "First task", status: "todo" as const,
+      taskDate: null, priority: "normal" as const, projectId: null, projectName: null,
+      rank: "a", sourcePath: null, sourceHeading: null, completedAt: null,
+      body: "## Notes\n\nMy first Markdown",
+    }],
+    projects: [], collections: [], routineTemplates: [], fileHashes: {},
+  };
+  const changes = applyDesiredSnapshot([], desired);
+  assert.equal(changes[0]?.operation, "create");
+  assert.equal(changes[0]?.relativePath, "10-收件匣/待辦收件匣.md");
+  assert.match(base64ToText(changes[0]!.replacementBase64), /My first Markdown/);
+});
+
+test("task checkboxes inside a task Markdown body are not indexed as separate tasks", () => {
+  const line = formatTaskLine({
+    id: taskId, title: "Parent", status: "todo", taskDate: null, priority: "normal",
+    projectId: null, projectName: null, rank: "a", sourcePath: "tasks.md",
+    sourceHeading: null, completedAt: null,
+  });
+  const source = `${line}\r\n<!-- second-brain-task-content:${taskId}:start -->\r\n- [ ] #task Example only\r\n<!-- second-brain-task-content:${taskId}:end -->\r\n`;
+  const scanned = scanStructuredVault([file("tasks.md", source)]);
+  assert.equal(scanned.snapshot.tasks.length, 1);
+  assert.match(scanned.snapshot.tasks[0]?.body ?? "", /Example only/);
+});
+
+test("project deletion preserves tasks by unlinking them and deletes only the project source", () => {
+  const projectSource = `---\r\ntype: project\r\npublisher_id: ${projectId}\r\n---\r\n# Launch\r\nnotes\r\n`;
+  const linkedTask = formatTaskLine({
+    id: taskId, title: "Ship", status: "todo", taskDate: null,
+    priority: "normal", projectId, projectName: "Launch", rank: "a",
+    sourcePath: "tasks.md", sourceHeading: null, completedAt: null,
+  }) + "\r\n";
+  const files = [file("Projects/Launch.md", projectSource), file("tasks.md", linkedTask)];
+  const scanned = scanStructuredVault(files);
+  const changes = buildProjectDeleteChanges(files, scanned.snapshot, projectId);
+  assert.equal(changes.find((change) => change.relativePath === "Projects/Launch.md")?.operation, "delete");
+  const taskChange = changes.find((change) => change.relativePath === "tasks.md")!;
+  const patchedTask = base64ToText("replacementBase64" in taskChange ? taskChange.replacementBase64 : "");
+  assert.doesNotMatch(patchedTask, /\[\[Launch\]\]/);
+  assert.match(patchedTask, /Ship/);
+});
+
+test("project deletion relocates tasks stored inside the project note to the inbox", () => {
+  const embedded = formatTaskLine({
+    id: taskId, title: "Keep me", status: "todo", taskDate: null,
+    priority: "normal", projectId, projectName: "Launch", rank: "a",
+    sourcePath: "Projects/Launch.md", sourceHeading: null, completedAt: null,
+  });
+  const projectSource = `---\r\ntype: project\r\npublisher_id: ${projectId}\r\n---\r\n# Launch\r\n${embedded}\r\n`;
+  const inboxPath = "10-收件匣/待辦收件匣.md";
+  const files = [file("Projects/Launch.md", projectSource), file(inboxPath, "# 收件匣\r\n")];
+  const scanned = scanStructuredVault(files);
+  const changes = buildProjectDeleteChanges(files, scanned.snapshot, projectId);
+  const inbox = changes.find((change) => change.relativePath === inboxPath)!;
+  const text = base64ToText(inbox.replacementBase64);
+  assert.match(text, /Keep me/);
+  assert.doesNotMatch(text, /\[\[Launch\]\]/);
 });

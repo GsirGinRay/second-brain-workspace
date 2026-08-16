@@ -86,6 +86,19 @@ test("permanent task deletion is owner-bound through a signed native request", a
   });
 });
 
+test("permanent project deletion uses a signed project endpoint", async () => {
+  let captured: unknown;
+  const signingNative = native();
+  signingNative.publisherHttpRequest = async (request) => { captured = request; return { status: 204, headers: {}, body: "" }; };
+  const client = new DeviceClient("http://localhost:3000", signingNative);
+  await client.deleteProjectPermanently("44444444-4444-4444-8444-444444444444");
+  assert.deepEqual(captured, {
+    origin: "http://localhost:3000", method: "DELETE",
+    path: "/api/brain/device/projects/44444444-4444-4444-8444-444444444444",
+    body: null, headers: {}, signed: true,
+  });
+});
+
 test("HTTP failures preserve status, server error code, and readable detail", async () => {
   const adapter = native();
   adapter.publisherHttpRequest = async () => ({
@@ -111,9 +124,14 @@ test("sync plan request contains structured fields but no Markdown body or attac
     return { status: 200, headers: {}, body: JSON.stringify({ planId: "22222222-2222-4222-8222-222222222222", baseRevision: 0, targetRevision: 1, payloadDigest: "b".repeat(64), expiresAt: "2026-08-13T00:00:00.000Z", desiredTasks: [], desiredProjects: [], conflicts: [] }) };
   };
   await new DeviceClient("https://brain.example.com", adapter).createPlan({
-    schemaVersion: 3, baseRevision: 0, tasks: [], projects: [], fileHashes: { "notes.md": "a".repeat(64) },
+    schemaVersion: 3, baseRevision: 0,
+    tasks: [{ id: "11111111-1111-4111-8111-111111111111", title: "Task", status: "todo", taskDate: null, priority: "normal", projectId: null, projectName: null, rank: "a", sourcePath: "notes.md", sourceHeading: null, completedAt: null, body: "private task Markdown" }],
+    projects: [{ id: "22222222-2222-4222-8222-222222222222", name: "Project", sourcePath: "project.md", status: "active", area: null, priority: null, progress: 0, focusToday: false, body: "private project Markdown" }],
+    fileHashes: { "notes.md": "a".repeat(64) },
   });
   assert.match(body, /fileHashes/);
+  assert.match(body, /"title":"Task"/);
+  assert.doesNotMatch(body, /private task Markdown|private project Markdown/);
   assert.doesNotMatch(body, /bytesBase64|replacementBase64|markdownBody|attachment|privateKey/i);
 });
 

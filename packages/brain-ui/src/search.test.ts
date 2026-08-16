@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { searchWorkspace, type WorkspaceSearchProject, type WorkspaceSearchTask } from "./search";
+import {
+  parseWorkspaceQuery,
+  searchWorkspace,
+  type WorkspaceSearchCollection,
+  type WorkspaceSearchProject,
+  type WorkspaceSearchTask,
+} from "./search";
 
 const tasks: WorkspaceSearchTask[] = [
   { id: "exact", title: "發布影片", status: "todo", taskDate: "2026-08-14", completedAt: null, projectName: "YouTube", sourcePath: "Tasks.md", sourceHeading: null },
@@ -13,6 +19,11 @@ const tasks: WorkspaceSearchTask[] = [
 const projects: WorkspaceSearchProject[] = [
   { id: "p1", name: "發布影片系統", status: "active", area: "內容", endDate: "2026-08-30", completedAt: null },
   { id: "p2", name: "歷史專案", status: "done", area: "內容", endDate: null, completedAt: "2026-07-01" },
+];
+
+const collections: WorkspaceSearchCollection[] = [
+  { id: "c1", name: "常用提示詞", category: "AI", importance: 1, sourcePath: "Collections/Prompts.md", body: "影片腳本 股票分析" },
+  { id: "c2", name: "剪輯參考", category: "影片", importance: 2, sourcePath: "Collections/Editing.md", body: "轉場與字幕規範" },
 ];
 
 test("workspace search ranks an exact task title before project-field matches", () => {
@@ -33,4 +44,46 @@ test("date sorting puts overdue, today, future, completed and unscheduled in ord
 test("status filter finds completed history without losing projects", () => {
   const results = searchWorkspace(tasks, projects, { query: "", sort: "date", status: "completed", today: "2026-08-14" });
   assert.deepEqual(results.map(({ id }) => id), ["done", "p2"]);
+});
+
+test("workspace query supports union, intersection, precedence and quoted phrases", () => {
+  assert.deepEqual(parseWorkspaceQuery("股票 + 影片 & 腳本"), {
+    groups: [["股票"], ["影片", "腳本"]],
+    error: null,
+  });
+  assert.deepEqual(parseWorkspaceQuery('"影片腳本" & 股票'), {
+    groups: [["影片腳本", "股票"]],
+    error: null,
+  });
+});
+
+test("workspace query reports malformed operators without throwing", () => {
+  assert.equal(parseWorkspaceQuery("股票 ++ 影片").error, "搜尋條件不完整");
+  assert.equal(parseWorkspaceQuery("股票 &").error, "搜尋條件不完整");
+});
+
+test("boolean search matches terms across fields and includes local collections", () => {
+  const intersection = searchWorkspace(tasks, projects, collections, {
+    query: "股票 & AI",
+    sort: "relevance",
+    today: "2026-08-14",
+  });
+  assert.deepEqual(intersection.map(({ id }) => id), ["c1"]);
+
+  const union = searchWorkspace(tasks, projects, collections, {
+    query: "字幕 + 股票",
+    sort: "relevance",
+    today: "2026-08-14",
+  });
+  assert.deepEqual(new Set(union.map(({ id }) => id)), new Set(["c1", "c2"]));
+});
+
+test("workspace search can filter result kinds", () => {
+  const results = searchWorkspace(tasks, projects, collections, {
+    query: "剪輯",
+    sort: "relevance",
+    today: "2026-08-14",
+    kinds: ["collection"],
+  });
+  assert.deepEqual(results.map(({ id }) => id), ["c2"]);
 });

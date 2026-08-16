@@ -11,7 +11,7 @@ const tauriConfig = () =>
       resolve(import.meta.dirname, "../src-tauri/tauri.conf.json"),
       "utf8",
     ),
-  ) as { app?: { windows?: Array<{ dragDropEnabled?: boolean }> } };
+  ) as { productName?: string; version?: string; identifier?: string; app?: { windows?: Array<{ dragDropEnabled?: boolean }> }; bundle?: { windows?: { allowDowngrades?: boolean; nsis?: { installMode?: string } } } };
 const publisherTauriExample = () =>
   JSON.parse(
     readFileSync(
@@ -127,9 +127,10 @@ test("task actions are compact accessible icons and permanent delete is never ar
   const source = app();
   const styles = css();
   assert.match(source, /function TaskActionBar/);
-  for (const label of ["設為最重要", "標記完成", "編輯任務", "永久刪除"]) {
-    assert.match(source, new RegExp(`aria-label=\\{?[^\\n]*${label}`));
+  for (const key of ["task.action.important", "task.action.complete", "task.action.edit", "task.action.delete"]) {
+    assert.ok(source.includes(`t("${key}")`));
   }
+  assert.match(source, /aria-label=\{done \? t\("task\.action\.reopen"\) : t\("task\.action\.complete"\)\}/);
   assert.match(source, /onDelete=\{onDelete\}/);
   assert.doesNotMatch(source, /永久刪除[\s\S]{0,180}archive\(/);
   assert.match(styles, /\.task-action-button[^}]*min-width:\s*40px/);
@@ -145,9 +146,9 @@ test("today command center makes the daily template visible and understandable",
   const source = app();
   const styles = css();
   assert.match(source, /className="routine-template-card"/);
-  assert.match(source, /每日任務模板/);
-  assert.match(source, /啟用項目/);
-  assert.match(source, /管理模板/);
+  assert.match(source, /today\.template/);
+  assert.match(source, /enabledRoutineItems/);
+  assert.match(source, /today\.template\.manage/);
   assert.match(styles, /\.routine-template-card/);
   assert.match(styles, /\.routine-template-action/);
 });
@@ -157,8 +158,27 @@ test("desktop exposes global task and project search with keyboard shortcuts", (
   assert.match(source, /WorkspaceSearch/);
   assert.match(source, /Ctrl\/Cmd\+K/);
   assert.match(source, /event\.key === "\/"/);
-  assert.match(source, /關聯性/);
-  assert.match(source, /日期/);
+  assert.match(source, /search\.relevance/);
+  assert.match(source, /search\.date/);
+});
+
+test("projects navigate to an id-filtered board and expose planning, filters and safe deletion", () => {
+  const source = app();
+  assert.match(source, /selectedBoardProjectId/);
+  assert.match(source, /task\.projectId === selectedProjectId/);
+  assert.match(source, /value="planning">\{t\("project\.status\.planning"\)\}/);
+  assert.match(source, /second-brain\.projectView/);
+  assert.match(source, /buildProjectDeleteChanges/);
+  assert.match(source, /保留 .*項未完成任務並解除專案連結/);
+});
+
+test("desktop separates collections from outcome projects and supports promotion", () => {
+  const source = app();
+  assert.match(source, /type View = [^;]*"collections"/);
+  assert.match(source, /function Collections/);
+  assert.match(source, /buildCollectionCreateChange/);
+  assert.match(source, /task\.action\.promote/);
+  assert.match(source, /search\.placeholder/);
 });
 
 test("desktop calendar and board expose the task editor", () => {
@@ -181,6 +201,66 @@ test("theme is monochrome with red reserved for important and destructive action
   assert.match(styles, /\.task-card\.most-important/);
   assert.match(styles, /\.calendar-task-title\.most-important/);
   assert.match(styles, /\.danger/);
+});
+
+test("global language and light-dark theme controls are persisted and accessible", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /UI_PREFERENCES_KEY/);
+  assert.match(source, /data-theme=\{preferences\.theme\}/);
+  assert.match(source, /aria-label=\{t\("app\.language"\)\}/);
+  assert.match(source, /aria-label=\{t\("app\.theme"\)\}/);
+  assert.match(styles, /\[data-theme="dark"\]/);
+  assert.match(styles, /color-scheme:\s*dark/);
+});
+
+test("language switching keeps the top actions in a fixed icon toolbar", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /className="icon-button top-icon-action sync-icon-action"/);
+  assert.doesNotMatch(source, /<div className="sync-state">\s*<span>/);
+  assert.match(styles, /\.top-actions\s*\{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(styles, /\.sync-state \.sync-icon-action\s*\{[^}]*width:\s*38px/);
+});
+
+test("dark mode keeps project and collection controls readable", () => {
+  const styles = css();
+  assert.match(styles, /\[data-theme="dark"\] \.project-filters select\s*\{[^}]*background:\s*var\(--paper\)[^}]*color:\s*var\(--ink\)/);
+  assert.match(styles, /\[data-theme="dark"\] \.project-tabs span\s*\{[^}]*background:/);
+});
+
+test("desktop branding uses the generated app logo", () => {
+  const source = app();
+  assert.match(source, /import appLogo from "\.\/assets\/app-logo\.png"/);
+  assert.match(source, /<img className="brand-logo" src=\{appLogo\}/);
+});
+
+test("beginner workflow supports Markdown drafts, onboarding and close-time folder selection", () => {
+  const source = app();
+  assert.match(source, /<MarkdownEditor/);
+  assert.match(source, /loadDraftWorkspace/);
+  assert.match(source, /onCloseRequested/);
+  assert.match(source, /onboardingOpen/);
+  assert.match(source, /flushDraftsToSelectedVault/);
+});
+
+test("Windows installer keeps a stable upgrade identity", () => {
+  const config = tauriConfig();
+  assert.equal(config.productName, "Second Brain Workspace");
+  assert.equal(config.identifier, "app.secondbrain.workspace");
+  assert.equal(config.version, "0.4.0");
+  assert.equal(config.bundle?.windows?.nsis?.installMode, "currentUser");
+  assert.equal(config.bundle?.windows?.allowDowngrades, false);
+});
+
+test("project actions use accessible icon-only controls while state labels remain visible", () => {
+  const source = app();
+  assert.match(source, /className="project-actions project-icon-actions"/);
+  for (const icon of ["Save", "CheckCircle2", "Archive", "Trash2"]) {
+    assert.match(source, new RegExp(`<${icon}\\b`));
+  }
+  assert.match(source, /aria-label=\{t\("project\.action\.delete"\)\}/);
+  assert.match(source, /task\.status\.waitingHelp/);
 });
 
 test("remote cloud access is absent from the default Tauri CSP", () => {

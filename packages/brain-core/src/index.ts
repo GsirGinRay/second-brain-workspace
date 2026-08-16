@@ -1,38 +1,50 @@
 export {
   BrainProjectSnapshotSchema,
+  BrainCollectionSnapshotSchema,
   BrainTaskSnapshotSchema,
   RoutineTemplateSchema,
   RoutineTemplateItemSchema,
   SyncSnapshotSchema,
   TaskPrioritySchema,
   TaskStatusSchema,
+  ProjectStatusSchema,
 } from "./types";
 export { SNAPSHOT_SCHEMA_VERSION } from "./types";
 export { isValidDateKey } from "./dates";
 export type {
   BrainProjectSnapshot,
+  BrainCollectionSnapshot,
   BrainTaskSnapshot,
   RoutineTemplate,
   RoutineTemplateItem,
   ParsedMarkdownTask,
   ParsedProjectFrontmatter,
+  ParsedCollectionFrontmatter,
   SyncSnapshot,
   TaskLineInput,
   TaskPriority,
   TaskStatus,
+  ProjectStatus,
 } from "./types";
-export type { VersionedProjectSnapshot, VersionedTaskSnapshot } from "./migrations";
+export type { VersionedCollectionSnapshot, VersionedProjectSnapshot, VersionedTaskSnapshot } from "./migrations";
 export {
   migrateProjectSnapshot,
+  migrateCollectionSnapshot,
   migrateSyncSnapshot,
   migrateTaskSnapshot,
   parseSyncSnapshot,
   tryMigrateProjectSnapshot,
+  tryMigrateCollectionSnapshot,
   tryMigrateTaskSnapshot,
 } from "./migrations";
 export {
   formatTaskLine,
   parseProjectFrontmatter,
+  parseCollectionFrontmatter,
+  extractTaskMarkdownContent,
+  patchTaskMarkdownContent,
+  replaceMarkdownDocumentBody,
+  replaceMarkdownDocumentTitle,
   parseTaskLine,
   patchTaskLine,
   patchTaskLineMinimal,

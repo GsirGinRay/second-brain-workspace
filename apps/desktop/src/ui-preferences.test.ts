@@ -1,0 +1,41 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  DEFAULT_UI_PREFERENCES,
+  normalizeUiPreferences,
+  translate,
+  type UiPreferences,
+} from "./ui-preferences";
+
+test("UI preferences default to Traditional Chinese and light theme", () => {
+  assert.deepEqual(DEFAULT_UI_PREFERENCES, {
+    language: "zh-TW",
+    theme: "light",
+  });
+});
+
+test("UI preferences accept only supported persisted values", () => {
+  assert.deepEqual(
+    normalizeUiPreferences({ language: "en", theme: "dark" }),
+    { language: "en", theme: "dark" },
+  );
+  assert.deepEqual(
+    normalizeUiPreferences({ language: "ja", theme: "system" }),
+    DEFAULT_UI_PREFERENCES,
+  );
+  assert.deepEqual(normalizeUiPreferences(null), DEFAULT_UI_PREFERENCES);
+});
+
+test("translations preserve stable data values while localizing visible labels", () => {
+  assert.equal(translate("zh-TW", "task.status.waiting"), "等待");
+  assert.equal(translate("en", "task.status.waiting"), "Waiting");
+  assert.equal(translate("en", "task.status.waitingHelp"), "Waiting for a reply, material, approval, date, or another external condition");
+  assert.equal(translate("en", "project.action.delete"), "Delete permanently");
+  assert.equal(translate("en", "missing.key"), "missing.key");
+});
+
+test("both language and theme choices round-trip as a complete preference", () => {
+  const value: UiPreferences = { language: "en", theme: "dark" };
+  assert.deepEqual(normalizeUiPreferences(JSON.parse(JSON.stringify(value))), value);
+});

@@ -57,11 +57,22 @@ export interface MarkdownFileContents {
   bytesBase64: string;
 }
 
-export interface MarkdownChangeRequest {
+export type MarkdownChangeRequest = {
   relativePath: string;
   expectedSha256: string;
   replacementBase64: string;
-}
+  operation?: "write";
+} | {
+  relativePath: string;
+  expectedSha256: string;
+  replacementBase64: string;
+  operation: "create";
+} | {
+  relativePath: string;
+  expectedSha256: string;
+  operation: "delete";
+  replacementBase64: "";
+};
 
 export interface MarkdownApplyResult {
   journalPath: string;
@@ -396,6 +407,20 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
     },
     async applyMarkdownChanges(changes) {
       if (changes.length === 0) throw new Error("at least one markdown change is required");
+      for (const change of changes) {
+        if (
+          !/^[a-f0-9]{64}$/i.test(change.expectedSha256)
+          || change.relativePath.length === 0
+          || change.relativePath.length > 500
+          || change.relativePath.includes("..")
+          || change.relativePath.startsWith("/")
+          || change.relativePath.includes("\\")
+          || !change.relativePath.toLocaleLowerCase().endsWith(".md")
+        ) throw new Error("markdown change is invalid");
+        if (change.operation !== "delete" && !/^[A-Za-z0-9+/]*={0,2}$/.test(change.replacementBase64)) {
+          throw new Error("markdown replacement is invalid");
+        }
+      }
       const value = assertRecord(await invoke("apply_markdown_changes", { changes }));
       assertExactKeys(value, ["journalPath", "backupPath"]);
       return {

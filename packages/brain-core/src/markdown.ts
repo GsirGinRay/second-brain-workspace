@@ -1,4 +1,5 @@
 import type {
+  ParsedCollectionFrontmatter,
   BrainProjectSnapshot,
   BrainTaskSnapshot,
   ParsedMarkdownTask,
@@ -601,11 +602,9 @@ export function parseProjectFrontmatter(
     if (match) values.set(match[1], parseScalar(match[2]));
   }
   if (values.get("type") !== "project") return null;
-  const heading = lines
-    .slice(closing + 1)
-    .find((line) => /^#\s+/.test(line))
-    ?.replace(/^#\s+/, "")
-    .trim();
+  const bodyLines = lines.slice(closing + 1);
+  const headingIndex = bodyLines.findIndex((line) => /^#\s+/.test(line));
+  const heading = headingIndex < 0 ? undefined : bodyLines[headingIndex]!.replace(/^#\s+/, "").trim();
   if (!heading) return null;
   return {
     id:
@@ -637,6 +636,115 @@ export function parseProjectFrontmatter(
       values.get("completed_at") == null
         ? null
         : String(values.get("completed_at")),
+    body: bodyLines.slice(headingIndex + 1).join("\n").trim(),
+    frontmatterStart: 0,
+    frontmatterEnd: closing,
+  };
+}
+
+const TASK_CONTENT_PREFIX = "second-brain-task-content";
+
+function taskContentMarkers(id: string): { start: string; end: string } {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("TASK_ID_INVALID");
+  return {
+    start: `<!-- ${TASK_CONTENT_PREFIX}:${id}:start -->`,
+    end: `<!-- ${TASK_CONTENT_PREFIX}:${id}:end -->`,
+  };
+}
+
+export function extractTaskMarkdownContent(source: string, id: string): string {
+  const markers = taskContentMarkers(id);
+  const start = source.indexOf(markers.start);
+  if (start < 0) return "";
+  const bodyStart = start + markers.start.length;
+  const end = source.indexOf(markers.end, bodyStart);
+  if (end < 0) return "";
+  return source.slice(bodyStart, end).replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+}
+
+export function patchTaskMarkdownContent(source: string, id: string, body: string): string {
+  if (body.length > 2_000_000) throw new Error("TASK_BODY_TOO_LARGE");
+  const markers = taskContentMarkers(id);
+  if (body.includes(`<!-- ${TASK_CONTENT_PREFIX}:`)) throw new Error("TASK_BODY_MARKER_CONFLICT");
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  const start = source.indexOf(markers.start);
+  if (start >= 0) {
+    const end = source.indexOf(markers.end, start + markers.start.length);
+    if (end < 0) throw new Error("TASK_BODY_MARKER_INVALID");
+    const blockEnd = end + markers.end.length;
+    if (!body.trim()) {
+      const removeStart = start;
+      let removeEnd = blockEnd;
+      if (source.slice(removeEnd, removeEnd + newline.length) === newline) removeEnd += newline.length;
+      return source.slice(0, removeStart) + source.slice(removeEnd);
+    }
+    return source.slice(0, start) + markers.start + newline + body + newline + markers.end + source.slice(blockEnd);
+  }
+  if (!body.trim()) return source;
+  const trailing = source.endsWith("\n");
+  return source + (trailing ? "" : newline) + markers.start + newline + body + newline + markers.end + newline;
+}
+
+export function replaceMarkdownDocumentBody(source: string, body: string): string {
+  if (body.length > 2_000_000) throw new Error("MARKDOWN_BODY_TOO_LARGE");
+  const bom = source.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const content = bom ? source.slice(1) : source;
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  const closing = lines[0] === "---" ? lines.findIndex((line, index) => index > 0 && line === "---") : -1;
+  const headingIndex = lines.findIndex((line, index) => index > closing && /^#\s+/.test(line));
+  if (headingIndex < 0) throw new Error("MARKDOWN_HEADING_NOT_FOUND");
+  const prefix = lines.slice(0, headingIndex + 1).join(newline);
+  const normalizedBody = body.replace(/\r?\n/g, newline).replace(/^\r?\n+|\r?\n+$/g, "");
+  return bom + prefix + newline + (normalizedBody ? newline + normalizedBody + newline : newline);
+}
+
+export function replaceMarkdownDocumentTitle(source: string, title: string): string {
+  const normalized = title.normalize("NFKC").replace(/[\r\n\u0000-\u001f\u007f]+/g, " ").trim();
+  if (!normalized || normalized.length > 200) throw new Error("INVALID_MARKDOWN_TITLE");
+  const bom = source.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const content = bom ? source.slice(1) : source;
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  const closing = lines[0] === "---" ? lines.findIndex((line, index) => index > 0 && line === "---") : -1;
+  const headingIndex = lines.findIndex((line, index) => index > closing && /^#\s+/.test(line));
+  if (headingIndex < 0) throw new Error("MARKDOWN_HEADING_NOT_FOUND");
+  lines[headingIndex] = `# ${normalized}`;
+  return bom + lines.join(newline);
+}
+
+export function parseCollectionFrontmatter(
+  source: string,
+  sourcePath: string,
+): ParsedCollectionFrontmatter | null {
+  const content = source.startsWith("\uFEFF") ? source.slice(1) : source;
+  const lines = content.split(/\r?\n/);
+  if (lines[0] !== "---") return null;
+  const closing = lines.findIndex((line, index) => index > 0 && line === "---");
+  if (closing < 0) return null;
+  const values = new Map<string, string | number | boolean | null>();
+  for (const line of lines.slice(1, closing)) {
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (match) values.set(match[1], parseScalar(match[2]));
+  }
+  if (values.get("type") !== "collection") return null;
+  const bodyLines = lines.slice(closing + 1);
+  const headingIndex = bodyLines.findIndex((line) => /^#\s+/.test(line));
+  if (headingIndex < 0) return null;
+  const name = bodyLines[headingIndex]!.replace(/^#\s+/, "").trim();
+  if (!name) return null;
+  return {
+    id: typeof values.get("publisher_id") === "string"
+      ? String(values.get("publisher_id"))
+      : null,
+    name,
+    sourcePath,
+    category: values.get("category") == null ? null : String(values.get("category")),
+    importance: typeof values.get("importance") === "number"
+      && [1, 2, 3].includes(Number(values.get("importance")))
+      ? Number(values.get("importance"))
+      : null,
+    body: bodyLines.slice(headingIndex + 1).join("\n").trim(),
     frontmatterStart: 0,
     frontmatterEnd: closing,
   };

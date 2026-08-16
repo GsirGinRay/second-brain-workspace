@@ -187,7 +187,12 @@ impl AtomicWriter {
         backup.verify_backup(archive)?;
 
         for (change, safe_target) in changes.iter().zip(safe_targets.iter()) {
-            if fs::read(safe_target)? != change.expected_bytes {
+            let current = if safe_target.exists() {
+                Some(fs::read(safe_target)?)
+            } else {
+                None
+            };
+            if current.as_deref() != change.expected_bytes.as_deref() {
                 return Err(NativeError::HashPrecondition);
             }
         }
@@ -203,11 +208,23 @@ impl AtomicWriter {
                 .collect(),
             expected_sha256: changes
                 .iter()
-                .map(|change| sha256_hex(&change.expected_bytes))
+                .map(|change| {
+                    change
+                        .expected_bytes
+                        .as_deref()
+                        .map(sha256_hex)
+                        .unwrap_or_default()
+                })
                 .collect(),
             replacement_sha256: changes
                 .iter()
-                .map(|change| sha256_hex(&change.replacement))
+                .map(|change| {
+                    change
+                        .replacement
+                        .as_deref()
+                        .map(sha256_hex)
+                        .unwrap_or_default()
+                })
                 .collect(),
             backup_path: Some(archive.to_string_lossy().to_string()),
             commit_unknown: false,
@@ -217,10 +234,23 @@ impl AtomicWriter {
         for (change, safe_target) in changes.iter().zip(safe_targets.iter()) {
             let no_faults = NoFaults;
             let active_fault = fault.unwrap_or(&no_faults);
-            let outcome = match replace_bytes(safe_target, &change.replacement, active_fault) {
+            let applied = if let Some(replacement) = &change.replacement {
+                replace_bytes_create_safe(safe_target, replacement, active_fault)
+            } else {
+                fs::remove_file(safe_target)
+                    .map(|_| WriteOutcome::Committed)
+                    .map_err(NativeError::from)
+            };
+            let outcome = match applied {
                 Ok(outcome) => outcome,
                 Err(error) => {
-                    if backup.restore_verified_backup(archive, root).is_err() {
+                    let restored = backup.restore_verified_backup(archive, root);
+                    for (prior, target) in changes.iter().zip(safe_targets.iter()) {
+                        if prior.expected_bytes.is_none() {
+                            let _ = fs::remove_file(target);
+                        }
+                    }
+                    if restored.is_err() {
                         record.state = "commit_unknown".to_owned();
                         record.commit_unknown = true;
                         self.persist_journal(&journal_path, &record)?;
@@ -314,10 +344,31 @@ fn replace_bytes(
     }
 }
 
+fn replace_bytes_create_safe(
+    target: &Path,
+    replacement: &[u8],
+    fault: &dyn FaultInjector,
+) -> Result<WriteOutcome, NativeError> {
+    if target.exists() {
+        return replace_bytes(target, replacement, fault);
+    }
+    let parent = target.parent().ok_or(NativeError::UnsafePath)?;
+    fs::create_dir_all(parent)?;
+    let temp_path = target.with_file_name(format!(".publisher-sync-{}.tmp", Uuid::new_v4()));
+    let mut temp = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)?;
+    temp.write_all(replacement)?;
+    temp.sync_all()?;
+    replace_path(&temp_path, target)?;
+    Ok(WriteOutcome::Committed)
+}
+
 pub struct FileChange {
     pub target: PathBuf,
-    pub expected_bytes: Vec<u8>,
-    pub replacement: Vec<u8>,
+    pub expected_bytes: Option<Vec<u8>>,
+    pub replacement: Option<Vec<u8>>,
 }
 
 pub fn sha256_hex(value: &[u8]) -> String {

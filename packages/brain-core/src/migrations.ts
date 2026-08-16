@@ -1,9 +1,11 @@
 import {
   BrainProjectSnapshotSchema,
+  BrainCollectionSnapshotSchema,
   BrainTaskSnapshotSchema,
   SNAPSHOT_SCHEMA_VERSION,
   SyncSnapshotSchema,
   type BrainProjectSnapshot,
+  type BrainCollectionSnapshot,
   type BrainTaskSnapshot,
   type SyncSnapshot,
 } from "./types";
@@ -13,18 +15,22 @@ export type VersionedTaskSnapshot = Omit<BrainTaskSnapshot, "plannedDate" | "due
   startTime: string | null;
   durationMinutes: number | null;
   timeZone: string;
-  schemaVersion: 5;
+  schemaVersion: 6;
 };
 export type VersionedProjectSnapshot = Omit<BrainProjectSnapshot, "targetDate"> & {
   startDate: string | null;
   endDate: string | null;
   completedAt: string | null;
-  schemaVersion: 5;
+  schemaVersion: 6;
 };
-export type VersionedSyncSnapshot = Omit<SyncSnapshot, "schemaVersion" | "tasks" | "projects"> & {
-  schemaVersion: 5;
+export type VersionedCollectionSnapshot = Omit<BrainCollectionSnapshot, "schemaVersion"> & {
+  schemaVersion: 6;
+};
+export type VersionedSyncSnapshot = Omit<SyncSnapshot, "schemaVersion" | "tasks" | "projects" | "collections"> & {
+  schemaVersion: 6;
   tasks: VersionedTaskSnapshot[];
   projects: VersionedProjectSnapshot[];
+  collections: VersionedCollectionSnapshot[];
 };
 
 export function migrateTaskSnapshot(value: unknown): VersionedTaskSnapshot {
@@ -52,6 +58,13 @@ export function migrateProjectSnapshot(value: unknown): VersionedProjectSnapshot
   };
 }
 
+export function migrateCollectionSnapshot(value: unknown): VersionedCollectionSnapshot {
+  return {
+    ...BrainCollectionSnapshotSchema.parse(value),
+    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+  };
+}
+
 export function migrateSyncSnapshot(value: unknown): VersionedSyncSnapshot {
   const parsed = SyncSnapshotSchema.parse(value);
   return {
@@ -59,6 +72,7 @@ export function migrateSyncSnapshot(value: unknown): VersionedSyncSnapshot {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     tasks: parsed.tasks.map(migrateTaskSnapshot),
     projects: parsed.projects.map(migrateProjectSnapshot),
+    collections: (parsed.collections ?? []).map(migrateCollectionSnapshot),
     routineTemplates: parsed.routineTemplates ?? [],
   };
 }
@@ -75,4 +89,9 @@ export function tryMigrateTaskSnapshot(value: unknown): VersionedTaskSnapshot | 
 export function tryMigrateProjectSnapshot(value: unknown): VersionedProjectSnapshot | null {
   const result = BrainProjectSnapshotSchema.safeParse(value);
   return result.success ? migrateProjectSnapshot(result.data) : null;
+}
+
+export function tryMigrateCollectionSnapshot(value: unknown): VersionedCollectionSnapshot | null {
+  const result = BrainCollectionSnapshotSchema.safeParse(value);
+  return result.success ? migrateCollectionSnapshot(result.data) : null;
 }
