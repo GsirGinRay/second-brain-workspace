@@ -47,6 +47,72 @@ installed product, uninstalls the older version through its registered uninstall
 and installs the update without deleting the user's Markdown folder. Portable or
 downloaded installer files are not removed because they are not installed apps.
 
+
+## Installation
+
+### For developers (build from source)
+
+Requirements:
+
+- Node.js 20+
+- Rust stable toolchain
+- Microsoft WebView2 runtime
+- Tauri 2 Windows build prerequisites (Visual Studio Build Tools with C++ workload, Windows SDK)
+
+Clone and install:
+
+```bash
+git clone https://github.com/GsirGinRay/second-brain-workspace.git
+cd second-brain-workspace
+npm install
+```
+
+Run the desktop app in development mode (hot reload):
+
+```bash
+npm run desktop:dev
+```
+
+### For end users (Windows installer)
+
+Download the latest NSIS installer from the
+[Releases](https://github.com/GsirGinRay/second-brain-workspace/releases) page
+(named `Second Brain Workspace_x.y.z_x64-setup.exe`) and run it. The installer
+preserves your existing Markdown folder on upgrade.
+
+The installer is produced locally with:
+
+```bash
+npm run desktop:installer
+```
+
+and written to
+`apps/desktop/src-tauri/target/release/bundle/nsis/`.
+
+## Development
+
+Run the full check suite before opening a pull request:
+
+```bash
+npm test            # TypeScript unit + integration + DOM tests
+npm run rust:test   # Rust (Tauri) tests
+npm run build       # Type-check and production web build
+```
+
+The desktop app uses Tauri 2 (Rust) with a React + TypeScript frontend in
+`apps/desktop`; shared logic lives in `packages/brain-core` (Markdown parsing
+and task rules) and `packages/brain-ui` (calendar and repository helpers).
+
+### Internal development status
+
+This repository is currently used for **internal development** with a small
+collaborator group. Releases are published as pre-releases under the `0.x`
+version line (SemVer: `0.x` means the API and data format are still stabilizing).
+A dedicated public-release marker will be created when the project is opened to
+the wider community. The Markdown file format is the long-term source of truth
+and is designed to stay stable across releases.
+
+## Data format
 ## Data format
 
 ```markdown
