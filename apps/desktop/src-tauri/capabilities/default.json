@@ -3,5 +3,9 @@
   "identifier": "default",
   "description": "Least-privilege desktop capability; filesystem and shell plugins are intentionally absent.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-destroy"
+  ]
 }

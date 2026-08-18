@@ -245,6 +245,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const cloudEtagRef = useRef<string | null>(null);
   const routineTemplateRef = useRef(routineTemplate);
   const allowCloseRef = useRef(false);
+  const lastScanRef = useRef<Map<string, string> | null>(null);
 
   useEffect(() => {
     if (providedAdapter) return;
@@ -364,6 +365,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         setServerOrigin(nextDiagnostics.publisherOrigin);
       }
       if (!nextDiagnostics.selectedVault) {
+        lastScanRef.current = null;
         const draft = loadDraftWorkspace();
         setTasks(draft.tasks);
         setProjects(draft.projects);
@@ -388,7 +390,22 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             throw new Error("SERVER_NOT_CONFIGURED");
           },
         });
-      const local = await loader.loadLocal();
+      let local = await loader.loadLocal();
+      if (local.bootstrapChanges.length > 0) {
+        await native.applyMarkdownChanges(local.bootstrapChanges);
+        local = await loader.loadLocal();
+      }
+      const signatures = new Map(
+        local.files.map((file) => [file.relativePath, file.sha256]),
+      );
+      const unchanged =
+        lastScanRef.current !== null &&
+        signatures.size === lastScanRef.current.size &&
+        [...signatures].every(
+          ([path, hash]) => lastScanRef.current!.get(path) === hash,
+        );
+      lastScanRef.current = signatures;
+      if (unchanged && !updateStatus) return;
       setFiles(local.files);
       setTasks(local.tasks);
       setProjects(local.projects);
@@ -397,6 +414,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         setStatus(
           `已載入 ${local.tasks.length} 項任務 · ${local.projects.length} 個專案 · ${local.collections.length} 個收藏`,
         );
+      return local;
     },
     [engine, native],
   );
@@ -503,17 +521,16 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   }, []);
 
   useEffect(() => {
-    if (!engine) return;
     let debounce: number | undefined;
     let unlisten: (() => void) | undefined;
     void import("@tauri-apps/api/event")
       .then(({ listen }) =>
         listen("vault-changed", () => {
           window.clearTimeout(debounce);
-          debounce = window.setTimeout(
-            () => void runSync({ background: true }),
-            3_000,
-          );
+          debounce = window.setTimeout(() => {
+            if (engine) void runSync({ background: true });
+            else void reloadLocal(false);
+          }, 3_000);
         }),
       )
       .then((value) => {
@@ -540,7 +557,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("focus", onFocus);
     };
-  }, [engine, pollCloudRevision, runSync]);
+  }, [engine, pollCloudRevision, reloadLocal, runSync]);
 
   async function persistLocal(
     nextTasks: BrainTaskSnapshot[],
@@ -579,9 +596,37 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       }
       return true;
     } catch (cause) {
-      setError(
-        `本機寫入失敗：${cause instanceof Error ? cause.message : "WRITE_FAILED"}`,
-      );
+      const message = cause instanceof Error ? cause.message : "WRITE_FAILED";
+      // A concurrent writer (background sync, the web adapter, or another
+      // editor) can move a file between our scan and the write. Re-scan once
+      // and re-apply the diff so the user's calendar edit still lands instead
+      // of being silently dropped.
+      if (/changed before write|HASH_PRECONDITION/i.test(message)) {
+        try {
+          const fresh = await reloadLocal();
+          if (fresh && fresh.files.length > 0) {
+            const retryChanges = applyDesiredSnapshot(fresh.files, {
+              schemaVersion: 6,
+              tasks: nextTasks,
+              projects: nextProjects,
+              collections: nextCollections,
+              fileHashes: {},
+            });
+            if (retryChanges.length > 0) {
+              await native.applyMarkdownChanges(retryChanges);
+              setStatus("已儲存在本機 · 等待同步");
+              await reloadLocal();
+              if (devicePaired) {
+                window.setTimeout(() => void runSync({ background: true }), 50);
+              }
+              return true;
+            }
+          }
+        } catch {
+          // fall through and surface the original failure
+        }
+      }
+      setError(`本機寫入失敗：${message}`);
       return false;
     } finally {
       setWorking(false);
@@ -1526,9 +1571,76 @@ function TaskPanel({ title, tone, tasks, projects, today, onPatch, onComplete, o
 function InlineTaskCard({ task, projects, today, onPatch, onComplete, onDelete }: { task: BrainTaskSnapshot; projects: BrainProjectSnapshot[]; today: string; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(task.title);
+  const [editing, setEditing] = useState(false);
   const saveTitle = () => { const next = title.trim(); if (next && next !== task.title) onPatch(task, { title: next }); else setTitle(task.title); setEditingTitle(false); };
   const overdueDays = task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
-  return <article className={`inline-task-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityBadge priority={task.priority} />{editingTitle ? <input autoFocus aria-label="任務標題" value={title} onChange={(event) => setTitle(event.target.value)} onBlur={saveTitle} onKeyDown={(event) => { if (event.key === "Enter") saveTitle(); if (event.key === "Escape") { setTitle(task.title); setEditingTitle(false); } }} /> : <button className="inline-title-button" onClick={() => setEditingTitle(true)}>{task.title}</button>}</div><div className="inline-fields"><select aria-label={`${task.title}所屬專案`} value={task.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); onPatch(task, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><input aria-label={`${task.title}日期`} type="date" value={task.taskDate ?? ""} onChange={(event) => onPatch(task, { taskDate: event.target.value || null })} /><input aria-label={`${task.title}開始時間`} type="time" value={task.startTime ?? ""} onChange={(event) => onPatch(task, { startTime: event.target.value || null, durationMinutes: event.target.value ? task.durationMinutes ?? 30 : null, timeZone: "Asia/Taipei" })} /><select aria-label={`${task.title}持續時間`} disabled={!task.startTime} value={task.durationMinutes ?? 30} onChange={(event) => onPatch(task, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions"><button className={task.priority === "highest" ? "active" : ""} aria-label="設為今日最重要" title="設為今日最重要" onClick={() => onPatch(task, { priority: "highest", taskDate: today })}><Star fill={task.priority === "highest" ? "currentColor" : "none"} /></button>{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={() => onPatch(task, { taskDate: today })}><CalendarDays /></button>}<button className="danger-icon" aria-label="永久刪除" title="永久刪除" onClick={() => onDelete(task)}><Trash2 /></button></div></article>;
+  return <article className={`inline-task-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityBadge priority={task.priority} />{editingTitle ? <input autoFocus aria-label="任務標題" value={title} onChange={(event) => setTitle(event.target.value)} onBlur={saveTitle} onKeyDown={(event) => { if (event.key === "Enter") saveTitle(); if (event.key === "Escape") { setTitle(task.title); setEditingTitle(false); } }} /> : <button className="inline-title-button" onClick={() => setEditingTitle(true)}>{task.title}</button>}</div><div className="inline-fields"><select aria-label={`${task.title}所屬專案`} value={task.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); onPatch(task, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><TaskDateInput ariaLabel={`${task.title}日期`} value={task.taskDate ?? null} onCommit={(next) => onPatch(task, { taskDate: next })} /><input aria-label={`${task.title}開始時間`} type="time" value={task.startTime ?? ""} onChange={(event) => onPatch(task, { startTime: event.target.value || null, durationMinutes: event.target.value ? task.durationMinutes ?? 30 : null, timeZone: "Asia/Taipei" })} /><select aria-label={`${task.title}持續時間`} disabled={!task.startTime} value={task.durationMinutes ?? 30} onChange={(event) => onPatch(task, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions"><button aria-label="編輯任務" title="編輯任務" onClick={() => setEditing((value) => !value)}><Pencil /></button><button className={task.priority === "highest" ? "active" : ""} aria-label="設為今日最重要" title="設為今日最重要" onClick={() => onPatch(task, { priority: "highest", taskDate: today })}><Star fill={task.priority === "highest" ? "currentColor" : "none"} /></button>{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={() => onPatch(task, { taskDate: today })}><CalendarDays /></button>}<button className="danger-icon" aria-label="永久刪除" title="永久刪除" onClick={() => onDelete(task)}><Trash2 /></button></div>{editing && <div className="inline-task-editor"><TaskEditor task={task} projects={projects} onSave={(next) => { setEditing(false); onPatch(task, next); }} /></div>}</article>;
+}
+
+function TaskDateInput({
+  value,
+  ariaLabel,
+  className,
+  onCommit,
+}: {
+  value: string | null;
+  ariaLabel: string;
+  className?: string;
+  onCommit: (next: string | null) => void;
+}) {
+  const [draft, setDraft] = useState(value ?? "");
+  const [invalid, setInvalid] = useState(false);
+  useEffect(() => {
+    setDraft(value ?? "");
+    setInvalid(false);
+  }, [value]);
+  const DATE_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed === "") {
+      setInvalid(false);
+      if ((value ?? null) !== null) onCommit(null);
+      return;
+    }
+    if (!DATE_RE.test(trimmed)) {
+      setInvalid(true);
+      return;
+    }
+    const parsed = new Date(`${trimmed}T00:00:00Z`);
+    const normalized = parsed.toISOString().slice(0, 10);
+    if (normalized !== trimmed || Number.isNaN(parsed.getTime())) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    if (normalized !== (value ?? null)) onCommit(normalized);
+  };
+  return (
+    <input
+      className={className}
+      aria-label={ariaLabel}
+      type="text"
+      inputMode="numeric"
+      placeholder="YYYY-MM-DD"
+      value={draft}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        if (invalid) setInvalid(false);
+      }}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        }
+        if (event.key === "Escape") {
+          setDraft(value ?? "");
+          setInvalid(false);
+        }
+      }}
+      style={invalid ? { outline: "2px solid #e5484d" } : undefined}
+    />
+  );
 }
 
 function AgendaInlineTitle({ task, onSave }: { task: BrainTaskSnapshot; onSave: (title: string) => void }) {
@@ -2086,15 +2198,6 @@ function Board({
                 className={`board-column lane-${lane.id} ${drag ? "drag-active" : ""}`}
                 key={lane.id}
                 data-board-lane={lane.id}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  moveToLane(drag, lane.id);
-                  setDrag(null);
-                }}
               >
                 <header>
                   <span className={`dot ${lane.id}`} />
@@ -2109,12 +2212,6 @@ function Board({
                 )}
                 {laneTasks.map((task) => (
                   <article
-                    draggable
-                    onDragStart={(event) => {
-                      setDrag(task.id);
-                      event.dataTransfer.effectAllowed = "move";
-                    }}
-                    onDragEnd={() => setDrag(null)}
                     onPointerDown={(event) => { if (event.button === 0 && !(event.target as HTMLElement).closest("button,select,input")) { setDrag(task.id); event.currentTarget.setPointerCapture(event.pointerId); } }}
                     onPointerUp={(event) => finishBoardPointer(event, task.id)}
                     onKeyDown={(event) => {
@@ -2139,12 +2236,11 @@ function Board({
                     <small>{task.projectName ?? t("app.unassigned")}</small>
                     <label className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
                       <CalendarDays aria-hidden="true" />
-                      <input
+                      <TaskDateInput
                         className="board-date-input"
-                        aria-label={`修改 ${task.title} 日期`}
-                        type="date"
-                        value={task.taskDate ?? ""}
-                        onChange={(event) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, taskDate: event.target.value || null } : item))}
+                        ariaLabel={`修改 ${task.title} 日期`}
+                        value={task.taskDate ?? null}
+                        onCommit={(next) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, taskDate: next } : item))}
                       />
                     </label>
                     <div className="board-actions">
@@ -2209,7 +2305,7 @@ function Board({
   );
 }
 
-function Calendar({
+export function Calendar({
   tasks,
   projects,
   showCompleted,
@@ -2235,12 +2331,21 @@ function Calendar({
   const [dragOriginDate, setDragOriginDate] = useState<string | null>(null);
   const [dropTargetDate, setDropTargetDate] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [ideasExpanded, setIdeasExpanded] = useState(false);
   const [ideaContextMenu, setIdeaContextMenu] = useState<{
     task: BrainTaskSnapshot;
     x: number;
     y: number;
   } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const flashNotice = (message: string) => {
+    setNotice(message);
+    window.setTimeout(
+      () => setNotice((current) => (current === message ? null : current)),
+      5000,
+    );
+  };
   const month = anchor.slice(0, 7);
   const cells = buildMonthCells(month);
   const weekDates = buildWeekDates(anchor);
@@ -2292,20 +2397,24 @@ function Calendar({
     setSelected(next);
   }
   const schedule = (id: string | null, date: string) => {
-    if (id)
-      void onSave(
-        tasks.map((task) => (task.id === id ? scheduleTask(task, date) : task)),
-      );
+    if (!id) return;
+    const target = tasks.find((task) => task.id === id);
+    flashNotice(target ? `「${target.title}」已排到 ${date}` : `任務已排到 ${date}`);
+    void onSave(
+      tasks.map((task) => (task.id === id ? scheduleTask(task, date) : task)),
+    );
   };
   const unschedule = (id: string | null) => {
-    if (id)
-      void onSave(
-        tasks.map((task) =>
-          task.id === id
-            ? { ...task, status: "todo", taskDate: null, completedAt: null }
-            : task,
-        ),
-      );
+    if (!id) return;
+    const target = tasks.find((task) => task.id === id);
+    flashNotice(target ? `「${target.title}」已移回想法匣` : "任務已移回想法匣");
+    void onSave(
+      tasks.map((task) =>
+        task.id === id
+          ? { ...task, status: "todo", taskDate: null, completedAt: null }
+          : task,
+      ),
+    );
   };
   const complete = (id: string | null) =>
     onSave(
@@ -2390,6 +2499,12 @@ function Calendar({
             </button>
           </div>
         </header>
+        {notice && (
+          <div className="calendar-notice" role="status">
+            {notice}
+            <button onClick={() => setNotice(null)} aria-label="關閉提示">×</button>
+          </div>
+        )}
         {mode === "month" ? (
           <>
             <div className="weekdays">
@@ -2405,19 +2520,6 @@ function Calendar({
                     key={cell.date}
                     className={`calendar-day ${cell.currentMonth ? "" : "muted"} ${selected === cell.date ? "selected" : ""} ${cell.date === today ? "today" : ""} ${dragTaskId && dragOriginDate === cell.date ? "drag-origin" : ""} ${dragTaskId && dropTargetDate === cell.date && dragOriginDate !== cell.date ? "drop-target" : ""}`}
                     data-calendar-date={cell.date}
-                    onDragEnter={() => setDropTargetDate(cell.date)}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      schedule(
-                        event.dataTransfer.getData("text/plain") || dragTaskId,
-                        cell.date,
-                      );
-                      resetDrag();
-                    }}
                     onClick={() => {
                       setSelected(cell.date);
                       setSideOpen(true);
@@ -2429,14 +2531,19 @@ function Calendar({
                     <div className="calendar-task-list">
                       {dayEntries.slice(0, 4).map((entry) => (
                         <span
-                          draggable
-                          onDragStart={(event) => {
-                            event.stopPropagation();
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", entry.task.id);
-                            beginDrag(entry.task.id, entry.date);
+                          onPointerDown={(event) => {
+                            if (event.button === 0 && entry.task.id) {
+                              beginDrag(entry.task.id, entry.date);
+                              event.currentTarget.setPointerCapture(event.pointerId);
+                            }
                           }}
-                          onDragEnd={resetDrag}
+                          onPointerMove={(event) => {
+                            if (!dragTaskId) return;
+                            const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+                            const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
+                            setDropTargetDate(date ?? null);
+                          }}
+                          onPointerUp={(event) => finishPointerDrag(event, entry.task.id)}
                           onClick={(event) => {
                             event.stopPropagation();
                             setActiveTaskId(entry.task.id);
@@ -2476,19 +2583,6 @@ function Calendar({
                   key={date}
                   data-calendar-date={date}
                   className={`week-day ${date === today ? "today" : ""} ${date === selected ? "selected" : ""} ${dragTaskId && dragOriginDate === date ? "drag-origin" : ""} ${dragTaskId && dropTargetDate === date && dragOriginDate !== date ? "drop-target" : ""}`}
-                  onDragEnter={() => setDropTargetDate(date)}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    schedule(
-                      event.dataTransfer.getData("text/plain") || dragTaskId,
-                      date,
-                    );
-                    resetDrag();
-                  }}
                 >
                   <button
                     className="week-date"
@@ -2510,13 +2604,19 @@ function Calendar({
                   <div className="week-task-list">
                     {dayEntries.map((entry) => (
                       <article
-                        draggable
-                        onDragStart={(event) => {
-                          event.dataTransfer.effectAllowed = "move";
-                          event.dataTransfer.setData("text/plain", entry.task.id);
-                          beginDrag(entry.task.id, entry.date);
+                        onPointerDown={(event) => {
+                          if (event.button === 0 && entry.task.id) {
+                            beginDrag(entry.task.id, entry.date);
+                            event.currentTarget.setPointerCapture(event.pointerId);
+                          }
                         }}
-                        onDragEnd={resetDrag}
+                        onPointerMove={(event) => {
+                          if (!dragTaskId) return;
+                          const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+                          const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
+                          setDropTargetDate(date ?? null);
+                        }}
+                        onPointerUp={(event) => finishPointerDrag(event, entry.task.id)}
                         onClick={(event) => {
                           event.stopPropagation();
                           setActiveTaskId(entry.task.id);
@@ -2554,12 +2654,6 @@ function Calendar({
         <section
           className={`idea-drawer ${dragTaskId ? "drag-active" : ""}`}
           data-idea-drawer
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => {
-            event.preventDefault();
-            unschedule(event.dataTransfer.getData("text/plain") || dragTaskId);
-            resetDrag();
-          }}
         >
           <header>
             <div>
@@ -2581,13 +2675,19 @@ function Calendar({
             ) : (
               visibleIdeas.map((task) => (
                 <article
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    if (task.id) event.dataTransfer.setData("text/plain", task.id);
-                    beginDrag(task.id, null);
+                  onPointerDown={(event) => {
+                    if (event.button === 0 && task.id) {
+                      beginDrag(task.id, null);
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    }
                   }}
-                  onDragEnd={resetDrag}
+                  onPointerMove={(event) => {
+                    if (!dragTaskId) return;
+                    const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+                    const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
+                    setDropTargetDate(date ?? null);
+                  }}
+                  onPointerUp={(event) => finishPointerDrag(event, task.id)}
                   onClick={() => setActiveTaskId(task.id)}
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -2700,15 +2800,8 @@ function Calendar({
               >
                 <button
                   className="agenda-drag-handle"
-                  draggable
                   aria-label={`拖曳 ${task.title}`}
                   title="拖曳到其他日期"
-                  onDragStart={(event) => {
-                    setDragTaskId(task.id);
-                    event.dataTransfer.effectAllowed = "move";
-                    if (task.id) event.dataTransfer.setData("application/x-second-brain-task-id", task.id);
-                  }}
-                  onDragEnd={() => setDragTaskId(null)}
                   onPointerDown={(event) => {
                     if (event.button === 0) {
                       setDragTaskId(task.id);
@@ -2737,19 +2830,24 @@ function Calendar({
                     {projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}
                   </select>
                 </div>
-                <input
-                  aria-label={`${task.title}規劃日`}
-                  type="date"
-                  value={task.taskDate ?? ""}
-                  onChange={(event) =>
+                <TaskDateInput
+                  ariaLabel={`${task.title}規劃日`}
+                  value={task.taskDate ?? null}
+                  onCommit={(nextDate) => {
+                    if (nextDate) {
+                      setSelected(nextDate);
+                      flashNotice(`「${task.title}」已排到 ${nextDate}`);
+                    } else {
+                      flashNotice(`「${task.title}」已移回想法匣`);
+                    }
                     void onSave(
                       tasks.map((item) =>
                         item.id === task.id
-                          ? { ...item, taskDate: event.target.value || null }
+                          ? { ...item, taskDate: nextDate }
                           : item,
                       ),
-                    )
-                  }
+                    );
+                  }}
                 />
                 <div className="agenda-actions">
                   <TaskActionBar
@@ -2757,10 +2855,27 @@ function Calendar({
                     important={task.priority === "highest"}
                     onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, selected))}
                     onComplete={() => complete(task.id)}
+                    onEdit={() => setEditingTaskId(editingTaskId === task.id ? null : task.id)}
                     onDelete={remove}
-                    showEdit={false}
                   />
                 </div>
+                {editingTaskId === task.id && (
+                  <div className="agenda-editor">
+                    <TaskEditor
+                      task={task}
+                      projects={projects}
+                      onSave={(next) => {
+                        setEditingTaskId(null);
+                        const changed = tasks.map((item) => item.id === task.id ? next : item);
+                        void onSave(
+                          next.priority === "highest" && next.id
+                            ? markMostImportant(changed, next.id, next.taskDate ?? today)
+                            : changed,
+                        );
+                      }}
+                    />
+                  </div>
+                )}
               </article>
             ))
           )}

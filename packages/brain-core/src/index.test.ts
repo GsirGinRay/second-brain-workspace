@@ -178,6 +178,48 @@ test("minimal task patch preserves BOM, CRLF, indentation, links, wikilinks, unk
   assert.match(updated, /✅ 2026-08-10/);
 });
 
+test("unscheduling removes the planned date token so tasks can return to the idea inbox", () => {
+  const marker = '<!-- publisher-task:{"id":"task-1","status":"todo","rank":"00000001"} -->';
+  const planned = `- [ ] #task 買牛奶 ⏳ 2026-08-15 ${marker}`;
+  const parsedPlanned = parseTaskLine(planned, "tasks.md", 0);
+  assert.ok(parsedPlanned);
+  assert.equal(parsedPlanned.taskDate, "2026-08-15");
+  assert.equal(
+    patchTaskLine(planned, { ...parsedPlanned, taskDate: null }),
+    `- [ ] #task 買牛奶 ${marker}`,
+  );
+
+  // A legacy line with both due and planned tokens must lose both dates.
+  const both = `- [ ] #task 買牛奶 📅 2026-08-14 ⏳ 2026-08-15 ${marker}`;
+  const parsedBoth = parseTaskLine(both, "tasks.md", 0);
+  assert.ok(parsedBoth);
+  assert.equal(
+    patchTaskLine(both, { ...parsedBoth, taskDate: null }),
+    `- [ ] #task 買牛奶 ${marker}`,
+  );
+
+  // A legacy due-only line keeps working after the planned-date fix.
+  const dueOnly = `- [ ] #task 買牛奶 📅 2026-08-15 ${marker}`;
+  const parsedDue = parseTaskLine(dueOnly, "tasks.md", 0);
+  assert.ok(parsedDue);
+  assert.equal(
+    patchTaskLine(dueOnly, { ...parsedDue, taskDate: null }),
+    `- [ ] #task 買牛奶 ${marker}`,
+  );
+
+  // Re-scheduling an unscheduled task adds the planned token back.
+  const unparsed = parseTaskLine(`- [ ] #task 買牛奶 ${marker}`, "tasks.md", 0);
+  assert.ok(unparsed);
+  assert.equal(
+    patchTaskLine(`- [ ] #task 買牛奶 ${marker}`, { ...unparsed, taskDate: "2026-08-20" }),
+    `- [ ] #task 買牛奶 ⏳ 2026-08-20 ${marker}`,
+  );
+
+  // Patching with the same date stays byte-identical (no spurious rewrites).
+  const same = patchTaskLine(planned, { ...parsedPlanned, taskDate: "2026-08-15" });
+  assert.equal(same, planned);
+});
+
 test("frontmatter updater preserves a BOM and CRLF", () => {
   const source = "\uFEFF---\r\ntype: project\r\nfocus_today: false\r\n---\r\n# Project\r\n";
   const parsed = parseProjectFrontmatter(source, "project.md");

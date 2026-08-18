@@ -15,6 +15,12 @@ test("Tauri capability does not grant filesystem or shell/process plugins", () =
   assert.doesNotMatch(capability, /\*\*/);
 });
 
+test("Tauri capability grants the window close commands the close flow relies on", () => {
+  const capability = readFileSync(capabilityPath, "utf8");
+  assert.match(capability, /core:window:allow-close/);
+  assert.match(capability, /core:window:allow-destroy/);
+});
+
 test("Publisher sync is implemented only through explicit native commands", () => {
   const source = readFileSync(
     resolve(import.meta.dirname, "../src-tauri/src/lib.rs"),

@@ -71,11 +71,15 @@ test("board and calendar expose direct date editing and task-level drag feedback
   assert.match(styles, /\.week-task-list article\.dragging/);
 });
 
-test("Windows WebView permits HTML task drag and carries the task id through dataTransfer", () => {
+test("Windows task drag uses pointer events because HTML5 drag is unreliable in the WebView", () => {
   const source = app();
   assert.equal(tauriConfig().app?.windows?.[0]?.dragDropEnabled, false);
-  assert.match(source, /dataTransfer\.setData\("text\/plain"/);
-  assert.match(source, /dataTransfer\.getData\("text\/plain"\)/);
+  assert.match(source, /setPointerCapture/);
+  assert.match(source, /elementFromPoint/);
+  assert.match(source, /finishPointerDrag/);
+  assert.match(source, /finishBoardPointer/);
+  assert.doesNotMatch(source, /dataTransfer\.setData/);
+  assert.doesNotMatch(source, /dataTransfer\.getData/);
 });
 
 test("private Publisher builds cannot override the Windows HTML drag setting", () => {
@@ -134,12 +138,22 @@ test("task actions are compact accessible icons and permanent delete is never ar
   assert.match(source, /onDelete=\{onDelete\}/);
   assert.doesNotMatch(source, /永久刪除[\s\S]{0,180}archive\(/);
   assert.match(styles, /\.task-action-button[^}]*min-width:\s*40px/);
-  assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(3/);
+  assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(4/);
   assert.match(source, /function AgendaInlineTitle/);
-  assert.match(source, /showEdit=\{false\}/);
-  assert.match(source, /className="agenda-drag-handle"[\s\S]{0,160}draggable/);
+  assert.match(source, /onEdit=\{\(\) => setEditingTaskId/);
+  assert.match(source, /className="agenda-drag-handle"[\s\S]{0,400}setPointerCapture/);
   assert.match(source, /remoteEnabled:\s*devicePaired/);
   assert.match(source, /if \(devicePaired\) \{[\s\S]{0,160}runSync\(\{ background: true \}\)/);
+});
+
+test("today focus and calendar agenda expose the task body editor", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /inline-task-editor/);
+  assert.match(source, /agenda-editor/);
+  assert.match(source, /onEdit=\{\(\) => setEditingTaskId/);
+  assert.match(source, /aria-label="編輯任務"/);
+  assert.match(styles, /\.inline-task-editor,\.agenda-editor\{grid-column:1\/-1/);
 });
 
 test("today command center makes the daily template visible and understandable", () => {
@@ -248,7 +262,7 @@ test("Windows installer keeps a stable upgrade identity", () => {
   const config = tauriConfig();
   assert.equal(config.productName, "Second Brain Workspace");
   assert.equal(config.identifier, "app.secondbrain.workspace");
-  assert.equal(config.version, "0.4.0");
+  assert.equal(config.version, "0.4.1");
   assert.equal(config.bundle?.windows?.nsis?.installMode, "currentUser");
   assert.equal(config.bundle?.windows?.allowDowngrades, false);
 });
@@ -268,4 +282,15 @@ test("remote cloud access is absent from the default Tauri CSP", () => {
   assert.doesNotMatch(config, /gsir\.zeabur\.app/);
   assert.doesNotMatch(config, /connect-src[^;]*\shttps:/);
   assert.match(config, /http:\/\/localhost:\*/);
+});
+
+test("vault-changed refreshes local-only mode without a server", () => {
+  const source = app();
+  assert.match(source, /listen\("vault-changed"/);
+  assert.match(
+    source,
+    /if \(engine\) void runSync\(\{ background: true \}\);\s*else void reloadLocal\(false\)/s,
+  );
+  assert.match(source, /lastScanRef/);
+  assert.match(source, /unchanged && !updateStatus/);
 });

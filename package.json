@@ -3,10 +3,14 @@
   "version": "0.4.0",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "npm --workspace @second-brain/desktop run dev",
-    "test": "tsx --test packages/brain-core/src/*.test.ts packages/brain-ui/src/*.test.ts apps/desktop/src/test.ts",
+    "test": "tsx --test packages/brain-core/src/*.test.ts packages/brain-ui/src/*.test.ts apps/desktop/src/test.ts && npm run test:dom",
+    "test:dom": "tsx --tsconfig tsconfig.dom-test.json --test --test-force-exit apps/desktop/src/calendar-dom.test.tsx apps/desktop/src/calendar-e2e.test.tsx",
     "build": "npm --workspace @second-brain/desktop run build",
     "desktop:dev": "npm --workspace @second-brain/desktop run tauri:dev",
     "desktop:build": "npm --workspace @second-brain/desktop run tauri:build",
@@ -19,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "happy-dom": "^15.11.7",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

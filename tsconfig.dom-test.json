@@ -1,0 +1,8 @@
+{
+  "extends": "./apps/desktop/tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": ["apps/desktop/src"]
+}

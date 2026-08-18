@@ -18,3 +18,6 @@ backups/
 recovery/
 apps/desktop/private/*.json
 !apps/desktop/private/*.example.json
+
+# 本地私人筆記 / 暫存備份 (含真實 vault 內容)
+.tmp-backup-inbox.md

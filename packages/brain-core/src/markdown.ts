@@ -505,7 +505,11 @@ export function patchTaskLine(
     edits.push({ start: dueSpan.start, end: dueSpan.end, replacement: `\u{23F3} ${desiredTaskDate}` });
   } else {
     if (dueSpan) edits.push(removeSpan(rawLine, dueSpan));
-    const plannedEdit = patchDate(rawLine, analysis, "plannedDate", "\u{23F3}", current.plannedDate ?? null, desiredTaskDate);
+    // The parsed snapshot exposes the effective date as `taskDate`, so the
+    // current planned token value must be read from the analysis span itself.
+    // Passing `current.plannedDate ?? null` would always be null and make
+    // removing a planned date a no-op (patchDate treats null === null).
+    const plannedEdit = patchDate(rawLine, analysis, "plannedDate", "\u{23F3}", plannedSpan?.value ?? null, desiredTaskDate);
     if (plannedEdit) edits.push(plannedEdit);
   }
   const completedShouldChange =
