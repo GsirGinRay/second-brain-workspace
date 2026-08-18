@@ -1,5 +1,7 @@
 # Second Brain Workspace
 
+[繁體中文](README.zh-TW.md)
+
 A local-first desktop workspace for tasks, outcome projects, and reference collections stored in ordinary
 Markdown files. Use it with Obsidian, VS Code, Typora, Notepad++, or any editor.
 
@@ -112,7 +114,6 @@ A dedicated public-release marker will be created when the project is opened to
 the wider community. The Markdown file format is the long-term source of truth
 and is designed to stay stable across releases.
 
-## Data format
 ## Data format
 
 ```markdown
