@@ -4,6 +4,7 @@ import { formatTaskLine } from "@second-brain/brain-core";
 import {
   applyDesiredSnapshot,
   buildCollectionCreateChange,
+  buildCollectionDeleteChange,
   buildProjectCreateChange,
   buildProjectDeleteChanges,
   scanStructuredVault,
@@ -221,4 +222,20 @@ test("project deletion relocates tasks stored inside the project note to the inb
   const text = base64ToText(inbox.replacementBase64);
   assert.match(text, /Keep me/);
   assert.doesNotMatch(text, /\[\[Launch\]\]/);
+});
+
+test("collection deletion yields a single delete change for the collection source file", () => {
+  const collectionId = "55555555-5555-4555-8555-555555555555";
+  const collectionSource = `---\r\ntype: collection\r\npublisher_id: ${collectionId}\r\ncategory: AI\r\n---\r\n# 常用提示詞\r\n\r\n正文\r\n`;
+  const files = [file("Collections/Prompts.md", collectionSource)];
+  const scanned = scanStructuredVault(files);
+  const target = scanned.snapshot.collections[0]!;
+  const change = buildCollectionDeleteChange(files, target);
+  assert.equal(change.relativePath, "Collections/Prompts.md");
+  assert.equal(change.operation, "delete");
+  assert.equal(change.expectedSha256, files[0]!.sha256);
+  assert.throws(
+    () => buildCollectionDeleteChange(files, { id: collectionId, sourcePath: null }),
+    /COLLECTION_SOURCE_NOT_FOUND/,
+  );
 });

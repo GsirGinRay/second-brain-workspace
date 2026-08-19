@@ -454,3 +454,18 @@ export function buildProjectDeleteChanges(
     replacementBase64: "",
   }];
 }
+
+export function buildCollectionDeleteChange(
+  files: LocalMarkdownFile[],
+  collection: Pick<BrainCollectionSnapshot, "id" | "sourcePath">,
+): MarkdownChange {
+  if (!collection.sourcePath) throw new Error("COLLECTION_SOURCE_NOT_FOUND");
+  const source = files.find((file) => file.relativePath === collection.sourcePath);
+  if (!source) throw new Error("COLLECTION_SOURCE_NOT_FOUND");
+  return {
+    relativePath: collection.sourcePath,
+    expectedSha256: source.sha256,
+    operation: "delete",
+    replacementBase64: "",
+  };
+}

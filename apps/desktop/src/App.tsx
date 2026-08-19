@@ -82,6 +82,7 @@ import {
 import {
   applyDesiredSnapshot,
   buildCollectionCreateChange,
+  buildCollectionDeleteChange,
   buildProjectCreateChange,
   buildProjectDeleteChanges,
   type LocalMarkdownFile,
@@ -732,6 +733,51 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     }
   }
 
+  async function permanentlyDeleteCollection(collection: BrainCollectionSnapshot): Promise<void> {
+    if (!collection.id) return;
+    if (!window.confirm(
+      `永久刪除收藏「${collection.name}」？\n\n這會刪除收藏 Markdown，無法在 App 內復原。${collection.sourcePath ? `\n來源：${collection.sourcePath}` : ""}`,
+    )) return;
+    setWorking(true);
+    setError("");
+    try {
+      if (diagnostics?.selectedVault) {
+        const changes = applyDesiredSnapshot(files, {
+          schemaVersion: 6,
+          tasks,
+          projects,
+          collections: collections.filter((item) => item.id !== collection.id),
+          fileHashes: {},
+        });
+        if (collection.sourcePath) {
+          const source = files.find((file) => file.relativePath === collection.sourcePath);
+          if (source) changes.push({
+            relativePath: collection.sourcePath,
+            expectedSha256: source.sha256,
+            operation: "delete",
+            replacementBase64: "",
+          });
+        }
+        if (changes.length > 0) {
+          await native.applyMarkdownChanges(changes);
+          setStatus("收藏已刪除 · 等待同步");
+          await reloadLocal();
+          if (devicePaired) {
+            window.setTimeout(() => void runSync({ background: true }), 50);
+          }
+        }
+      } else {
+        await persistLocal(tasks, projects, collections.filter((item) => item.id !== collection.id));
+      }
+      if (selectedCollectionId === collection.id) setSelectedCollectionId(null);
+      setStatus("收藏已刪除");
+    } catch (cause) {
+      setError(`刪除收藏失敗：${cause instanceof Error ? cause.message : "DELETE_COLLECTION_FAILED"}`);
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function permanentlyDeleteTask(task: BrainTaskSnapshot) {
     const source = task.sourcePath ? `\n本機來源：${task.sourcePath}` : "";
     const scope = client && task.id
@@ -1009,6 +1055,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onSelect={setSelectedCollectionId}
         onCreate={() => setCreateEntity("collection")}
         onSave={(collection) => void persistLocal(tasks, projects, collections.map((item) => item.id === collection.id ? collection : item))}
+        onDelete={(collection) => void permanentlyDeleteCollection(collection)}
       />
     ) : (
       <SyncSettings
@@ -3143,12 +3190,14 @@ function Collections({
   onSelect,
   onCreate,
   onSave,
+  onDelete,
 }: {
   collections: BrainCollectionSnapshot[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onCreate: () => void;
   onSave: (collection: BrainCollectionSnapshot) => void;
+  onDelete: (collection: BrainCollectionSnapshot) => void;
 }) {
   const { t, preferences } = useUiPreferences();
   const [category, setCategory] = useState("all");
@@ -3179,24 +3228,44 @@ function Collections({
           ))}
         </div>
         <article className="collection-preview">
-          {selected ? <CollectionEditor key={selected.id ?? selected.name} collection={selected} locale={preferences.language} onSave={onSave} /> : <Empty text={t("collection.select")} />}
+          {selected ? <CollectionEditor key={selected.id ?? selected.name} collection={selected} locale={preferences.language} onSave={onSave} onDelete={onDelete} /> : <Empty text={t("collection.select")} />}
         </article>
       </div>
     </section>
   );
 }
 
-function CollectionEditor({ collection, locale, onSave }: { collection: BrainCollectionSnapshot; locale: UiPreferences["language"]; onSave: (collection: BrainCollectionSnapshot) => void }) {
+function CollectionEditor({ collection, locale, onSave, onDelete }: { collection: BrainCollectionSnapshot; locale: UiPreferences["language"]; onSave: (collection: BrainCollectionSnapshot) => void; onDelete: (collection: BrainCollectionSnapshot) => void }) {
   const { t } = useUiPreferences();
   const [value, setValue] = useState(collection);
+  const [mode, setMode] = useState<"write" | "preview">("preview");
+  const save = () => {
+    onSave({ ...value, name: value.name.trim() });
+    setMode("preview");
+  };
+  const saveRef = useRef(save);
+  useEffect(() => { saveRef.current = save; });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   return <>
     <div className="project-editor-grid">
       <label>{t("entity.field.name")}<input value={value.name} maxLength={200} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
       <label>{t("entity.field.category")}<input value={value.category ?? ""} maxLength={200} onChange={(event) => setValue({ ...value, category: event.target.value || null })} /></label>
       <label>{t("entity.field.importance")}<select value={value.importance ?? ""} onChange={(event) => setValue({ ...value, importance: event.target.value ? Number(event.target.value) : null })}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
     </div>
-    <MarkdownEditor value={value.body} onChange={(body) => setValue({ ...value, body })} locale={locale} />
-    <button className="primary action-with-icon" disabled={!value.name.trim()} onClick={() => onSave({ ...value, name: value.name.trim() })}><Save aria-hidden="true" />{t("app.save")}</button>
+    <MarkdownEditor value={value.body} onChange={(body) => setValue({ ...value, body })} mode={mode} onModeChange={setMode} iconToggle locale={locale} />
+    <div className="project-actions">
+      <button className="primary action-with-icon" disabled={!value.name.trim()} onClick={save}><Save aria-hidden="true" />{t("app.save")}</button>
+      <button className="danger icon-action" aria-label={t("collection.action.delete")} title={t("collection.action.delete")} onClick={() => onDelete(value)}><Trash2 aria-hidden="true" /></button>
+    </div>
   </>;
 }
 
