@@ -239,3 +239,53 @@ test("collection deletion yields a single delete change for the collection sourc
     /COLLECTION_SOURCE_NOT_FOUND/,
   );
 });
+
+test("documentation about the task format is neither adopted nor rewritten", () => {
+  // Reproduces the real failure: a note explaining the task syntax made the app
+  // adopt the example as a task, and the placeholder id aborted the whole scan
+  // with TASK_ID_INVALID.
+  const doc = [
+    "# 任務格式說明",
+    "",
+    "```markdown",
+    '- [ ] #task 修除權息顯示 <!-- publisher-task:{"id":"...","status":"todo","rank":"..."} -->',
+    "- [x] #task 已完成範例 ✅ 2026-08-19",
+    "```",
+    "",
+    "以上是格式範例。",
+    "",
+  ].join("\r\n");
+  const board = "- [ ] #task 真正的任務\r\n";
+
+  const result = scanStructuredVault(
+    [file("docs/格式說明.md", doc), file("board.md", board)],
+    () => taskId,
+  );
+
+  const titles = result.snapshot.tasks.map((task) => task.title);
+  assert.deepEqual(titles, ["真正的任務"], "only the real task is adopted");
+  assert.ok(
+    result.bootstrapChanges.every((change) => change.relativePath !== "docs/格式說明.md"),
+    "the documentation file is left untouched",
+  );
+});
+
+test("an unsafe marker id is re-adopted instead of failing the scan", () => {
+  // A truncated write or hand edit can leave an id that would break out of the
+  // HTML-comment marker. It must heal (fresh id) rather than abort every other
+  // file in the vault, which is what the old throw did.
+  const broken =
+    '- [ ] #task 壞掉的標記 <!-- publisher-task:{"id":"not a valid id","status":"todo"} -->\r\n';
+  const result = scanStructuredVault([file("board.md", broken)], () => taskId);
+  assert.equal(result.snapshot.tasks.length, 1);
+  assert.equal(result.snapshot.tasks[0]?.id, taskId, "assigned a fresh valid id");
+});
+
+test("a foreign but harmless marker id is kept, not silently re-identified", () => {
+  // Ids minted by an older vault or another tool are legitimate; rewriting them
+  // would break every cross-reference the user already has.
+  const legacy = '- [ ] #task 舊資料 <!-- publisher-task:{"id":"task-1","rank":"00000000"} -->\r\n';
+  const result = scanStructuredVault([file("board.md", legacy)], () => taskId);
+  assert.equal(result.snapshot.tasks[0]?.id, "task-1");
+  assert.equal(result.bootstrapChanges.length, 0, "no rewrite of the user's file");
+});

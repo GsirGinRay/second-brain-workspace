@@ -3,6 +3,7 @@ import {
   extractTaskMarkdownContent,
   parseProjectFrontmatter,
   parseCollectionFrontmatter,
+  createCodeFenceTracker,
   parseTaskLine,
   patchTaskLineMinimal,
   patchTaskMarkdownContent,
@@ -244,7 +245,11 @@ export function scanStructuredVault(
     let source = sources.get(file.relativePath)!;
     const lines = splitLines(source);
     let insideTaskContent = false;
+    const inCodeFence = createCodeFenceTracker();
     for (let index = 0; index < lines.length; index += 1) {
+      // Fenced blocks document the task format; their contents are examples,
+      // not tasks, and must never be adopted or rewritten.
+      if (inCodeFence(lines[index]!)) continue;
       if (TASK_CONTENT_START.test(lines[index]!)) { insideTaskContent = true; continue; }
       if (TASK_CONTENT_END.test(lines[index]!)) { insideTaskContent = false; continue; }
       if (insideTaskContent) continue;
@@ -291,7 +296,9 @@ function taskLocations(files: LocalMarkdownFile[]): Map<string, TaskLocation> {
   for (const file of files) {
     const lines = splitLines(decodeFile(file));
     let insideTaskContent = false;
+    const inCodeFence = createCodeFenceTracker();
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      if (inCodeFence(lines[lineIndex]!)) continue;
       if (TASK_CONTENT_START.test(lines[lineIndex]!)) { insideTaskContent = true; continue; }
       if (TASK_CONTENT_END.test(lines[lineIndex]!)) { insideTaskContent = false; continue; }
       if (insideTaskContent) continue;
