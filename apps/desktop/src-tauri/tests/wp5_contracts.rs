@@ -9,8 +9,8 @@ use second_brain_workspace_lib::canonical::{
 use second_brain_workspace_lib::error::NativeError;
 use second_brain_workspace_lib::key_store::{KeyBackend, KeyStore};
 use second_brain_workspace_lib::path_policy::{
-    prepare_path_for_create, scan_markdown, scan_markdown_with_hook, validate_path_under_root,
-    validate_relative_path, validate_vault_root, ScanLimits,
+    managed_subfolder, prepare_path_for_create, scan_markdown, scan_markdown_with_hook,
+    validate_path_under_root, validate_relative_path, validate_vault_root, ScanLimits,
 };
 
 #[test]
@@ -143,11 +143,57 @@ fn path_policy_is_component_aware_and_rejects_escape_or_technical_paths() {
         "../escape.md",
         "C:\\escape.md",
         "\\\\server\\share\\x.md",
-        "90-模板/task.md",
+        ".technical/draft.md",
         ".obsidian/config",
     ] {
         assert!(validate_relative_path(Path::new(path)).is_err(), "{path}");
     }
+}
+
+#[test]
+fn path_policy_allows_managed_architecture_paths_but_keeps_them_out_of_scan() {
+    // Creation-allowed managed architecture paths.
+    for path in [
+        ".ai/INSTRUCTIONS.md",
+        ".ai/INDEX.md",
+        "90-模板/通用專案.md",
+        "CLAUDE.md",
+        "AGENTS.md",
+    ] {
+        assert!(validate_relative_path(Path::new(path)).is_ok(), "{path}");
+    }
+    // Other hidden / technical names stay rejected.
+    for path in [".hidden/x.md", ".obsidian/x.md", "node_modules/x.md"] {
+        assert!(validate_relative_path(Path::new(path)).is_err(), "{path}");
+    }
+    // Managed folders and entry files are excluded from scanning.
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join(".ai")).unwrap();
+    fs::create_dir(root.join("90-模板")).unwrap();
+    fs::write(root.join("CLAUDE.md"), b"# claude\r\n").unwrap();
+    fs::write(root.join("AGENTS.md"), b"# agents\r\n").unwrap();
+    fs::write(root.join(".ai").join("INDEX.md"), b"index").unwrap();
+    fs::write(root.join("90-模板").join("t.md"), b"t").unwrap();
+    fs::write(root.join("ok.md"), b"# ok\r\n").unwrap();
+    let result = scan_markdown(&root, ScanLimits::default(), &|| false).unwrap();
+    assert_eq!(result.files.len(), 1);
+    assert_eq!(result.files[0].relative_path, Path::new("ok.md"));
+}
+
+#[test]
+fn managed_subfolder_resolves_only_known_folders() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join("90-模板")).unwrap();
+    fs::create_dir(root.join(".ai")).unwrap();
+    assert!(managed_subfolder(&root, "90-模板").is_ok());
+    assert!(managed_subfolder(&root, ".ai").is_ok());
+    assert!(managed_subfolder(&root, "Projects").is_err());
+    assert!(managed_subfolder(&root, "../escape").is_err());
+    assert!(validate_relative_path(Path::new("90-模板/通用專案.md")).is_ok());
 }
 
 #[test]

@@ -101,6 +101,7 @@ export interface NativeAdapter {
   setCloseBehavior(behavior: DiagnosticsSnapshot["closeBehavior"]): Promise<void>;
   scanVault(): Promise<ScannedMarkdownFile[]>;
   readMarkdownFiles(relativePaths: string[]): Promise<MarkdownFileContents[]>;
+  listManagedFiles?(folder: string): Promise<string[]>;
   applyMarkdownChanges(changes: MarkdownChangeRequest[]): Promise<MarkdownApplyResult>;
   confirmServerCommit(journalPath: string): Promise<void>;
   savePendingCommit(pending: PendingCommitRecord): Promise<void>;
@@ -404,6 +405,11 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
           bytesBase64,
         };
       });
+    },
+    async listManagedFiles(folder) {
+      const value = await invoke("list_managed_files", { folder });
+      if (!Array.isArray(value)) throw new Error("native managed file list is invalid");
+      return value.map((item) => assertString(item, "path", 500));
     },
     async applyMarkdownChanges(changes) {
       if (changes.length === 0) throw new Error("at least one markdown change is required");

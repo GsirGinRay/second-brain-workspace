@@ -64,6 +64,36 @@ export {
 export { applyRoutineTemplate, createDefaultRoutineTemplate, routineTaskId } from "./routine";
 export { projectColor } from "./visuals";
 export type { ProjectColor } from "./visuals";
+export { renderVaultIndex } from "./vault-index";
+export type { VaultIndexInput } from "./vault-index";
+export {
+  instantiateTemplate,
+  extractTemplateVariables,
+  renderTemplateDocument,
+} from "./templates";
+export type { BrainTemplate } from "./templates";
+export {
+  TEMPLATE_PACKS,
+  scaffoldTemplateFiles,
+} from "./scaffold";
+export type { TemplatePack, TemplatePackId } from "./scaffold";
+export {
+  parsePluginExport,
+  renderPluginExport,
+  promptToCollection,
+  collectionToPrompt,
+  toCollectionCategory,
+  extractPromptVariables,
+  fillPromptVariables,
+} from "./prompts";
+export type { PluginPromptRecord } from "./prompts";
+export {
+  PROMPT_ROOT_CATEGORY,
+  PROMPT_NAME_LIMIT,
+  PROMPT_CATEGORY_LIMIT,
+  PROMPT_CONTENT_LIMIT,
+  PROMPT_COUNT_LIMIT,
+} from "./prompts";
 export { completeProject, enforceDailyP1 } from "./rules";
 export type { DailyPriorityTask } from "./rules";
 export {

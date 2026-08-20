@@ -33,12 +33,20 @@ import {
   completeProject,
   projectColor,
   rankForIndex,
+  TEMPLATE_PACKS,
+  collectionToPrompt,
+  parsePluginExport,
+  promptToCollection,
+  renderPluginExport,
+  extractPromptVariables,
+  fillPromptVariables,
   type BrainProjectSnapshot,
   type BrainCollectionSnapshot,
   type BrainTaskSnapshot,
   type RoutineTemplate,
   type RoutineTemplateItem,
   type TaskStatus,
+  type TemplatePackId,
 } from "@second-brain/brain-core";
 import {
   addDateDays,
@@ -86,6 +94,7 @@ import {
   buildProjectCreateChange,
   buildProjectDeleteChanges,
   type LocalMarkdownFile,
+  type MarkdownChange,
 } from "./vault";
 import {
   DEFAULT_UI_PREFERENCES,
@@ -97,6 +106,7 @@ import {
 import appLogo from "./assets/app-logo.png";
 import { MarkdownEditor } from "./markdown-editor";
 import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
+import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./architecture";
 import "./styles.css";
 
 type View = "today" | "calendar" | "board" | "projects" | "collections" | "sync";
@@ -242,6 +252,46 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     { kind: "preview" }
   > | null>(null);
   const [previewDismissed, setPreviewDismissed] = useState(false);
+  const [architectureOpen, setArchitectureOpen] = useState(false);
+  const [selectedPacks, setSelectedPacks] = useState<TemplatePackId[]>([
+    "projects",
+    "knowledge",
+    "prompts",
+    "ai",
+    "templates",
+  ]);
+  const [importPromptsOpen, setImportPromptsOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState("");
+  const [exportPromptsOpen, setExportPromptsOpen] = useState(false);
+  const [exportText, setExportText] = useState("");
+  const [exportCopied, setExportCopied] = useState(false);
+  const [templates, setTemplates] = useState<{ name: string; body: string }[]>([]);
+  const [pendingScaffold, setPendingScaffold] = useState<MarkdownChange[] | null>(null);
+  const [scaffoldPreviewPaths, setScaffoldPreviewPaths] = useState<string[]>([]);
+
+  const promptCollections = collections.filter((item) =>
+    (item.category ?? "").trim().toLowerCase().startsWith("提示詞"),
+  );
+  const doImportPrompts = () => {
+    setImportError("");
+    let imported;
+    try {
+      imported = parsePluginExport(importText);
+    } catch (cause) {
+      setImportError(cause instanceof Error ? cause.message : "IMPORT_FAILED");
+      return;
+    }
+    const next = [
+      ...collections,
+      ...imported.map((prompt) => ({
+        ...promptToCollection(prompt),
+        id: crypto.randomUUID(),
+      })),
+    ];
+    void persistLocal(tasks, projects, next);
+    setImportPromptsOpen(false);
+  };
   const syncRunningRef = useRef(false);
   const cloudEtagRef = useRef<string | null>(null);
   const routineTemplateRef = useRef(routineTemplate);
@@ -275,6 +325,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(preferences));
     document.documentElement.lang = preferences.language;
     document.documentElement.dataset.theme = preferences.theme;
+    document.documentElement.dataset.density = preferences.density;
   }, [preferences]);
 
   const client = useMemo(
@@ -358,6 +409,127 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     return () => window.removeEventListener("keydown", openGlobalAction);
   }, []);
 
+  const refreshAiIndex = useCallback(
+    async (
+      local: {
+        tasks: BrainTaskSnapshot[];
+        projects: BrainProjectSnapshot[];
+        collections: BrainCollectionSnapshot[];
+      },
+      enabled: boolean,
+    ) => {
+      if (!enabled) return;
+      try {
+        const existingFiles = await native.readMarkdownFiles([".ai/INDEX.md"]);
+        const change = renderIndexChange(
+          {
+            today: taipeiDateKey(),
+            generatedAt: new Date().toISOString(),
+            tasks: local.tasks,
+            projects: local.projects,
+            collections: local.collections ?? [],
+          },
+          existingFiles[0],
+        );
+        if (change) await native.applyMarkdownChanges([change]);
+      } catch {
+        // Background index maintenance is deliberately quiet; a later reload catches up.
+      }
+    },
+    [native],
+  );
+
+  const loadTemplates = useCallback(
+    async (enabled: boolean) => {
+      if (!enabled || !native.listManagedFiles) {
+        setTemplates([]);
+        return;
+      }
+      try {
+        const paths = await native.listManagedFiles("90-模板");
+        if (paths.length === 0) {
+          setTemplates([]);
+          return;
+        }
+        const files = await native.readMarkdownFiles(paths);
+        setTemplates(
+          files.map((file) => ({
+            name:
+              file.relativePath.split("/").pop()?.replace(/\.md$/i, "") ??
+              file.relativePath,
+            body: decodeBase64(file.bytesBase64),
+          })),
+        );
+      } catch {
+        // Template discovery is best-effort; the app works without it.
+      }
+    },
+    [native],
+  );
+
+  const startArchitectureOnboarding = async () => {
+    localStorage.setItem("second-brain.onboardingCompleted", "true");
+    setOnboardingOpen(false);
+    if (!diagnostics?.selectedVault) {
+      const ok = await browseVault();
+      if (!ok) return; // user cancelled folder selection; they can build later from settings
+    }
+    setArchitectureOpen(true);
+  };
+
+  const prepareArchitecture = async () => {
+    setWorking(true);
+    setError("");
+    try {
+      const changes = scaffoldArchitectureChanges(
+        files.map((file) => file.relativePath),
+        selectedPacks,
+      );
+      const existingFiles = await native.readMarkdownFiles([".ai/INDEX.md"]);
+      const indexChange = renderIndexChange(
+        {
+          today: taipeiDateKey(),
+          generatedAt: new Date().toISOString(),
+          tasks,
+          projects,
+          collections,
+        },
+        existingFiles[0],
+      );
+      if (indexChange) changes.push(indexChange);
+      if (changes.length === 0) {
+        setStatus("知識架構已存在，未覆寫任何既有檔案");
+        setArchitectureOpen(false);
+        return;
+      }
+      // Human-in-the-loop: present what will be created before writing anything.
+      setScaffoldPreviewPaths(changes.map((change) => change.relativePath));
+      setPendingScaffold(changes);
+      setArchitectureOpen(false);
+    } catch (cause) {
+      setError(`準備知識架構失敗：${cause instanceof Error ? cause.message : "SCAFFOLD_PREP_FAILED"}`);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const confirmArchitecture = async () => {
+    if (!pendingScaffold || pendingScaffold.length === 0) return;
+    setWorking(true);
+    setError("");
+    try {
+      await native.applyMarkdownChanges(pendingScaffold);
+      await reloadLocal();
+      setStatus("知識架構已建立；AI 委任檔、索引與模板已就緒");
+    } catch (cause) {
+      setError(`建立知識架構失敗：${cause instanceof Error ? cause.message : "SCAFFOLD_FAILED"}`);
+    } finally {
+      setPendingScaffold(null);
+      setScaffoldPreviewPaths([]);
+      setWorking(false);
+    }
+  };
+
   const reloadLocal = useCallback(
     async (updateStatus = true) => {
       const nextDiagnostics = await native.getDiagnostics();
@@ -411,13 +583,24 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setTasks(local.tasks);
       setProjects(local.projects);
       setCollections(local.collections ?? []);
+      if (nextDiagnostics.selectedVault) {
+        void refreshAiIndex(
+          {
+            tasks: local.tasks,
+            projects: local.projects,
+            collections: local.collections ?? [],
+          },
+          true,
+        );
+        void loadTemplates(true);
+      }
       if (updateStatus)
         setStatus(
           `已載入 ${local.tasks.length} 項任務 · ${local.projects.length} 個專案 · ${local.collections.length} 個收藏`,
         );
       return local;
     },
-    [engine, native],
+    [engine, native, refreshAiIndex, loadTemplates],
   );
 
   useEffect(() => {
@@ -1056,6 +1239,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onCreate={() => setCreateEntity("collection")}
         onSave={(collection) => void persistLocal(tasks, projects, collections.map((item) => item.id === collection.id ? collection : item))}
         onDelete={(collection) => void permanentlyDeleteCollection(collection)}
+        onImportPrompts={() => { setImportText(""); setImportError(""); setImportPromptsOpen(true); }}
+        onExportPrompts={() => { const json = renderPluginExport(promptCollections.map((c) => collectionToPrompt(c))); setExportText(json); setExportCopied(false); setExportPromptsOpen(true); }}
       />
     ) : (
       <SyncSettings
@@ -1075,6 +1260,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onOpenPairingWebsite={openPairingWebsite}
         onSync={requestManualSync}
         onShadow={returnToShadowMode}
+        onOpenArchitecture={() => setArchitectureOpen(true)}
       />
     );
 
@@ -1161,6 +1347,14 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             >
               {preferences.theme === "light" ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
             </button>
+            <button
+              className="icon-button top-icon-action"
+              aria-label={preferences.language === "zh-TW" ? "切換顯示密度" : "Toggle density"}
+              title={preferences.density === "comfortable" ? (preferences.language === "zh-TW" ? "切換為密集模式" : "Switch to compact") : (preferences.language === "zh-TW" ? "切換為寬鬆模式" : "Switch to comfortable")}
+              onClick={() => setPreferences((value) => ({ ...value, density: value.density === "comfortable" ? "compact" : "comfortable" }))}
+            >
+              <small aria-hidden="true">{preferences.density === "comfortable" ? "A" : "A–"}</small>
+            </button>
             <div className="sync-state">
               <span className="visually-hidden">
                 {lastSync
@@ -1213,6 +1407,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         <QuickAddModal
           tasks={tasks}
           projects={projects}
+          templates={templates}
           onClose={() => setQuickAddOpen(false)}
           onSave={(next) => {
             setQuickAddOpen(false);
@@ -1238,12 +1433,21 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
               setView(result.value.taskDate ? "calendar" : "today");
             }
           }}
+          actions={[
+            { label: preferences.language === "zh-TW" ? "快速新增任務" : "Quick add task", run: () => setQuickAddOpen(true) },
+            { label: preferences.language === "zh-TW" ? "新增專案" : "New project", run: () => setCreateEntity("project") },
+            { label: preferences.language === "zh-TW" ? "新增收藏" : "New collection", run: () => setCreateEntity("collection") },
+            { label: preferences.language === "zh-TW" ? "建立知識架構" : "Build architecture", run: () => setArchitectureOpen(true) },
+            { label: preferences.language === "zh-TW" ? "切換顯示密度" : "Toggle density", run: () => setPreferences((v) => ({ ...v, density: v.density === "comfortable" ? "compact" : "comfortable" })) },
+            { label: preferences.language === "zh-TW" ? "前往同步與設定" : "Go to sync & settings", run: () => setView("sync") },
+          ]}
         />
       )}
       {createEntity && (
         <CreateEntityModal
           kind={createEntity}
           initialName={promotedTask?.title ?? ""}
+          templates={templates}
           onClose={() => {
             setCreateEntity(null);
             setPromotedTask(null);
@@ -1259,16 +1463,113 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           }}
         />
       )}
+      {architectureOpen && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setArchitectureOpen(false);
+          }}
+        >
+          <section className="modal" role="dialog" aria-modal="true" aria-label="建立知識架構">
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">KNOWLEDGE ARCHITECTURE</span>
+                <h2>建立知識架構</h2>
+              </div>
+              <button className="icon-button" onClick={() => setArchitectureOpen(false)} aria-label="關閉" title="關閉">
+                <X aria-hidden="true" />
+              </button>
+            </div>
+            <p>勾選你要的模板包，一起建立資料夾、AI 委任檔、範本與提示詞庫。已存在的檔案不會被覆寫。</p>
+            <div className="architecture-pack-list">
+              {TEMPLATE_PACKS.map((pack) => (
+                <label key={pack.id} className="architecture-pack">
+                  <input
+                    type="checkbox"
+                    checked={selectedPacks.includes(pack.id)}
+                    onChange={(event) =>
+                      setSelectedPacks((prev) =>
+                        event.target.checked
+                          ? [...prev, pack.id]
+                          : prev.filter((id) => id !== pack.id),
+                      )
+                    }
+                  />
+                  <span>
+                    <strong>{pack.label}</strong>
+                    <small>{pack.description}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-button" onClick={() => setArchitectureOpen(false)}>取消</button>
+              <button
+                className="primary action-with-icon"
+                disabled={working || selectedPacks.length === 0}
+                onClick={() => void prepareArchitecture()}
+              >
+                <Plus aria-hidden="true" />建立架構
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {pendingScaffold && (
+        <div className="modal-backdrop">
+          <section className="modal" role="dialog" aria-modal="true" aria-label="確認知識架構">
+            <div className="modal-header"><div><span className="eyebrow">HUMAN REVIEW</span><h2>確認將建立的檔案</h2></div></div>
+            <p>以下檔案會在審核後一次建立（含可驗證備份）。取消則不會寫入任何檔案。</p>
+            <ul className="review-list">{scaffoldPreviewPaths.map((path) => (<li key={path}><code>{path}</code></li>))}</ul>
+            <div className="modal-actions">
+              <button className="secondary-button" onClick={() => { setPendingScaffold(null); setScaffoldPreviewPaths([]); }}>取消</button>
+              <button className="primary" disabled={working} onClick={() => void confirmArchitecture()}>執行並建立</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {importPromptsOpen && (
+        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setImportPromptsOpen(false); }}>
+          <section className="modal" role="dialog" aria-modal="true" aria-label="匯入提示詞">
+            <div className="modal-header"><div><span className="eyebrow">PROMPT LIBRARY</span><h2>匯入提示詞</h2></div><button className="icon-button" onClick={() => setImportPromptsOpen(false)} aria-label="關閉" title="關閉"><X aria-hidden="true" /></button></div>
+            <p>貼上「AI 提示詞 Plus」擴充匯出的 JSON（物件或純陣列）。每支提示詞會成為一筆「提示詞/…」分類的收藏。</p>
+            <textarea className="prompt-json" rows={10} placeholder='{"version":"2.0.7","prompts":[{"name":"…","category":"…","content":"…"}]}' value={importText} onChange={(event) => setImportText(event.target.value)} />
+            {importError && <p className="prompt-error" role="alert">{importError}</p>}
+            <div className="modal-actions">
+              <button className="secondary-button" onClick={() => setImportPromptsOpen(false)}>取消</button>
+              <button className="primary" disabled={!importText.trim()} onClick={doImportPrompts}>匯入</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {exportPromptsOpen && (
+        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setExportPromptsOpen(false); }}>
+          <section className="modal" role="dialog" aria-modal="true" aria-label="匯出提示詞">
+            <div className="modal-header"><div><span className="eyebrow">PROMPT LIBRARY</span><h2>匯出提示詞</h2></div><button className="icon-button" onClick={() => setExportPromptsOpen(false)} aria-label="關閉" title="關閉"><X aria-hidden="true" /></button></div>
+            <p>複製下方 JSON，在「AI 提示詞 Plus」擴充中匯入即可重複使用。</p>
+            <textarea className="prompt-json" readOnly rows={12} value={exportText} />
+            <div className="modal-actions">
+              <button className="secondary-button" onClick={() => setExportPromptsOpen(false)}>關閉</button>
+              <button className="primary" onClick={() => { void navigator.clipboard?.writeText(exportText); setExportCopied(true); }}>{exportCopied ? "已複製 ✓" : "複製"}</button>
+            </div>
+          </section>
+        </div>
+      )}
       {onboardingOpen && (
         <div className="modal-backdrop">
           <section className="modal onboarding-modal" role="dialog" aria-modal="true" aria-label={preferences.language === "zh-TW" ? "開始使用" : "Getting started"}>
-            <div className="modal-header"><div><span className="eyebrow">LOCAL-FIRST MARKDOWN</span><h2>{preferences.language === "zh-TW" ? "三步開始你的第二大腦" : "Start your second brain in three steps"}</h2></div></div>
-            <ol className="onboarding-steps">
-              <li><strong>{preferences.language === "zh-TW" ? "先記下來" : "Capture first"}</strong><span>{preferences.language === "zh-TW" ? "新增任務、專案或收藏，不必先理解資料夾。" : "Create a task, project, or collection before choosing a folder."}</span></li>
-              <li><strong>{preferences.language === "zh-TW" ? "自由寫 Markdown" : "Write Markdown"}</strong><span>{preferences.language === "zh-TW" ? "每種內容都能編輯與預覽完整 Markdown。" : "Every item supports full Markdown editing and preview."}</span></li>
-              <li><strong>{preferences.language === "zh-TW" ? "選擇保存位置" : "Choose storage"}</strong><span>{preferences.language === "zh-TW" ? "關閉前指定一個資料夾，檔案永遠由你掌握。" : "Choose a folder before closing; your files remain yours."}</span></li>
-            </ol>
-            <div className="modal-actions"><button className="secondary-button" onClick={() => { localStorage.setItem("second-brain.onboardingCompleted", "true"); setOnboardingOpen(false); }}>{preferences.language === "zh-TW" ? "先建立內容" : "Create content first"}</button><button className="primary" onClick={() => { localStorage.setItem("second-brain.onboardingCompleted", "true"); setOnboardingOpen(false); void browseVault(); }}>{preferences.language === "zh-TW" ? "選擇資料夾" : "Choose folder"}</button></div>
+            <div className="modal-header"><div><span className="eyebrow">SECOND BRAIN · LOCAL-FIRST</span><h2>{preferences.language === "zh-TW" ? "你的第二大腦，歡迎" : "Welcome to your second brain"}</h2></div></div>
+            <p>{preferences.language === "zh-TW" ? "先「新建」選一套知識架構，讓 AI 一進資料夾就能讀懂你、快速開始專案與任務。" : "Start with “New” to build a knowledge architecture that any AI can read instantly."}</p>
+            <div className="onboarding-cta">
+              <button className="primary onboarding-primary" onClick={() => void startArchitectureOnboarding()}>
+                <Plus aria-hidden="true" />{preferences.language === "zh-TW" ? "建立知識架構" : "New — build architecture"}
+              </button>
+              <span className="eyebrow">{preferences.language === "zh-TW" ? "可自由勾選：專案、知識庫、提示詞、AI 委任、模板" : "Pick & choose packs: projects, library, prompts, AI handoff, templates"}</span>
+            </div>
+            <hr className="modal-divider" />
+            <button className="text-button" onClick={() => { localStorage.setItem("second-brain.onboardingCompleted", "true"); setOnboardingOpen(false); }}>
+              {preferences.language === "zh-TW" ? "先記下來，稍後再建立架構" : "Capture first, build architecture later"}
+            </button>
           </section>
         </div>
       )}
@@ -1593,16 +1894,9 @@ function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuickAdd, r
     setDraggedItem(null);
   };
   const important = groups.today.find((task) => task.priority === "highest") ?? null;
-  const enabledRoutineItems = routineTemplate.items.filter((item) => item.enabled);
-  const scheduledRoutineItems = enabledRoutineItems.filter((item) => item.startTime);
   return <section className="command-center">
-    <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></header>
+    <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
-    <section className="routine-template-card" aria-label={t("today.template")}>
-      <div className="routine-template-icon"><Settings2 /></div>
-      <div><span className="eyebrow">{t("today.template")}</span><strong>{routineTemplate.name}</strong><small>{enabledRoutineItems.length} · {scheduledRoutineItems.length}</small></div>
-      <button className="routine-template-action" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button>
-    </section>
     <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article></div>
     {templateOpen && <section className="routine-editor"><header><div><span className="eyebrow">DAILY ROUTINE</span><input aria-label="模板名稱" value={routineTemplate.name} onChange={(event) => onRoutineTemplateChange({ ...routineTemplate, name: event.target.value })} /></div><button onClick={() => setTemplateOpen(false)} aria-label="關閉模板"><X /></button></header><div className="routine-items">{routineTemplate.items.map((item) => <article key={item.id} draggable={dragHandleId === item.id} onDragStart={() => setDraggedItem(item.id)} onDragEnd={() => setDragHandleId(null)} onMouseUp={() => setDragHandleId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropItem(item.id)}><GripVertical onMouseDown={() => setDragHandleId(item.id)} /><input type="checkbox" aria-label={`${item.title}啟用`} checked={item.enabled} onChange={(event) => updateItem(item.id, { enabled: event.target.checked })} /><input aria-label="例行任務名稱" value={item.title} onChange={(event) => updateItem(item.id, { title: event.target.value })} /><select aria-label="例行任務專案" value={item.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); updateItem(item.id, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><select aria-label="例行任務優先度" value={item.priority} onChange={(event) => updateItem(item.id, { priority: event.target.value as RoutineTemplateItem["priority"] })}>{(["highest","high","medium","normal","low"] as const).map((value) => <option key={value} value={value}>{priorityDisplay(value).code}</option>)}</select><input aria-label="開始時間" type="time" value={item.startTime ?? ""} onChange={(event) => updateItem(item.id, { startTime: event.target.value || null, durationMinutes: event.target.value ? item.durationMinutes ?? 30 : null })} /><select aria-label="持續時間" disabled={!item.startTime} value={item.durationMinutes ?? 30} onChange={(event) => updateItem(item.id, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select><button className="danger-icon" aria-label={`刪除${item.title}`} onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.filter((value) => value.id !== item.id) })}><Trash2 /></button></article>)}</div><button className="secondary" onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: [...routineTemplate.items, { id: crypto.randomUUID(), title: "新的例行任務", enabled: true, projectId: null, projectName: null, priority: "normal", startTime: null, durationMinutes: null, rank: rankForIndex(routineTemplate.items.length) }] })}><Plus />新增模板項目</button></section>}
     <section className="timeline-section"><header><div><span className="eyebrow">TODAY TIMELINE</span><h3>{t("today.timeline")}</h3></div><button className="secondary icon-action" aria-label={t("app.quickAdd")} title={t("app.quickAdd")} onClick={onQuickAdd}><Plus /></button></header>{scheduled.length === 0 ? <Empty text={t("today.empty")} /> : <div className="timeline">{scheduled.map((task) => <article key={task.id ?? task.title} className={`${Number(task.startTime?.slice(0,2)) >= 13 && ["normal","low"].includes(task.priority) ? "low-energy" : ""}`}><time>{task.startTime}</time><div><strong>{task.title}</strong><small>{task.durationMinutes ?? 30} · {task.projectName ?? t("app.unassigned")}</small></div></article>)}</div>}</section>
@@ -1931,11 +2225,13 @@ function LegacyToday({
 function QuickAddModal({
   tasks,
   projects,
+  templates = [],
   onClose,
   onSave,
 }: {
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
+  templates?: { name: string; body: string }[];
   onClose: () => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void;
 }) {
@@ -2011,6 +2307,9 @@ function QuickAddModal({
             }}
           />
         </label>
+        {templates.length > 0 && (
+          <label>{preferences.language === "zh-TW" ? "套用模板" : "Apply template"}<select value="" onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!title.trim()) setTitle(picked.name); } }}><option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>{templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
+        )}
         <MarkdownEditor value={body} onChange={setBody} locale={preferences.language} minRows={7} />
         <label className="idea-toggle">
           <input
@@ -3176,7 +3475,7 @@ function Projects({
         <select aria-label={t("project.filter.category")} value={areaFilter} onChange={(event) => { setAreaFilter(event.target.value); localStorage.setItem("second-brain.projectAreaFilter", event.target.value); }}><option value="all">{t("project.filter.allCategories")}</option>{areas.map((area) => <option key={area}>{area}</option>)}</select>
         <select aria-label={t("project.sort")} value={sort} onChange={(event) => { const value = event.target.value as typeof sort; setSort(value); localStorage.setItem("second-brain.projectSort", value); }}><option value="priority">{t("project.sort.importance")}</option><option value="status">{t("project.sort.status")}</option><option value="name">{t("project.sort.name")}</option><option value="endDate">{t("project.sort.endDate")}</option></select>
       </div>
-      {visibleProjects.length === 0 ? <Empty text={t("project.empty")} /> : mode === "status" && tab === "current" ? (
+      {visibleProjects.length === 0 ? <Empty text={t("project.empty")} hint={t("project.emptyHelp")} actionLabel={t("project.action.add")} onAction={onCreate} /> : mode === "status" && tab === "current" ? (
         <div className="project-status-board">
           {(["planning", "active", "paused"] as const).map((status) => <section key={status}><header><strong>{t(`project.status.${status}`)}</strong><span>{visibleProjects.filter((project) => project.status === status).length}</span></header>{visibleProjects.filter((project) => project.status === status).map(renderProject)}</section>)}
         </div>
@@ -3192,6 +3491,8 @@ function Collections({
   onCreate,
   onSave,
   onDelete,
+  onImportPrompts,
+  onExportPrompts,
 }: {
   collections: BrainCollectionSnapshot[];
   selectedId: string | null;
@@ -3199,11 +3500,14 @@ function Collections({
   onCreate: () => void;
   onSave: (collection: BrainCollectionSnapshot) => void;
   onDelete: (collection: BrainCollectionSnapshot) => void;
+  onImportPrompts: () => void;
+  onExportPrompts: () => void;
 }) {
   const { t, preferences } = useUiPreferences();
   const [category, setCategory] = useState("all");
   const [importance, setImportance] = useState("all");
   const categories = [...new Set(collections.map((item) => item.category).filter((item): item is string => Boolean(item)))].sort();
+  const promptCount = collections.filter((item) => (item.category ?? "").trim().toLowerCase().startsWith("提示詞")).length;
   const visible = collections
     .filter((item) => category === "all" || item.category === category)
     .filter((item) => importance === "all" || String(item.importance ?? "unset") === importance)
@@ -3212,8 +3516,12 @@ function Collections({
   return (
     <section className="collections-workspace">
       <header className="project-workspace-header">
-        <div><h2>{t("collection.title")}</h2><p>{t("collection.description")}</p></div>
-        <button className="primary icon-action" aria-label={t("collection.action.add")} title={t("collection.action.add")} onClick={onCreate}><Plus aria-hidden="true" /></button>
+        <div><h2>{t("collection.title")}</h2><p>{t("collection.description")}</p>{promptCount > 0 && <span className="focus">{preferences.language === "zh-TW" ? `${promptCount} 支提示詞` : `${promptCount} prompts`}</span>}</div>
+        <div className="top-actions">
+          <button className="secondary-button" onClick={onImportPrompts}>{preferences.language === "zh-TW" ? "匯入提示詞" : "Import prompts"}</button>
+          <button className="secondary-button" onClick={onExportPrompts} disabled={promptCount === 0}>{preferences.language === "zh-TW" ? "匯出提示詞" : "Export prompts"}</button>
+          <button className="primary icon-action" aria-label={t("collection.action.add")} title={t("collection.action.add")} onClick={onCreate}><Plus aria-hidden="true" /></button>
+        </div>
       </header>
       <div className="project-filters">
         <select aria-label={t("collection.filter.category")} value={category} onChange={(event) => setCategory(event.target.value)}><option value="all">{t("project.filter.allCategories")}</option>{categories.map((item) => <option key={item}>{item}</option>)}</select>
@@ -3221,7 +3529,7 @@ function Collections({
       </div>
       <div className="collection-layout">
         <div className="collection-list">
-          {visible.length === 0 ? <Empty text={t("collection.empty")} /> : visible.map((item) => (
+          {visible.length === 0 ? <Empty text={t("collection.empty")} hint={t("collection.emptyHelp")} actionLabel={t("collection.action.add")} onAction={onCreate} /> : visible.map((item) => (
             <button key={item.id ?? item.sourcePath} className={selected?.id === item.id ? "active" : ""} onClick={() => onSelect(item.id)}>
               <span><strong>{item.name}</strong><small>{item.category ?? t("app.uncategorized")} · {item.importance ? `${t("project.field.importance")} ${item.importance}` : t("project.importance.unset")}</small></span>
               <small>{item.body.slice(0, 100) || t("app.noContent")}</small>
@@ -3240,6 +3548,23 @@ function CollectionEditor({ collection, locale, onSave, onDelete }: { collection
   const { t } = useUiPreferences();
   const [value, setValue] = useState(collection);
   const [mode, setMode] = useState<"write" | "preview">("preview");
+  const isPrompt = (value.category ?? "").trim().toLowerCase().startsWith("提示詞");
+  const variables = useMemo(() => extractPromptVariables(value.body), [value.body]);
+  const [fillValues, setFillValues] = useState<Record<string, string>>({});
+  const [fillOpen, setFillOpen] = useState(false);
+  const openFill = () => {
+    setFillValues(Object.fromEntries(variables.map((name) => [name, ""])));
+    setFillOpen(true);
+  };
+  const copyFilled = async () => {
+    const cleaned: Record<string, string> = {};
+    for (const name of variables) {
+      cleaned[name] = (fillValues[name] ?? "").trim();
+    }
+    const filled = fillPromptVariables(value.body, cleaned);
+    await navigator.clipboard?.writeText(filled);
+    setFillOpen(false);
+  };
   const save = () => {
     onSave({ ...value, name: value.name.trim() });
     setMode("preview");
@@ -3264,20 +3589,40 @@ function CollectionEditor({ collection, locale, onSave, onDelete }: { collection
     </div>
     <MarkdownEditor value={value.body} onChange={(body) => setValue({ ...value, body })} mode={mode} onModeChange={setMode} iconToggle locale={locale} />
     <div className="project-actions">
+      {isPrompt && variables.length > 0 && (
+        <button className="secondary-button action-with-icon" onClick={openFill}>◆ {t("collection.fillCopy")}</button>
+      )}
       <button className="primary action-with-icon" disabled={!value.name.trim()} onClick={save}><Save aria-hidden="true" />{t("app.save")}</button>
       <button className="danger icon-action" aria-label={t("collection.action.delete")} title={t("collection.action.delete")} onClick={() => onDelete(value)}><Trash2 aria-hidden="true" /></button>
     </div>
+    {fillOpen && (
+      <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setFillOpen(false); }}>
+        <section className="modal" role="dialog" aria-modal="true" aria-label={t("collection.fillCopy")}>
+          <div className="modal-header"><div><span className="eyebrow">PROMPT</span><h2>{t("collection.fillCopy")}</h2></div><button className="icon-button" onClick={() => setFillOpen(false)} aria-label={t("app.close")} title={t("app.close")}><X aria-hidden="true" /></button></div>
+          <p>{t("collection.fillHelp")}</p>
+          {variables.map((name) => (
+            <label className="fill-field" key={name}>{name}<input value={fillValues[name] ?? ""} autoFocus={name === variables[0]} onChange={(event) => setFillValues((prev) => ({ ...prev, [name]: event.target.value }))} /></label>
+          ))}
+          <div className="modal-actions">
+            <button className="secondary-button" onClick={() => setFillOpen(false)}>{t("app.cancel")}</button>
+            <button className="primary" onClick={() => void copyFilled()}>{t("collection.copy")}</button>
+          </div>
+        </section>
+      </div>
+    )}
   </>;
 }
 
 function CreateEntityModal({
   kind,
   initialName,
+  templates = [],
   onClose,
   onCreate,
 }: {
   kind: "project" | "collection";
   initialName: string;
+  templates?: { name: string; body: string }[];
   onClose: () => void;
   onCreate: (name: string, category: string | null, importance: number | null, body: string) => Promise<void>;
 }) {
@@ -3304,6 +3649,9 @@ function CreateEntityModal({
         <label>{t("entity.field.name")}<input autoFocus maxLength={200} value={name} onChange={(event) => setName(event.target.value)} /></label>
         <label>{t("entity.field.category")}<input maxLength={200} value={category} onChange={(event) => setCategory(event.target.value)} /></label>
         <label>{t("entity.field.importance")}<select value={importance} onChange={(event) => setImportance(event.target.value)}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
+        {templates.length > 0 && (
+          <label>{preferences.language === "zh-TW" ? "套用模板" : "Apply template"}<select value="" onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!name.trim()) setName(picked.name); } }}><option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>{templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
+        )}
         <MarkdownEditor value={body} onChange={setBody} locale={preferences.language} minRows={8} />
         <div className="modal-actions"><button className="secondary-button" onClick={onClose}>{t("app.cancel")}</button><button className="primary" disabled={!name.trim() || submitting} onClick={() => void submit()}>{t(submitting ? "app.creating" : "app.create")}</button></div>
       </section>
@@ -3328,6 +3676,7 @@ function SyncSettings({
   onOpenPairingWebsite,
   onSync,
   onShadow,
+  onOpenArchitecture,
 }: {
   diagnostics: DiagnosticsSnapshot | null;
   serverOrigin: string;
@@ -3345,10 +3694,19 @@ function SyncSettings({
   onOpenPairingWebsite: () => void;
   onSync: () => void;
   onShadow: () => void;
+  onOpenArchitecture: () => void;
 }) {
   const { preferences, t } = useUiPreferences();
   return (
     <div className="settings-grid">
+      <section className="settings-card">
+        <span className="step">★</span>
+        <h2>建立知識架構</h2>
+        <p>產生 .ai 委任檔、自動索引、範本與提示詞庫，讓任何 AI 一進入資料夾就能快速讀懂你的第二大腦。可自由勾選需要的模板包。</p>
+        <button className="primary wide" onClick={onOpenArchitecture}>
+          新建架構模板
+        </button>
+      </section>
       <section className="settings-card">
         <span className="step">1</span>
         <h2>{t("sync.folder")}</h2>
@@ -3482,12 +3840,14 @@ function WorkspaceSearch({
   collections,
   onClose,
   onSelect,
+  actions,
 }: {
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
   collections: BrainCollectionSnapshot[];
   onClose: () => void;
   onSelect: (result: WorkspaceSearchResult) => void;
+  actions?: Array<{ label: string; run: () => void }>;
 }) {
   const { t } = useUiPreferences();
   const [query, setQuery] = useState("");
@@ -3562,6 +3922,19 @@ function WorkspaceSearch({
           <span>{t("search.results", { count: results.length })}</span>
         </div>
         {queryError && <div className="search-error" role="status">{queryError}</div>}
+        {actions && actions.length > 0 && !query && (
+          <div className="search-commands" aria-label="快速動作">
+            {actions.map((command) => (
+              <button
+                key={command.label}
+                onClick={() => { onClose(); command.run(); }}
+              >
+                <span className="result-kind">CMD</span>
+                <span><strong>{command.label}</strong></span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="search-results" role="listbox">
           {results.length === 0 ? <Empty text={t("search.empty")} /> : results.map((result, index) => {
             const isTask = result.kind === "task";
@@ -3593,6 +3966,14 @@ function WorkspaceSearch({
   );
 }
 
-function Empty({ text }: { text: string }) {
-  return <div className="empty">{text}</div>;
+function Empty({ text, hint, actionLabel, onAction }: { text: string; hint?: string; actionLabel?: string; onAction?: () => void }) {
+  return (
+    <div className="empty">
+      <span>{text}</span>
+      {hint && <small className="empty-hint">{hint}</small>}
+      {actionLabel && onAction && (
+        <button className="secondary-button empty-action" onClick={onAction}>{actionLabel}</button>
+      )}
+    </div>
+  );
 }

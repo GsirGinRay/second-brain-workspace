@@ -1,9 +1,11 @@
 export type UiLanguage = "zh-TW" | "en";
 export type UiTheme = "light" | "dark";
+export type UiDensity = "comfortable" | "compact";
 
 export interface UiPreferences {
   language: UiLanguage;
   theme: UiTheme;
+  density: UiDensity;
 }
 
 export const UI_PREFERENCES_KEY = "second-brain.uiPreferences";
@@ -11,6 +13,7 @@ export const UI_PREFERENCES_KEY = "second-brain.uiPreferences";
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   language: "zh-TW",
   theme: "light",
+  density: "comfortable",
 };
 
 export function normalizeUiPreferences(value: unknown): UiPreferences {
@@ -20,7 +23,11 @@ export function normalizeUiPreferences(value: unknown): UiPreferences {
     (candidate.language !== "zh-TW" && candidate.language !== "en")
     || (candidate.theme !== "light" && candidate.theme !== "dark")
   ) return DEFAULT_UI_PREFERENCES;
-  return { language: candidate.language, theme: candidate.theme };
+  return {
+    language: candidate.language,
+    theme: candidate.theme,
+    density: candidate.density === "compact" ? "compact" : "comfortable",
+  };
 }
 
 const ENGLISH: Record<string, string> = {
@@ -170,15 +177,20 @@ const ENGLISH: Record<string, string> = {
   "project.sort.name": "Name",
   "project.sort.endDate": "Due date",
   "project.empty": "No projects match these filters.",
+  "project.emptyHelp": "Create a project to turn a clear outcome into tracked work, or adjust the filters.",
   "project.period.none": "No dates",
   "project.date.undecided": "TBD",
   "collection.title": "Collections",
   "collection.description": "Prompts and references do not need project status or deadlines.",
   "collection.action.add": "Add collection",
   "collection.action.delete": "Delete collection",
+  "collection.fillCopy": "Fill variables & copy",
+  "collection.fillHelp": "Fill each variable below; the completed prompt is copied to your clipboard.",
+  "collection.copy": "Copy prompt",
   "collection.filter.category": "Filter collections by category",
   "collection.filter.importance": "Filter collections by importance",
   "collection.empty": "No collections yet.",
+  "collection.emptyHelp": "Create a reference collection or import your prompts from the AI Prompts+ extension JSON.",
   "collection.select": "Select a collection to read its Markdown content.",
   "collection.contentHint": "No content yet; add it directly in Markdown.",
   "entity.project.title": "Add planning project",
@@ -390,15 +402,20 @@ const TRADITIONAL_CHINESE: Record<string, string> = {
   "project.sort.name": "名稱",
   "project.sort.endDate": "截止日",
   "project.empty": "沒有符合條件的專案。",
+  "project.emptyHelp": "建立專案把明確成果變成可追蹤的工作，或調整篩選條件。",
   "project.period.none": "未設期間",
   "project.date.undecided": "未定",
   "collection.title": "收藏",
   "collection.description": "提示詞與參考資訊不需要專案狀態或期限。",
   "collection.action.add": "新增收藏",
   "collection.action.delete": "刪除收藏",
+  "collection.fillCopy": "填變數並複製",
+  "collection.fillHelp": "逐項填寫變數，完成後整支提示詞會複製到剪貼簿。",
+  "collection.copy": "複製提示詞",
   "collection.filter.category": "收藏分類篩選",
   "collection.filter.importance": "收藏重要性篩選",
   "collection.empty": "尚未建立收藏。",
+  "collection.emptyHelp": "建立參考收藏，或從「AI 提示詞 Plus」擴充匯入提示詞。",
   "collection.select": "選取收藏即可查看 Markdown 內容。",
   "collection.contentHint": "尚無內容；可直接在 Markdown 中補充。",
   "entity.project.title": "新增規劃中專案",

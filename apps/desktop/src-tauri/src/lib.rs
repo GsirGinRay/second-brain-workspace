@@ -34,6 +34,7 @@ use tauri::{
 
 const MAX_NATIVE_BATCH_FILES: usize = 100_000;
 const MAX_NATIVE_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_NATIVE_LIST_FILES: usize = 1000;
 
 pub struct AppState {
     key_store: Mutex<KeyStore>,
@@ -356,6 +357,37 @@ fn read_markdown_files(
         });
     }
     Ok(MarkdownReadResult { files })
+}
+
+/// List Markdown files under a managed, scan-excluded subfolder (`.ai`,
+/// `90-模板`). Used to enumerate templates and AI handoff files.
+#[tauri::command]
+fn list_managed_files(
+    folder: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, NativeError> {
+    let root = selected_root(&state)?;
+    let dir = crate::path_policy::managed_subfolder(&root, &folder)?;
+    let mut files = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_file()
+            || path.extension().and_then(|ext| ext.to_str()) != Some("md")
+        {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(&root)
+            .map_err(|_| NativeError::UnsafePath)?;
+        files.push(relative.to_string_lossy().replace('\\', "/"));
+        if files.len() >= MAX_NATIVE_LIST_FILES {
+            break;
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 #[tauri::command]
@@ -694,6 +726,7 @@ pub fn run() -> tauri::Result<()> {
             select_vault,
             scan_vault,
             read_markdown_files,
+            list_managed_files,
             apply_markdown_changes,
             confirm_server_commit,
             save_pending_commit,

@@ -156,15 +156,16 @@ test("today focus and calendar agenda expose the task body editor", () => {
   assert.match(styles, /\.inline-task-editor,\.agenda-editor\{grid-column:1\/-1/);
 });
 
-test("today command center makes the daily template visible and understandable", () => {
+test("today command center exposes template management from the hero", () => {
   const source = app();
   const styles = css();
-  assert.match(source, /className="routine-template-card"/);
-  assert.match(source, /today\.template/);
-  assert.match(source, /enabledRoutineItems/);
+  assert.match(source, /className="command-hero"/);
+  assert.match(source, /hero-actions/);
   assert.match(source, /today\.template\.manage/);
+  assert.match(source, /today\.template\.collapse/);
+  assert.ok(!/className="routine-template-card"/.test(source), "template card was folded into the hero");
   assert.match(styles, /\.routine-template-card/);
-  assert.match(styles, /\.routine-template-action/);
+  assert.match(styles, /\.hero-actions/);
 });
 
 test("desktop exposes global task and project search with keyboard shortcuts", () => {

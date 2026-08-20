@@ -8,23 +8,29 @@ import {
   type UiPreferences,
 } from "./ui-preferences";
 
-test("UI preferences default to Traditional Chinese and light theme", () => {
+test("UI preferences default to Traditional Chinese, light theme and comfortable density", () => {
   assert.deepEqual(DEFAULT_UI_PREFERENCES, {
     language: "zh-TW",
     theme: "light",
+    density: "comfortable",
   });
 });
 
 test("UI preferences accept only supported persisted values", () => {
   assert.deepEqual(
     normalizeUiPreferences({ language: "en", theme: "dark" }),
-    { language: "en", theme: "dark" },
+    { language: "en", theme: "dark", density: "comfortable" },
   );
   assert.deepEqual(
     normalizeUiPreferences({ language: "ja", theme: "system" }),
     DEFAULT_UI_PREFERENCES,
   );
   assert.deepEqual(normalizeUiPreferences(null), DEFAULT_UI_PREFERENCES);
+});
+
+test("density normalizes to a supported value", () => {
+  assert.equal(normalizeUiPreferences({ language: "en", theme: "dark", density: "compact" }).density, "compact");
+  assert.equal(normalizeUiPreferences({ language: "en", theme: "dark", density: "huge" }).density, "comfortable");
 });
 
 test("translations preserve stable data values while localizing visible labels", () => {
@@ -36,6 +42,6 @@ test("translations preserve stable data values while localizing visible labels",
 });
 
 test("both language and theme choices round-trip as a complete preference", () => {
-  const value: UiPreferences = { language: "en", theme: "dark" };
+  const value: UiPreferences = { language: "en", theme: "dark", density: "compact" };
   assert.deepEqual(normalizeUiPreferences(JSON.parse(JSON.stringify(value))), value);
 });

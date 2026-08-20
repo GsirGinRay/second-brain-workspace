@@ -55,7 +55,9 @@ pub fn validate_relative_path(path: &Path) -> Result<(), NativeError> {
         match component {
             Component::Normal(value) => {
                 let name = value.to_string_lossy();
-                if is_technical_name(&name) || name == "90-模板" {
+                if !is_managed_component(&name)
+                    && (is_technical_name(&name) || name == "90-模板")
+                {
                     return Err(NativeError::UnsafePath);
                 }
             }
@@ -73,8 +75,7 @@ pub fn validate_relative_path(path: &Path) -> Result<(), NativeError> {
     Ok(())
 }
 
-pub fn validate_vault_root(root: &Path) -> Result<PathBuf, NativeError> {
-    let metadata = fs::symlink_metadata(root)?;
+pub fn validate_vault_root(root: &Path) -> Result<PathBuf, NativeError> {    let metadata = fs::symlink_metadata(root)?;
     if !metadata.is_dir() || is_reparse_or_symlink(root, &metadata) || is_hidden(root) {
         return Err(NativeError::UnsafePath);
     }
@@ -89,6 +90,22 @@ pub fn validate_vault_root(root: &Path) -> Result<PathBuf, NativeError> {
         }
     }
     Ok(canonical)
+}
+
+/// Resolve an allowed managed subfolder (`.ai`, `90-模板`) under the vault root,
+/// rejecting symlinks/reparse points. Used to enumerate scaffold/template files
+/// that are intentionally excluded from normal scanning.
+pub fn managed_subfolder(root: &Path, sub: &str) -> Result<PathBuf, NativeError> {
+    let canonical_root = validate_vault_root(root)?;
+    if !is_managed_component(sub) {
+        return Err(NativeError::UnsafePath);
+    }
+    let target = canonical_root.join(sub);
+    let metadata = fs::symlink_metadata(&target)?;
+    if !metadata.is_dir() || is_reparse_or_symlink(&target, &metadata) {
+        return Err(NativeError::UnsafePath);
+    }
+    Ok(target)
 }
 
 pub fn validate_path_under_root(root: &Path, relative: &Path) -> Result<PathBuf, NativeError> {
@@ -134,9 +151,6 @@ pub fn validate_path_under_root(root: &Path, relative: &Path) -> Result<PathBuf,
     Ok(candidate)
 }
 
-/// Prepares only the missing parent directories for a new Markdown file. Every
-/// existing and newly created component is revalidated to prevent junction or
-/// symlink traversal before the caller writes any content.
 pub fn prepare_path_for_create(root: &Path, relative: &Path) -> Result<PathBuf, NativeError> {
     let canonical_root = validate_vault_root(root)?;
     validate_relative_path(relative)?;
@@ -265,8 +279,26 @@ pub fn scan_markdown_with_hook(
 fn is_technical_name(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        ".obsidian" | ".git" | ".trash" | ".publisher-sync" | "node_modules"
+        ".obsidian"
+            | ".git"
+            | ".trash"
+            | ".publisher-sync"
+            | "node_modules"
+            | "claude.md"
+            | "agents.md"
     ) || name.starts_with('.')
+}
+
+/// Managed architecture folders/files that the app is explicitly allowed to
+/// create even though they are excluded from Markdown scanning and cloud plans:
+/// the AI handoff folder `.ai/`, the template folder `90-模板/`, and the root
+/// entry files `CLAUDE.md` / `AGENTS.md`. These are exact literal names (no
+/// wildcards); every other traversal/symlink/hidden check still applies.
+fn is_managed_component(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        ".ai" | "90-模板" | "claude.md" | "agents.md"
+    )
 }
 
 fn newline_style(bytes: &[u8]) -> NewlineStyle {
