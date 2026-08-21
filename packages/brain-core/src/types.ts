@@ -132,6 +132,14 @@ export type RoutineTemplateItem = z.infer<typeof RoutineTemplateItemSchema>;
 export interface ParsedMarkdownTask extends BrainTaskSnapshot {
   lineIndex: number;
   rawLine: string;
+  /**
+   * Present when the line carried a publisher-task marker that could not be
+   * used: "unparsable" (JSON failed to parse — typical of an interrupted sync
+   * write) or "unsafe-id" (an id that could break the marker structure). The
+   * task itself still parses; scanners surface this so the anomaly is visible
+   * instead of silently healed.
+   */
+  markerIssue?: "unparsable" | "unsafe-id";
 }
 
 export interface ParsedProjectFrontmatter extends BrainProjectSnapshot {

@@ -34,12 +34,12 @@ export class SyncEngine {
     return this.applyAndCommit(result.plan, result.files, result.journalPaths, result.state, choices);
   }
 
-  async loadLocal(): Promise<{ files: LocalMarkdownFile[]; tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; collections: BrainCollectionSnapshot[]; bootstrapChanges: ReturnType<typeof scanStructuredVault>["bootstrapChanges"] }> {
+  async loadLocal(): Promise<{ files: LocalMarkdownFile[]; tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; collections: BrainCollectionSnapshot[]; bootstrapChanges: ReturnType<typeof scanStructuredVault>["bootstrapChanges"]; warnings: ReturnType<typeof scanStructuredVault>["warnings"] }> {
     const scan = await this.native.scanVault();
-    if (scan.length === 0) return { files: [], tasks: [], projects: [], collections: [], bootstrapChanges: [] };
+    if (scan.length === 0) return { files: [], tasks: [], projects: [], collections: [], bootstrapChanges: [], warnings: [] };
     const files = await this.native.readMarkdownFiles(scan.map((file) => file.relativePath));
     const structured = scanStructuredVault(files);
-    return { files, tasks: structured.snapshot.tasks, projects: structured.snapshot.projects, collections: structured.snapshot.collections, bootstrapChanges: structured.bootstrapChanges };
+    return { files, tasks: structured.snapshot.tasks, projects: structured.snapshot.projects, collections: structured.snapshot.collections, bootstrapChanges: structured.bootstrapChanges, warnings: structured.warnings };
   }
 
   private async run(previewOnly: boolean): Promise<SyncResult> {

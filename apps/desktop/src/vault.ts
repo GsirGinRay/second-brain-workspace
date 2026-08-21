@@ -3,6 +3,7 @@ import {
   extractTaskMarkdownContent,
   parseProjectFrontmatter,
   parseCollectionFrontmatter,
+  createCodeFenceTracker,
   parseTaskLine,
   patchTaskLineMinimal,
   patchTaskMarkdownContent,
@@ -43,9 +44,18 @@ const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b78
 
 interface TaskLocation { relativePath: string; lineIndex: number; rawLine: string }
 
+export interface ScanWarning {
+  relativePath: string;
+  /** 1-based line number, ready for display. */
+  line: number;
+  issue: "unparsable" | "unsafe-id" | "duplicate-id";
+}
+
 export interface StructuredVaultScan {
   snapshot: SyncSnapshot & { schemaVersion: 6; collections: BrainCollectionSnapshot[] };
   bootstrapChanges: MarkdownChange[];
+  /** Task-marker anomalies that were healed during the scan (file:line). */
+  warnings: ScanWarning[];
 }
 
 const INBOX_PATH = "10-收件匣/待辦收件匣.md";
@@ -208,6 +218,8 @@ export function scanStructuredVault(
   const tasks: BrainTaskSnapshot[] = [];
   const projects: BrainProjectSnapshot[] = [];
   const collections: BrainCollectionSnapshot[] = [];
+  const warnings: ScanWarning[] = [];
+  const seenTaskIds = new Set<string>();
   const sources = new Map(files.map((file) => [file.relativePath, decodeFile(file)]));
   const changedSources = new Map<string, string>();
 
@@ -244,15 +256,39 @@ export function scanStructuredVault(
     let source = sources.get(file.relativePath)!;
     const lines = splitLines(source);
     let insideTaskContent = false;
+    const inCodeFence = createCodeFenceTracker();
     for (let index = 0; index < lines.length; index += 1) {
+      // Fenced blocks document the task format; their contents are examples,
+      // not tasks, and must never be adopted or rewritten.
+      if (inCodeFence(lines[index]!)) continue;
       if (TASK_CONTENT_START.test(lines[index]!)) { insideTaskContent = true; continue; }
       if (TASK_CONTENT_END.test(lines[index]!)) { insideTaskContent = false; continue; }
       if (insideTaskContent) continue;
       const parsed = parseTaskLine(lines[index]!, file.relativePath, index);
       if (!parsed) continue;
-      const id = parsed.id ?? createId();
+      // A duplicated id (copy-pasted line, duplicated note, colliding
+      // placeholder) used to abort the whole scan via DUPLICATE_TASK_ID.
+      // First occurrence keeps the id; later ones are re-minted below.
+      let keptId = parsed.id;
+      let issue: ScanWarning["issue"] | undefined = parsed.markerIssue;
+      if (keptId && seenTaskIds.has(keptId)) {
+        keptId = null;
+        issue = "duplicate-id";
+      }
+      // A broken marker is healed below (fresh id gets patched back in), but
+      // the anomaly must stay visible: silent healing would hide real damage
+      // such as an interrupted sync write.
+      if (issue) {
+        warnings.push({
+          relativePath: file.relativePath,
+          line: index + 1,
+          issue,
+        });
+      }
+      const id = keptId ?? createId();
+      seenTaskIds.add(id);
       const rank = parsed.rank || rankForIndex(tasks.length);
-      const { lineIndex: _lineIndex, rawLine: _rawLine, ...snapshot } = parsed;
+      const { lineIndex: _lineIndex, rawLine: _rawLine, markerIssue: _markerIssue, ...snapshot } = parsed;
       const task: BrainTaskSnapshot = {
         ...snapshot,
         id,
@@ -262,7 +298,7 @@ export function scanStructuredVault(
         body: extractTaskMarkdownContent(source, id),
       };
       tasks.push(task);
-      if (!parsed.id || !parsed.rank) {
+      if (!keptId || !parsed.rank) {
         const patchedLine = patchTaskLineMinimal(parsed.rawLine, task);
         source = replaceLine(source, index, patchedLine);
         lines[index] = patchedLine;
@@ -283,6 +319,7 @@ export function scanStructuredVault(
     },
     bootstrapChanges: [...changedSources].map(([relativePath, replacement]) =>
       makeChange(files.find((file) => file.relativePath === relativePath)!, replacement)),
+    warnings,
   };
 }
 
@@ -291,7 +328,9 @@ function taskLocations(files: LocalMarkdownFile[]): Map<string, TaskLocation> {
   for (const file of files) {
     const lines = splitLines(decodeFile(file));
     let insideTaskContent = false;
+    const inCodeFence = createCodeFenceTracker();
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      if (inCodeFence(lines[lineIndex]!)) continue;
       if (TASK_CONTENT_START.test(lines[lineIndex]!)) { insideTaskContent = true; continue; }
       if (TASK_CONTENT_END.test(lines[lineIndex]!)) { insideTaskContent = false; continue; }
       if (insideTaskContent) continue;

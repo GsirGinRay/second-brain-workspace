@@ -48,10 +48,15 @@ test("structured vault scan links tasks to project ids and rejects duplicate ids
   });
   const result = scanStructuredVault([file("project.md", project), file("tasks.md", task)]);
   assert.equal(result.snapshot.tasks[0]?.projectId, projectId);
-  assert.throws(
-    () => scanStructuredVault([file("a.md", task), file("b.md", task)]),
-    /DUPLICATE_TASK_ID/,
+  // Duplicated ids no longer abort the scan; the later occurrence is re-minted
+  // and surfaced as a warning (see the dedicated test below).
+  const healed = scanStructuredVault(
+    [file("a.md", task), file("b.md", task)],
+    () => "99999999-9999-4999-8999-999999999999",
   );
+  assert.equal(healed.snapshot.tasks.length, 2);
+  assert.notEqual(healed.snapshot.tasks[0]?.id, healed.snapshot.tasks[1]?.id);
+  assert.equal(healed.warnings[0]?.issue, "duplicate-id");
 });
 
 test("structured vault scan indexes collection metadata and body without treating it as a project", () => {
@@ -87,6 +92,7 @@ test("structured vault snapshot never uploads parser-only location metadata", ()
 
   assert.equal("lineIndex" in task, false);
   assert.equal("rawLine" in task, false);
+  assert.equal("markerIssue" in task, false);
   assert.equal("frontmatterStart" in project, false);
   assert.equal("frontmatterEnd" in project, false);
 });
@@ -237,5 +243,105 @@ test("collection deletion yields a single delete change for the collection sourc
   assert.throws(
     () => buildCollectionDeleteChange(files, { id: collectionId, sourcePath: null }),
     /COLLECTION_SOURCE_NOT_FOUND/,
+  );
+});
+
+test("documentation about the task format is neither adopted nor rewritten", () => {
+  // Reproduces the real failure: a note explaining the task syntax made the app
+  // adopt the example as a task, and the placeholder id aborted the whole scan
+  // with TASK_ID_INVALID.
+  const doc = [
+    "# 任務格式說明",
+    "",
+    "```markdown",
+    '- [ ] #task 修除權息顯示 <!-- publisher-task:{"id":"...","status":"todo","rank":"..."} -->',
+    "- [x] #task 已完成範例 ✅ 2026-08-19",
+    "```",
+    "",
+    "以上是格式範例。",
+    "",
+  ].join("\r\n");
+  const board = "- [ ] #task 真正的任務\r\n";
+
+  const result = scanStructuredVault(
+    [file("docs/格式說明.md", doc), file("board.md", board)],
+    () => taskId,
+  );
+
+  const titles = result.snapshot.tasks.map((task) => task.title);
+  assert.deepEqual(titles, ["真正的任務"], "only the real task is adopted");
+  assert.ok(
+    result.bootstrapChanges.every((change) => change.relativePath !== "docs/格式說明.md"),
+    "the documentation file is left untouched",
+  );
+});
+
+test("an unsafe marker id is re-adopted instead of failing the scan", () => {
+  // A truncated write or hand edit can leave an id that would break out of the
+  // HTML-comment marker. It must heal (fresh id) rather than abort every other
+  // file in the vault, which is what the old throw did.
+  const broken =
+    '- [ ] #task 壞掉的標記 <!-- publisher-task:{"id":"not a valid id","status":"todo"} -->\r\n';
+  const result = scanStructuredVault([file("board.md", broken)], () => taskId);
+  assert.equal(result.snapshot.tasks.length, 1);
+  assert.equal(result.snapshot.tasks[0]?.id, taskId, "assigned a fresh valid id");
+});
+
+test("a foreign but harmless marker id is kept, not silently re-identified", () => {
+  // Ids minted by an older vault or another tool are legitimate; rewriting them
+  // would break every cross-reference the user already has.
+  const legacy = '- [ ] #task 舊資料 <!-- publisher-task:{"id":"task-1","rank":"00000000"} -->\r\n';
+  const result = scanStructuredVault([file("board.md", legacy)], () => taskId);
+  assert.equal(result.snapshot.tasks[0]?.id, "task-1");
+  assert.equal(result.bootstrapChanges.length, 0, "no rewrite of the user's file");
+});
+
+test("scan reports healed marker anomalies with file and line, and stays quiet otherwise", () => {
+  // The tolerate-and-heal behavior must not be silent: an interrupted sync
+  // write or a hand-edit that corrupts a marker should surface as a warning
+  // naming the exact file and line, so real damage is discoverable.
+  const corrupted = [
+    "# Board",
+    '- [ ] #task 標記內容損毀 <!-- publisher-task:{"id":"11111111-1111-4111-8111",} -->',
+    "- [ ] #task 正常任務",
+  ].join("\r\n") + "\r\n";
+  let serial = 0;
+  const nextId = () => `${++serial}`.padStart(8, "0") + "-1111-4111-8111-111111111111";
+  const result = scanStructuredVault([file("board.md", corrupted)], nextId);
+  assert.deepEqual(result.warnings, [
+    { relativePath: "board.md", line: 2, issue: "unparsable" },
+  ]);
+  assert.equal(result.snapshot.tasks.length, 2, "both tasks still adopted");
+
+  const clean = "- [ ] #task 乾淨任務\r\n";
+  const quiet = scanStructuredVault([file("ok.md", clean)], () => taskId);
+  assert.deepEqual(quiet.warnings, [], "healthy vault produces no warnings");
+});
+
+test("an unsafe marker id is reported as a warning, not just healed", () => {
+  const broken =
+    '- [ ] #task 壞 id <!-- publisher-task:{"id":"not a valid id","status":"todo"} -->\r\n';
+  const result = scanStructuredVault([file("b.md", broken)], () => taskId);
+  assert.deepEqual(result.warnings, [
+    { relativePath: "b.md", line: 1, issue: "unsafe-id" },
+  ]);
+});
+
+test("a duplicated task id is re-minted with a warning instead of aborting the scan", () => {
+  // Copy-pasting a task line (or two placeholder markers colliding) used to
+  // kill the entire vault scan with DUPLICATE_TASK_ID and no file name.
+  const marker = '<!-- publisher-task:{"id":"...","status":"todo","rank":"00000000"} -->';
+  const a = "- [ ] #task 第一條 " + marker + "\r\n";
+  const b = "- [ ] #task 第二條 " + marker + "\r\n";
+  const result = scanStructuredVault([file("a.md", a), file("b.md", b)], () => taskId);
+  assert.equal(result.snapshot.tasks.length, 2, "both tasks survive");
+  assert.equal(result.snapshot.tasks[0]?.id, "...", "first occurrence keeps its id");
+  assert.equal(result.snapshot.tasks[1]?.id, taskId, "second occurrence is re-minted");
+  assert.deepEqual(result.warnings, [
+    { relativePath: "b.md", line: 1, issue: "duplicate-id" },
+  ]);
+  assert.ok(
+    result.bootstrapChanges.some((change) => change.relativePath === "b.md"),
+    "the re-minted id is patched back into the second file",
   );
 });

@@ -31,6 +31,8 @@ interface MarkerSpan {
   jsonStart: number;
   jsonEnd: number;
   value: Record<string, unknown>;
+  /** The marker was present but its JSON payload could not be parsed. */
+  parseFailed: boolean;
 }
 
 interface TaskLineAnalysis {
@@ -70,12 +72,79 @@ const TOKEN_TO_PRIORITY: Record<string, TaskPriority> = {
 
 const VALID_STATUSES = new Set<TaskStatus>(["todo", "doing", "waiting", "done"]);
 
+/**
+ * Ids the app generates are UUIDs, but ids authored elsewhere (older vaults,
+ * other tools, hand-written notes) are legitimate too, so acceptance is by
+ * safety rather than by UUID shape: the id is embedded in an HTML comment
+ * marker, so it must be non-empty, bounded, and free of characters that could
+ * break out of that marker or of the content-block delimiters derived from it.
+ */
+const UNSAFE_TASK_ID = /[^\w.@-]/;
+
+export function isValidTaskId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    !UNSAFE_TASK_ID.test(value)
+  );
+}
+
+/** Ids the app mints itself; used where a canonical UUID is required. */
+const MANAGED_TASK_ID = /^[0-9a-f-]{36}$/i;
+
+export function isManagedTaskId(value: unknown): value is string {
+  return typeof value === "string" && MANAGED_TASK_ID.test(value);
+}
+
+const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+
+/**
+ * Track fenced code blocks line by line.
+ *
+ * Task syntax inside a fence is documentation ("this is what a task looks
+ * like"), not a task. Without this, writing the format down in a note makes the
+ * app adopt the example as a real task — and a placeholder id in that example
+ * used to abort the entire vault scan.
+ *
+ * Returns a predicate that reports whether the given line is a fence delimiter
+ * or sits inside one; callers skip those lines.
+ */
+export function createCodeFenceTracker(): (rawLine: string) => boolean {
+  let open: string | null = null;
+  return (rawLine: string) => {
+    const line = rawLine.startsWith("﻿") ? rawLine.slice(1) : rawLine;
+    const match = line.match(CODE_FENCE);
+    if (match) {
+      const marker = match[1]!;
+      if (open === null) {
+        open = marker;
+        return true;
+      }
+      // A closing fence repeats the opening character, is at least as long,
+      // and carries no info string.
+      if (
+        marker[0] === open[0] &&
+        marker.length >= open.length &&
+        line.slice(match[0].length).trim() === ""
+      ) {
+        open = null;
+        return true;
+      }
+    }
+    return open !== null;
+  };
+}
+
 function parseMarker(value: string | undefined): Partial<BrainTaskSnapshot> {
   if (!value) return {};
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
     return {
-      ...(typeof parsed.id === "string" && parsed.id ? { id: parsed.id } : {}),
+      // A malformed id (truncated write, hand-edited note, merge remnant) is
+      // treated as absent so the task is re-adopted with a fresh id, instead of
+      // being carried downstream where it used to throw and abort the scan.
+      ...(isValidTaskId(parsed.id) ? { id: parsed.id } : {}),
       ...(typeof parsed.rank === "string" ? { rank: parsed.rank } : {}),
       ...(typeof parsed.status === "string" &&
       VALID_STATUSES.has(parsed.status as TaskStatus)
@@ -200,11 +269,14 @@ function analyzeTaskLine(rawLine: string): TaskLineAnalysis | null {
           (markerMatch.index ?? 0) +
           markerMatch[0].indexOf(markerMatch[1]) +
           markerMatch[1].length,
-        value: (() => {
+        ...(() => {
           try {
-            return JSON.parse(markerMatch[1]) as Record<string, unknown>;
+            return {
+              value: JSON.parse(markerMatch[1]) as Record<string, unknown>,
+              parseFailed: false,
+            };
           } catch {
-            return {};
+            return { value: {} as Record<string, unknown>, parseFailed: true };
           }
         })(),
       }
@@ -281,7 +353,16 @@ function parsedTaskFromAnalysis(
       : markerValues.status ?? "todo";
   const dateValue = (kind: TaskTokenKind) =>
     analysis.tokenSpans.find((span) => span.kind === kind)?.value ?? null;
+  const rawMarkerId = analysis.marker?.value.id;
+  const markerIssue: ParsedMarkdownTask["markerIssue"] = analysis.marker
+    ? analysis.marker.parseFailed
+      ? "unparsable"
+      : rawMarkerId != null && rawMarkerId !== "" && !isValidTaskId(rawMarkerId)
+        ? "unsafe-id"
+        : undefined
+    : undefined;
   return {
+    ...(markerIssue ? { markerIssue } : {}),
     id: markerValues.id ?? null,
     title: titleBody.replace(/\s+/g, " ").trim(),
     status,
@@ -649,7 +730,7 @@ export function parseProjectFrontmatter(
 const TASK_CONTENT_PREFIX = "second-brain-task-content";
 
 function taskContentMarkers(id: string): { start: string; end: string } {
-  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("TASK_ID_INVALID");
+  if (!isManagedTaskId(id)) throw new Error("TASK_ID_INVALID");
   return {
     start: `<!-- ${TASK_CONTENT_PREFIX}:${id}:start -->`,
     end: `<!-- ${TASK_CONTENT_PREFIX}:${id}:end -->`,
@@ -657,6 +738,9 @@ function taskContentMarkers(id: string): { start: string; end: string } {
 }
 
 export function extractTaskMarkdownContent(source: string, id: string): string {
+  // Bodies exist only for app-minted ids, and reading one is best-effort:
+  // a foreign or malformed id must not abort a whole vault scan.
+  if (!isManagedTaskId(id)) return "";
   const markers = taskContentMarkers(id);
   const start = source.indexOf(markers.start);
   if (start < 0) return "";
@@ -668,6 +752,9 @@ export function extractTaskMarkdownContent(source: string, id: string): string {
 
 export function patchTaskMarkdownContent(source: string, id: string, body: string): string {
   if (body.length > 2_000_000) throw new Error("TASK_BODY_TOO_LARGE");
+  // Refuse to write against an id we did not mint, but leave the file untouched
+  // rather than throwing: one bad marker must not fail the whole batch.
+  if (!isManagedTaskId(id)) return source;
   const markers = taskContentMarkers(id);
   if (body.includes(`<!-- ${TASK_CONTENT_PREFIX}:`)) throw new Error("TASK_BODY_MARKER_CONFLICT");
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
