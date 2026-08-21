@@ -87,6 +87,7 @@ test("structured vault snapshot never uploads parser-only location metadata", ()
 
   assert.equal("lineIndex" in task, false);
   assert.equal("rawLine" in task, false);
+  assert.equal("markerIssue" in task, false);
   assert.equal("frontmatterStart" in project, false);
   assert.equal("frontmatterEnd" in project, false);
 });
@@ -288,4 +289,35 @@ test("a foreign but harmless marker id is kept, not silently re-identified", () 
   const result = scanStructuredVault([file("board.md", legacy)], () => taskId);
   assert.equal(result.snapshot.tasks[0]?.id, "task-1");
   assert.equal(result.bootstrapChanges.length, 0, "no rewrite of the user's file");
+});
+
+test("scan reports healed marker anomalies with file and line, and stays quiet otherwise", () => {
+  // The tolerate-and-heal behavior must not be silent: an interrupted sync
+  // write or a hand-edit that corrupts a marker should surface as a warning
+  // naming the exact file and line, so real damage is discoverable.
+  const corrupted = [
+    "# Board",
+    '- [ ] #task 標記內容損毀 <!-- publisher-task:{"id":"11111111-1111-4111-8111",} -->',
+    "- [ ] #task 正常任務",
+  ].join("\r\n") + "\r\n";
+  let serial = 0;
+  const nextId = () => `${++serial}`.padStart(8, "0") + "-1111-4111-8111-111111111111";
+  const result = scanStructuredVault([file("board.md", corrupted)], nextId);
+  assert.deepEqual(result.warnings, [
+    { relativePath: "board.md", line: 2, issue: "unparsable" },
+  ]);
+  assert.equal(result.snapshot.tasks.length, 2, "both tasks still adopted");
+
+  const clean = "- [ ] #task 乾淨任務\r\n";
+  const quiet = scanStructuredVault([file("ok.md", clean)], () => taskId);
+  assert.deepEqual(quiet.warnings, [], "healthy vault produces no warnings");
+});
+
+test("an unsafe marker id is reported as a warning, not just healed", () => {
+  const broken =
+    '- [ ] #task 壞 id <!-- publisher-task:{"id":"not a valid id","status":"todo"} -->\r\n';
+  const result = scanStructuredVault([file("b.md", broken)], () => taskId);
+  assert.deepEqual(result.warnings, [
+    { relativePath: "b.md", line: 1, issue: "unsafe-id" },
+  ]);
 });

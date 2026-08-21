@@ -44,9 +44,18 @@ const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b78
 
 interface TaskLocation { relativePath: string; lineIndex: number; rawLine: string }
 
+export interface ScanWarning {
+  relativePath: string;
+  /** 1-based line number, ready for display. */
+  line: number;
+  issue: "unparsable" | "unsafe-id";
+}
+
 export interface StructuredVaultScan {
   snapshot: SyncSnapshot & { schemaVersion: 6; collections: BrainCollectionSnapshot[] };
   bootstrapChanges: MarkdownChange[];
+  /** Task-marker anomalies that were healed during the scan (file:line). */
+  warnings: ScanWarning[];
 }
 
 const INBOX_PATH = "10-收件匣/待辦收件匣.md";
@@ -209,6 +218,7 @@ export function scanStructuredVault(
   const tasks: BrainTaskSnapshot[] = [];
   const projects: BrainProjectSnapshot[] = [];
   const collections: BrainCollectionSnapshot[] = [];
+  const warnings: ScanWarning[] = [];
   const sources = new Map(files.map((file) => [file.relativePath, decodeFile(file)]));
   const changedSources = new Map<string, string>();
 
@@ -255,9 +265,19 @@ export function scanStructuredVault(
       if (insideTaskContent) continue;
       const parsed = parseTaskLine(lines[index]!, file.relativePath, index);
       if (!parsed) continue;
+      // A broken marker is healed below (fresh id gets patched back in), but
+      // the anomaly must stay visible: silent healing would hide real damage
+      // such as an interrupted sync write.
+      if (parsed.markerIssue) {
+        warnings.push({
+          relativePath: file.relativePath,
+          line: index + 1,
+          issue: parsed.markerIssue,
+        });
+      }
       const id = parsed.id ?? createId();
       const rank = parsed.rank || rankForIndex(tasks.length);
-      const { lineIndex: _lineIndex, rawLine: _rawLine, ...snapshot } = parsed;
+      const { lineIndex: _lineIndex, rawLine: _rawLine, markerIssue: _markerIssue, ...snapshot } = parsed;
       const task: BrainTaskSnapshot = {
         ...snapshot,
         id,
@@ -288,6 +308,7 @@ export function scanStructuredVault(
     },
     bootstrapChanges: [...changedSources].map(([relativePath, replacement]) =>
       makeChange(files.find((file) => file.relativePath === relativePath)!, replacement)),
+    warnings,
   };
 }
 

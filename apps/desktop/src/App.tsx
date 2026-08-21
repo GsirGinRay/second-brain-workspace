@@ -564,9 +564,23 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           },
         });
       let local = await loader.loadLocal();
+      // Capture warnings from the first pass: healing (below) rewrites the
+      // broken markers, so a re-scan reports clean and the anomaly would
+      // otherwise vanish without ever being shown.
+      const scanWarnings = local.warnings;
       if (local.bootstrapChanges.length > 0) {
         await native.applyMarkdownChanges(local.bootstrapChanges);
         local = await loader.loadLocal();
+      }
+      if (scanWarnings.length > 0) {
+        const describeIssue = (issue: string) =>
+          issue === "unparsable" ? "標記無法解析" : "標記 id 不安全";
+        const shown = scanWarnings
+          .slice(0, 3)
+          .map((w) => `${w.relativePath} 第 ${w.line} 行（${describeIssue(w.issue)}）`)
+          .join("；");
+        const more = scanWarnings.length > 3 ? `，等共 ${scanWarnings.length} 處` : "";
+        setError(`任務標記異常已自動修復：${shown}${more}。原文已保留，僅重建機器標記；來源可能是中斷的同步寫入或手動編輯，建議確認該行內容無誤。`);
       }
       const signatures = new Map(
         local.files.map((file) => [file.relativePath, file.sha256]),

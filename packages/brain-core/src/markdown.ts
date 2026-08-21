@@ -31,6 +31,8 @@ interface MarkerSpan {
   jsonStart: number;
   jsonEnd: number;
   value: Record<string, unknown>;
+  /** The marker was present but its JSON payload could not be parsed. */
+  parseFailed: boolean;
 }
 
 interface TaskLineAnalysis {
@@ -267,11 +269,14 @@ function analyzeTaskLine(rawLine: string): TaskLineAnalysis | null {
           (markerMatch.index ?? 0) +
           markerMatch[0].indexOf(markerMatch[1]) +
           markerMatch[1].length,
-        value: (() => {
+        ...(() => {
           try {
-            return JSON.parse(markerMatch[1]) as Record<string, unknown>;
+            return {
+              value: JSON.parse(markerMatch[1]) as Record<string, unknown>,
+              parseFailed: false,
+            };
           } catch {
-            return {};
+            return { value: {} as Record<string, unknown>, parseFailed: true };
           }
         })(),
       }
@@ -348,7 +353,16 @@ function parsedTaskFromAnalysis(
       : markerValues.status ?? "todo";
   const dateValue = (kind: TaskTokenKind) =>
     analysis.tokenSpans.find((span) => span.kind === kind)?.value ?? null;
+  const rawMarkerId = analysis.marker?.value.id;
+  const markerIssue: ParsedMarkdownTask["markerIssue"] = analysis.marker
+    ? analysis.marker.parseFailed
+      ? "unparsable"
+      : rawMarkerId != null && rawMarkerId !== "" && !isValidTaskId(rawMarkerId)
+        ? "unsafe-id"
+        : undefined
+    : undefined;
   return {
+    ...(markerIssue ? { markerIssue } : {}),
     id: markerValues.id ?? null,
     title: titleBody.replace(/\s+/g, " ").trim(),
     status,
