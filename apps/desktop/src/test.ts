@@ -11,3 +11,4 @@ import "./markdown-editor.test";
 import "./draft-workspace.test";
 import "./architecture.test";
 import "./ui-preferences.test";
+import "./day-schedule.test";

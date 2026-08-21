@@ -52,6 +52,7 @@ function renderToday(tasks: BrainTaskSnapshot[], routineTemplate: RoutineTemplat
         tasks={tasks}
         projects={projects}
         showCompleted={false}
+        onShowCompletedChange={() => undefined}
         onSave={(next) => saved.push(next.map((item) => ({ ...item })))}
         onDelete={() => undefined}
         onQuickAdd={() => undefined}
@@ -115,6 +116,82 @@ test("starting the day leaves a task the user already starred as the only P1", (
     const tasks = rendered.saved[0]!;
     assert.deepEqual(tasks.filter((item) => item.priority === "highest").map((item) => item.title),
       ["手動選定的最重要"], "the starred task keeps the crown, the template row yields");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("today shows a 24-hour schedule and creates a task at the clicked hour", () => {
+  if (!globalThis.crypto?.randomUUID) {
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: { randomUUID: () => "11111111-1111-4111-8111-111111111111" },
+    });
+  }
+  const rendered = renderToday([], createDefaultRoutineTemplate("33333333-3333-4333-8333-333333333333"));
+  try {
+    const slot = rendered.container.querySelector<HTMLElement>('[data-schedule-minutes="540"]');
+    assert.ok(slot, "09:00 hour slot exists");
+    assert.equal(rendered.container.querySelectorAll(".hour-slot").length, 24);
+    flushSync(() => {
+      clickEvent(slot!, "click");
+    });
+    const input = rendered.container.querySelector<HTMLInputElement>(".day-schedule-composer input");
+    assert.ok(input, "inline composer opens on the clicked hour");
+    input!.value = "寫週報";
+    flushSync(() => {
+      rendered.container.querySelector("form.day-schedule-composer")?.dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }) as unknown as Event,
+      );
+    });
+    assert.ok(rendered.saved.length >= 1, "creating from the hour slot saves a task");
+    const created = rendered.saved.at(-1)!.find((item) => item.title === "寫週報");
+    assert.equal(created?.startTime, "09:00");
+    assert.equal(created?.taskDate, taipeiDateKey(new Date()));
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("dragging an unscheduled today task onto an hour slot sets the start time", () => {
+  const today = taipeiDateKey(new Date());
+  const open: BrainTaskSnapshot = {
+    schemaVersion: 6,
+    id: "open-today",
+    title: "打電話給客戶",
+    status: "todo",
+    taskDate: today,
+    priority: "normal",
+    projectId: null,
+    projectName: null,
+    rank: "00000001",
+    sourcePath: "10-收件匣/待辦收件匣.md",
+    sourceHeading: null,
+    completedAt: null,
+  };
+  const rendered = renderToday([open], createDefaultRoutineTemplate("44444444-4444-4444-8444-444444444444"));
+  try {
+    const card = rendered.container.querySelector<HTMLElement>(".schedule-tray-card");
+    const slot = rendered.container.querySelector<HTMLElement>('[data-schedule-minutes="600"]');
+    assert.ok(card, "unscheduled tray card exists");
+    assert.ok(slot, "10:00 hour slot exists");
+    const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+    if (typeof proto.setPointerCapture !== "function") {
+      Object.defineProperty(proto, "setPointerCapture", { value: () => undefined, configurable: true, writable: true });
+    }
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => slot;
+    try {
+      card!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1, clientX: 4, clientY: 4 }) as unknown as Event);
+      card!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 1, clientX: 4, clientY: 4 }) as unknown as Event);
+    } finally {
+      doc.elementFromPoint = original;
+    }
+    assert.equal(rendered.saved.length, 1, "drop onto the hour grid saves once");
+    const updated = rendered.saved[0]!.find((item) => item.id === "open-today");
+    assert.equal(updated?.startTime, "10:00");
+    assert.equal(updated?.taskDate, today);
   } finally {
     rendered.container.remove();
   }

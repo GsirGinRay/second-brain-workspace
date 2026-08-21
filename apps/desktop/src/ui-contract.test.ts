@@ -210,6 +210,32 @@ test("completed tasks are hidden by default and the preference is local", () => 
   assert.match(css(), /text-decoration:\s*line-through/);
 });
 
+test("completed visibility lives in each panel as an icon without a checkbox", () => {
+  const source = app();
+  assert.match(source, /function CompletedVisibilityButton/);
+  assert.match(source, /<CompletedVisibilityButton/);
+  assert.doesNotMatch(source, /completed-visibility-toggle/);
+  assert.doesNotMatch(source, /className="icon-button top-icon-action completed-visibility-toggle/);
+});
+
+test("density toggle is removed from the visible toolbar", () => {
+  const source = app();
+  assert.doesNotMatch(source, /切換顯示密度/);
+  assert.doesNotMatch(source, /Toggle density/);
+});
+
+test("today and calendar share a full-day schedule surface", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /<DaySchedule/);
+  assert.match(source, /calendar\.schedule/);
+  assert.match(source, /openSchedule/);
+  assert.match(source, /<Maximize2\b/);
+  assert.match(styles, /\.day-schedule\{display:grid/);
+  assert.match(styles, /\.calendar-stage/);
+  assert.match(styles, /\.week-grid\{[^}]*height:min\(52vh,520px\)/);
+});
+
 test("theme is monochrome with red reserved for important and destructive actions", () => {
   const styles = css();
   assert.match(styles, /--accent-red:/);

@@ -70,6 +70,7 @@ function renderCalendar(tasks: BrainTaskSnapshot[]): Rendered {
         tasks={tasks}
         projects={projects}
         showCompleted={false}
+        onShowCompletedChange={() => undefined}
         onSave={onSave}
         onDelete={() => undefined}
         onPromote={() => undefined}
@@ -154,6 +155,56 @@ test("dragging a task to the idea drawer unschedules it (taskDate null)", () => 
     assert.equal(rendered.saved.length, 1, "onSave called once after drop to idea");
     const updated = rendered.saved[0]!.find((item) => item.id === "task-1");
     assert.equal(updated?.taskDate, null, "task moved to idea has no date");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("week view keeps a bounded stage so the idea inbox stays reachable", () => {
+  const rendered = renderCalendar([
+    task("a", "週任務很多 A", "2026-08-17"),
+    task("b", "週任務很多 B", "2026-08-17"),
+    task("c", "週任務很多 C", "2026-08-17"),
+  ]);
+  try {
+    const weekButton = [...rendered.container.querySelectorAll("button")].find((button) => button.textContent === "週曆");
+    assert.ok(weekButton, "week switch exists");
+    flushSync(() => {
+      clickEvent(weekButton!, "click");
+    });
+    assert.ok(rendered.container.querySelector(".calendar-stage"), "calendar stage wraps the week grid");
+    assert.ok(rendered.container.querySelector(".week-grid"), "week grid is visible");
+    assert.ok(rendered.container.querySelector("[data-idea-drawer]"), "idea inbox remains in the calendar panel");
+    assert.ok(rendered.container.querySelector(".week-plan-button"), "each week day can open the schedule");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("schedule mode accepts an idea dropped onto an hour slot", () => {
+  if (!globalThis.crypto?.randomUUID) {
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: { randomUUID: () => "55555555-5555-4555-8555-555555555555" },
+    });
+  }
+  const idea = task("idea-1", "還沒排的想法", null);
+  const rendered = renderCalendar([idea]);
+  try {
+    const scheduleButton = [...rendered.container.querySelectorAll("button")].find((button) => button.textContent === "時間表");
+    assert.ok(scheduleButton, "schedule switch exists");
+    flushSync(() => {
+      clickEvent(scheduleButton!, "click");
+    });
+    const source = rendered.container.querySelector<HTMLElement>("[data-idea-drawer] article");
+    const slot = rendered.container.querySelector<HTMLElement>('[data-schedule-minutes="540"]');
+    assert.ok(source, "idea card exists");
+    assert.ok(slot, "hour slot exists in schedule mode");
+    pointerDragTo(source!, slot!);
+    assert.equal(rendered.saved.length, 1, "dropping an idea onto the day schedule saves");
+    const updated = rendered.saved[0]!.find((item) => item.id === "idea-1");
+    assert.equal(updated?.startTime, "09:00");
+    assert.ok(updated?.taskDate, "idea receives a planned date");
   } finally {
     rendered.container.remove();
   }

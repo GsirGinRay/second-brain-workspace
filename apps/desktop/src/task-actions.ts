@@ -42,8 +42,19 @@ export function moveTaskToLane(task: BrainTaskSnapshot, lane: BoardLane, today: 
   };
 }
 
-export function scheduleTask(task: BrainTaskSnapshot, taskDate: string): BrainTaskSnapshot {
-  return { ...task, taskDate };
+export function scheduleTask(
+  task: BrainTaskSnapshot,
+  taskDate: string,
+  startTime?: string | null,
+): BrainTaskSnapshot {
+  if (startTime === undefined) return { ...task, taskDate };
+  return {
+    ...task,
+    taskDate,
+    startTime,
+    durationMinutes: startTime ? (task.durationMinutes ?? 30) : null,
+    timeZone: startTime ? "Asia/Taipei" : task.timeZone,
+  };
 }
 
 function addDays(dateKey: string, amount: number): string {

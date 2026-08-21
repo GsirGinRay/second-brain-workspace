@@ -77,6 +77,12 @@ test("unscheduled todo tasks form an idea inbox without changing the public stat
 test("calendar scheduling moves only the task date and next-week priorities exclude completed work", () => {
   const planned = scheduleTask(task("move", null), "2026-08-15");
   assert.equal(planned.taskDate, "2026-08-15");
+  const timed = scheduleTask(task("timed", null), "2026-08-15", "09:30");
+  assert.equal(timed.startTime, "09:30");
+  assert.equal(timed.durationMinutes, 30);
+  const cleared = scheduleTask(timed, "2026-08-15", null);
+  assert.equal(cleared.startTime, null);
+  assert.equal(cleared.durationMinutes, null);
   const next = nextWeekPriorities([
     { ...task("p1", "2026-08-13", "highest") },
     { ...task("p2", "2026-08-18", "high") },

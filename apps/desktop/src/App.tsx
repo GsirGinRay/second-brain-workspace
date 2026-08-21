@@ -3,6 +3,7 @@ import {
   Archive,
   CalendarDays,
   CheckCircle2,
+  Clock,
   Columns3,
   Eye,
   FolderKanban,
@@ -11,7 +12,9 @@ import {
   Home,
   Languages,
   List,
+  Maximize2,
   Menu,
+  Minimize2,
   Moon,
   Pencil,
   Plus,
@@ -106,6 +109,8 @@ import {
 } from "./ui-preferences";
 import appLogo from "./assets/app-logo.png";
 import { MarkdownEditor } from "./markdown-editor";
+import { formatMinutesAsTime, minutesFromOffset, timeFromSlotDrop } from "./day-schedule";
+import { DaySchedule } from "./day-schedule-view";
 import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./architecture";
 import "./styles.css";
@@ -342,7 +347,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(preferences));
     document.documentElement.lang = preferences.language;
     document.documentElement.dataset.theme = preferences.theme;
-    document.documentElement.dataset.density = preferences.density;
+    delete document.documentElement.dataset.density;
   }, [preferences]);
 
   const client = useMemo(
@@ -1261,6 +1266,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         tasks={tasks}
         projects={projects}
         showCompleted={showCompleted}
+        onShowCompletedChange={setCompletedVisibility}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
         onQuickAdd={() => setQuickAddOpen(true)}
@@ -1272,6 +1278,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         tasks={tasks}
         projects={projects}
         showCompleted={showCompleted}
+        onShowCompletedChange={setCompletedVisibility}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
         onPromote={(task) => {
@@ -1386,14 +1393,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             <button className="icon-button top-icon-action" aria-label={t("app.search")} title={`${t("app.search")} · Ctrl/Cmd+K`} onClick={() => setSearchOpen(true)}>
               <Search aria-hidden="true" />
             </button>
-            <label className={`icon-button top-icon-action completed-visibility-toggle ${showCompleted ? "active" : ""}`} aria-label={t("app.showCompleted")} title={t("app.showCompleted")}>
-              <input
-                type="checkbox"
-                checked={showCompleted}
-                onChange={(event) => setCompletedVisibility(event.target.checked)}
-              />
-              <Eye aria-hidden="true" />
-            </label>
             <button
               className="icon-button top-icon-action"
               aria-label={t("app.quickAdd")}
@@ -1418,14 +1417,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
               onClick={() => setPreferences((value) => ({ ...value, theme: value.theme === "light" ? "dark" : "light" }))}
             >
               {preferences.theme === "light" ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
-            </button>
-            <button
-              className="icon-button top-icon-action"
-              aria-label={preferences.language === "zh-TW" ? "切換顯示密度" : "Toggle density"}
-              title={preferences.density === "comfortable" ? (preferences.language === "zh-TW" ? "切換為密集模式" : "Switch to compact") : (preferences.language === "zh-TW" ? "切換為寬鬆模式" : "Switch to comfortable")}
-              onClick={() => setPreferences((value) => ({ ...value, density: value.density === "comfortable" ? "compact" : "comfortable" }))}
-            >
-              <small aria-hidden="true">{preferences.density === "comfortable" ? "A" : "A–"}</small>
             </button>
             <div className="sync-state">
               <span className="visually-hidden">
@@ -1510,7 +1501,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             { label: preferences.language === "zh-TW" ? "新增專案" : "New project", run: () => setCreateEntity("project") },
             { label: preferences.language === "zh-TW" ? "新增收藏" : "New collection", run: () => setCreateEntity("collection") },
             { label: preferences.language === "zh-TW" ? "建立知識架構" : "Build architecture", run: () => setArchitectureOpen(true) },
-            { label: preferences.language === "zh-TW" ? "切換顯示密度" : "Toggle density", run: () => setPreferences((v) => ({ ...v, density: v.density === "comfortable" ? "compact" : "comfortable" })) },
             { label: preferences.language === "zh-TW" ? "前往同步與設定" : "Go to sync & settings", run: () => setView("sync") },
           ]}
         />
@@ -1873,6 +1863,28 @@ function TaskEditor({
   );
 }
 
+function CompletedVisibilityButton({
+  showCompleted,
+  onChange,
+}: {
+  showCompleted: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  const { t } = useUiPreferences();
+  return (
+    <button
+      type="button"
+      className={`icon-action ${showCompleted ? "active" : ""}`}
+      aria-pressed={showCompleted}
+      aria-label={t(showCompleted ? "app.hideCompleted" : "app.showCompleted")}
+      title={t(showCompleted ? "app.hideCompleted" : "app.showCompleted")}
+      onClick={() => onChange(!showCompleted)}
+    >
+      <Eye aria-hidden="true" />
+    </button>
+  );
+}
+
 function TaskActionBar({
   task,
   important,
@@ -1929,8 +1941,9 @@ function PriorityBadge({
   );
 }
 
-export function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuickAdd, routineTemplate, onRoutineTemplateChange }: {
+export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onQuickAdd, routineTemplate, onRoutineTemplateChange }: {
   tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; showCompleted: boolean;
+  onShowCompletedChange: (value: boolean) => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onQuickAdd: () => void;
   routineTemplate: RoutineTemplate; onRoutineTemplateChange: (template: RoutineTemplate) => void;
 }) {
@@ -1938,11 +1951,20 @@ export function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuic
   const today = taipeiDateKey();
   const groups = splitTodayTasks(tasks, projects, today);
   const completed = completedForDate(tasks, today);
-  const scheduled = groups.today.filter((task) => task.startTime).sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? ""));
+  const scheduled = [
+    ...groups.today.filter((task) => task.startTime),
+    ...(showCompleted ? completed.filter((task) => task.startTime) : []),
+  ].sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? ""));
+  const trayTasks = [
+    ...groups.overdue,
+    ...groups.today.filter((task) => !task.startTime),
+  ];
   const [templateOpen, setTemplateOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragHandleId, setDragHandleId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const clock = useMemo(() => new Date(), [today]);
   const patchTask = (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => {
     const changed = tasks.map((item) => item.id === task.id ? { ...item, ...patch } : item);
     onSave(patch.priority === "highest" && task.id ? markMostImportant(changed, task.id, today) : changed);
@@ -1967,20 +1989,46 @@ export function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuic
     setDraggedItem(null);
   };
   const important = groups.today.find((task) => task.priority === "highest") ?? null;
+  const expanded = [...groups.overdue, ...groups.today, ...completed].find((task) => task.id === expandedId) ?? null;
   return <section className="command-center">
-    <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
+    <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
     <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article></div>
     {templateOpen && <section className="routine-editor"><header><div><span className="eyebrow">DAILY ROUTINE</span><input aria-label="模板名稱" value={routineTemplate.name} onChange={(event) => onRoutineTemplateChange({ ...routineTemplate, name: event.target.value })} /></div><button onClick={() => setTemplateOpen(false)} aria-label="關閉模板"><X /></button></header><div className="routine-items">{routineTemplate.items.map((item) => <article key={item.id} draggable={dragHandleId === item.id} onDragStart={() => setDraggedItem(item.id)} onDragEnd={() => setDragHandleId(null)} onMouseUp={() => setDragHandleId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropItem(item.id)}><GripVertical onMouseDown={() => setDragHandleId(item.id)} /><input type="checkbox" aria-label={`${item.title}啟用`} checked={item.enabled} onChange={(event) => updateItem(item.id, { enabled: event.target.checked })} /><input aria-label="例行任務名稱" value={item.title} onChange={(event) => updateItem(item.id, { title: event.target.value })} /><select aria-label="例行任務專案" value={item.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); updateItem(item.id, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><select aria-label="例行任務優先度" value={item.priority} onChange={(event) => updateItem(item.id, { priority: event.target.value as RoutineTemplateItem["priority"] })}>{(["highest","high","medium","normal","low"] as const).map((value) => <option key={value} value={value}>{priorityDisplay(value).code}</option>)}</select><input aria-label="開始時間" type="time" value={item.startTime ?? ""} onChange={(event) => updateItem(item.id, { startTime: event.target.value || null, durationMinutes: event.target.value ? item.durationMinutes ?? 30 : null })} /><select aria-label="持續時間" disabled={!item.startTime} value={item.durationMinutes ?? 30} onChange={(event) => updateItem(item.id, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select><button className="danger-icon" aria-label={`刪除${item.title}`} onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.filter((value) => value.id !== item.id) })}><Trash2 /></button></article>)}</div><button className="secondary" onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: [...routineTemplate.items, { id: crypto.randomUUID(), title: "新的例行任務", enabled: true, projectId: null, projectName: null, priority: "normal", startTime: null, durationMinutes: null, rank: rankForIndex(routineTemplate.items.length) }] })}><Plus />新增模板項目</button></section>}
-    <section className="timeline-section"><header><div><span className="eyebrow">TODAY TIMELINE</span><h3>{t("today.timeline")}</h3></div><button className="secondary icon-action" aria-label={t("app.quickAdd")} title={t("app.quickAdd")} onClick={onQuickAdd}><Plus /></button></header>{scheduled.length === 0 ? <Empty text={t("today.empty")} /> : <div className="timeline">{scheduled.map((task) => <article key={task.id ?? task.title} className={`${Number(task.startTime?.slice(0,2)) >= 13 && ["normal","low"].includes(task.priority) ? "low-energy" : ""}`}><time>{task.startTime}</time><div><strong>{task.title}</strong><small>{task.durationMinutes ?? 30} · {task.projectName ?? t("app.unassigned")}</small></div></article>)}</div>}</section>
-    <div className="today-columns"><TaskPanel title={t("today.overdue")} tone="overdue" tasks={groups.overdue} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /><TaskPanel title={t("today.tasks")} tone="today" tasks={groups.today} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} /></div>
+    <section className="timeline-section">
+      <header>
+        <div>
+          <span className="eyebrow">TODAY TIMELINE</span>
+          <h3>{t("today.timeline")}</h3>
+        </div>
+        <button className="secondary icon-action" aria-label={t("app.quickAdd")} title={t("app.quickAdd")} onClick={onQuickAdd}><Plus /></button>
+      </header>
+      <DaySchedule
+        date={today}
+        timedTasks={scheduled}
+        trayTasks={trayTasks}
+        showTray
+        now={clock}
+        labels={{
+          unscheduled: t("today.unscheduled"),
+          dropToSchedule: t("today.dropToSchedule"),
+          addAtTime: (time) => t("today.addAtTime", { time }),
+          empty: t("today.empty"),
+        }}
+        onSchedule={(taskId, startTime) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, today, startTime) : item))}
+        onClearTime={(taskId) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, item.taskDate ?? today, null) : item))}
+        onCreateAt={(title, startTime) => onSave([...tasks, newTask(title, { taskDate: today, startTime, durationMinutes: 30 })])}
+        onSelect={setExpandedId}
+      />
+    </section>
+    {expanded && (
+      <section className="selected-task-editor">
+        <header className="today-panel"><h3>{t("today.editSelected")}</h3></header>
+        <InlineTaskCard task={expanded} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} />
+      </section>
+    )}
     {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} />)}</div></details>}
   </section>;
-}
-
-function TaskPanel({ title, tone, tasks, projects, today, onPatch, onComplete, onDelete }: { title: string; tone: "overdue" | "today"; tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; today: string; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
-  const { t } = useUiPreferences();
-  return <section className={`today-panel ${tone}`}><header><div><span className="eyebrow">{tone === "overdue" ? "NEEDS A DECISION" : "TODAY'S FOCUS"}</span><h3>{title}</h3></div><strong>{tasks.length}</strong></header>{tasks.length === 0 ? <Empty text={t(tone === "overdue" ? "today.emptyOverdue" : "today.empty")} /> : <div className="focus-task-list">{tasks.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} projects={projects} today={today} onPatch={onPatch} onComplete={onComplete} onDelete={onDelete} />)}</div>}</section>;
 }
 
 function InlineTaskCard({ task, projects, today, onPatch, onComplete, onDelete }: { task: BrainTaskSnapshot; projects: BrainProjectSnapshot[]; today: string; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
@@ -2596,14 +2644,7 @@ function Board({
               </option>
             ))}
           </select>
-          <label>
-            <input
-              type="checkbox"
-              checked={showCompleted}
-              onChange={(event) => onShowCompletedChange(event.target.checked)}
-            />
-            {t("app.showCompleted")}
-          </label>
+          <CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} />
         </div>
       </div>
       <div className="board five-lanes">
@@ -2729,6 +2770,7 @@ export function Calendar({
   tasks,
   projects,
   showCompleted,
+  onShowCompletedChange,
   onSave,
   onDelete,
   onPromote,
@@ -2736,13 +2778,14 @@ export function Calendar({
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
   showCompleted: boolean;
+  onShowCompletedChange: (value: boolean) => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void;
   onDelete: (task: BrainTaskSnapshot) => void;
   onPromote: (task: BrainTaskSnapshot) => void;
 }) {
   const { preferences, t } = useUiPreferences();
   const today = taipeiDateKey();
-  const [mode, setMode] = useState<"month" | "week">("month");
+  const [mode, setMode] = useState<"month" | "week" | "schedule">("month");
   const [anchor, setAnchor] = useState(today);
   const [selected, setSelected] = useState(today);
   const [sideOpen, setSideOpen] = useState(true);
@@ -2759,6 +2802,7 @@ export function Calendar({
     y: number;
   } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const clock = useMemo(() => new Date(), [today]);
   const flashNotice = (message: string) => {
     setNotice(message);
     window.setTimeout(
@@ -2810,18 +2854,32 @@ export function Calendar({
       setSelected(next);
       return;
     }
+    if (mode === "schedule") {
+      const next = addDateDays(selected, delta);
+      setAnchor(next);
+      setSelected(next);
+      return;
+    }
     const [y, m] = month.split("-").map(Number);
     const date = new Date(y!, m! - 1 + delta, 1);
     const next = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
     setAnchor(next);
     setSelected(next);
   }
-  const schedule = (id: string | null, date: string) => {
+  const openSchedule = (date: string) => {
+    setAnchor(date);
+    setSelected(date);
+    setMode("schedule");
+    setSideOpen(false);
+  };
+  const schedule = (id: string | null, date: string, startTime?: string | null) => {
     if (!id) return;
     const target = tasks.find((task) => task.id === id);
-    flashNotice(target ? `「${target.title}」已排到 ${date}` : `任務已排到 ${date}`);
+    flashNotice(target
+      ? (startTime ? `「${target.title}」已排到 ${date} ${startTime}` : `「${target.title}」已排到 ${date}`)
+      : `任務已排到 ${date}`);
     void onSave(
-      tasks.map((task) => (task.id === id ? scheduleTask(task, date) : task)),
+      tasks.map((task) => (task.id === id ? scheduleTask(task, date, startTime) : task)),
     );
   };
   const unschedule = (id: string | null) => {
@@ -2831,7 +2889,7 @@ export function Calendar({
     void onSave(
       tasks.map((task) =>
         task.id === id
-          ? { ...task, status: "todo", taskDate: null, completedAt: null }
+          ? { ...task, status: "todo", taskDate: null, completedAt: null, startTime: null, durationMinutes: null }
           : task,
       ),
     );
@@ -2850,8 +2908,29 @@ export function Calendar({
   const finishPointerDrag = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
     if (!taskId) return;
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-    const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
-    if (date) schedule(taskId, date);
+    const slot = target?.closest<HTMLElement>("[data-schedule-minutes]");
+    const grid = target?.closest<HTMLElement>("[data-day-schedule-grid]");
+    const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate
+      ?? grid?.dataset.scheduleDate;
+    if (target?.closest("[data-schedule-all-day], [data-unscheduled-tray]")) {
+      schedule(taskId, date ?? selected, null);
+    } else if (slot) {
+      const rect = slot.getBoundingClientRect();
+      const time = timeFromSlotDrop(
+        Number(slot.dataset.scheduleMinutes),
+        event.clientY,
+        rect.top,
+        rect.height,
+      );
+      schedule(taskId, date ?? selected, time);
+    } else if (grid) {
+      const rect = grid.getBoundingClientRect();
+      schedule(
+        taskId,
+        date ?? selected,
+        formatMinutesAsTime(minutesFromOffset(event.clientY - rect.top + grid.scrollTop)),
+      );
+    } else if (date) schedule(taskId, date);
     else if (target?.closest("[data-idea-drawer]")) unschedule(taskId);
     resetDrag();
   };
@@ -2884,7 +2963,9 @@ export function Calendar({
           <h2>
             {mode === "month"
               ? new Intl.DateTimeFormat(preferences.language, { year: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`))
-              : `${dateLabel(weekDates[0]!)}－${dateLabel(weekDates[6]!)}`}
+              : mode === "schedule"
+                ? dateLabel(selected)
+                : `${dateLabel(weekDates[0]!)}－${dateLabel(weekDates[6]!)}`}
           </h2>
           <div>
             <div className="view-switch">
@@ -2900,7 +2981,14 @@ export function Calendar({
               >
                 {t("calendar.week")}
               </button>
+              <button
+                className={mode === "schedule" ? "active" : ""}
+                onClick={() => openSchedule(selected)}
+              >
+                {t("calendar.schedule")}
+              </button>
             </div>
+            <CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} />
             <button
               className="icon-action"
               aria-label={t("calendar.sidebar")}
@@ -2915,7 +3003,7 @@ export function Calendar({
               title={t(fullscreen ? "calendar.exitFullscreen" : "calendar.fullscreen")}
               onClick={() => setFullscreen((value) => !value)}
             >
-              <Eye aria-hidden="true" />
+              {fullscreen ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
             </button>
           </div>
         </header>
@@ -2925,7 +3013,26 @@ export function Calendar({
             <button onClick={() => setNotice(null)} aria-label="關閉提示">×</button>
           </div>
         )}
-        {mode === "month" ? (
+        <div className="calendar-stage">
+        {mode === "schedule" ? (
+          <DaySchedule
+            date={selected}
+            timedTasks={selectedTasks.filter(({ task }) => task.startTime).map(({ task }) => task)}
+            allDayTasks={selectedTasks.filter(({ task }) => !task.startTime).map(({ task }) => task)}
+            showTray={false}
+            now={selected === today ? clock : undefined}
+            labels={{
+              unscheduled: t("today.unscheduled"),
+              dropToSchedule: t("today.dropToSchedule"),
+              addAtTime: (time) => t("today.addAtTime", { time }),
+              empty: t("today.empty"),
+            }}
+            onSchedule={(taskId, startTime) => schedule(taskId, selected, startTime)}
+            onClearTime={(taskId) => schedule(taskId, selected, null)}
+            onCreateAt={(title, startTime) => void onSave([...tasks, newTask(title, { taskDate: selected, startTime, durationMinutes: 30 })])}
+            onSelect={(taskId) => setActiveTaskId(taskId)}
+          />
+        ) : mode === "month" ? (
           <>
             <div className="weekdays">
               {Array.from({ length: 7 }, (_, day) => new Intl.DateTimeFormat(preferences.language, { weekday: "short", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 7, 2 + day)))).map((day) => (
@@ -2944,6 +3051,7 @@ export function Calendar({
                       setSelected(cell.date);
                       setSideOpen(true);
                     }}
+                    onDoubleClick={() => openSchedule(cell.date)}
                   >
                     <span className="day-number">
                       {Number(cell.date.slice(8))}
@@ -2970,8 +3078,7 @@ export function Calendar({
                           }}
                           onDoubleClick={(event) => {
                             event.stopPropagation();
-                            setSelected(entry.date);
-                            setSideOpen(true);
+                            openSchedule(entry.date);
                           }}
                           style={taskProjectStyle(entry.task)}
                           key={`${entry.task.id}:${entry.date}`}
@@ -3004,23 +3111,33 @@ export function Calendar({
                   data-calendar-date={date}
                   className={`week-day ${date === today ? "today" : ""} ${date === selected ? "selected" : ""} ${dragTaskId && dragOriginDate === date ? "drag-origin" : ""} ${dragTaskId && dropTargetDate === date && dragOriginDate !== date ? "drop-target" : ""}`}
                 >
-                  <button
-                    className="week-date"
-                    onClick={() => {
-                      setSelected(date);
-                      setSideOpen(true);
-                    }}
-                  >
-                    <span>{dateLabel(date)}</span>
-                    <small>
-                      {
-                        dayEntries.filter(
-                          (entry) => entry.task.status !== "done",
-                        ).length
-                      }{" "}
-                      項待辦
-                    </small>
-                  </button>
+                  <div className="week-date">
+                    <button
+                      onClick={() => {
+                        setSelected(date);
+                        setSideOpen(true);
+                      }}
+                    >
+                      <span>{dateLabel(date)}</span>
+                      <small>
+                        {
+                          dayEntries.filter(
+                            (entry) => entry.task.status !== "done",
+                          ).length
+                        }{" "}
+                        項待辦
+                      </small>
+                    </button>
+                    <button
+                      type="button"
+                      className="week-plan-button"
+                      aria-label={t("calendar.planTimes")}
+                      title={t("calendar.planTimes")}
+                      onClick={() => openSchedule(date)}
+                    >
+                      <Clock aria-hidden="true" />
+                    </button>
+                  </div>
                   <div className="week-task-list">
                     {dayEntries.map((entry) => (
                       <article
@@ -3041,10 +3158,7 @@ export function Calendar({
                           event.stopPropagation();
                           setActiveTaskId(entry.task.id);
                         }}
-                        onDoubleClick={() => {
-                          setSelected(entry.date);
-                          setSideOpen(true);
-                        }}
+                        onDoubleClick={() => openSchedule(entry.date)}
                         style={taskProjectStyle(entry.task)}
                         className={`${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragTaskId === entry.task.id ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
                         key={`${entry.task.id}:${entry.date}`}
@@ -3071,6 +3185,7 @@ export function Calendar({
             })}
           </div>
         )}
+        </div>
         <section
           className={`idea-drawer ${dragTaskId ? "drag-active" : ""}`}
           data-idea-drawer
@@ -3205,9 +3320,18 @@ export function Calendar({
                 項待完成
               </small>
             </div>
-            <button className="icon-button" onClick={() => setSideOpen(false)} aria-label="關閉側面板">
-              <X aria-hidden="true" />
-            </button>
+            <div>
+              <button
+                className="secondary-button"
+                onClick={() => openSchedule(selected)}
+              >
+                <Clock aria-hidden="true" />
+                {t("calendar.planTimes")}
+              </button>
+              <button className="icon-button" onClick={() => setSideOpen(false)} aria-label="關閉側面板">
+                <X aria-hidden="true" />
+              </button>
+            </div>
           </div>
           {selectedTasks.length === 0 ? (
             <Empty text="這天沒有任務。" />
