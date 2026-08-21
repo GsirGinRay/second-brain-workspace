@@ -57,12 +57,28 @@ export function scaffoldArchitectureChanges(
  * is excluded from scanning, the caller supplies the previous index file
  * (obtained via `readMarkdownFiles([".ai/INDEX.md"])`) or `undefined`.
  */
+/**
+ * The rendered index embeds a millisecond "Generated at:" timestamp, so two
+ * renders of identical vault content still differ textually. Compare with the
+ * volatile line removed — otherwise every scan rewrites the file, which churns
+ * git status and invalidates any concurrently prepared change's hash
+ * precondition (the scaffold-confirm race).
+ */
+function withoutVolatileLines(text: string): string {
+  return text.replace(/^Generated at: .*$/m, "Generated at:");
+}
+
 export function renderIndexChange(
   input: VaultIndexInput,
   existing: LocalMarkdownFile | undefined,
 ): MarkdownChange | null {
   const content = renderVaultIndex(input);
-  if (existing && decodeBase64(existing.bytesBase64) === content) return null;
+  if (
+    existing &&
+    withoutVolatileLines(decodeBase64(existing.bytesBase64)) ===
+      withoutVolatileLines(content)
+  )
+    return null;
   return {
     relativePath: INDEX_PATH,
     expectedSha256: existing?.sha256 ?? EMPTY_SHA256,
