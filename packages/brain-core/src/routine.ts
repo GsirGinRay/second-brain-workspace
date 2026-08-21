@@ -49,24 +49,52 @@ export function createDefaultRoutineTemplate(templateId = DEFAULT_TEMPLATE_ID): 
   };
 }
 
+/**
+ * A day owns exactly one P1, so a template must never describe more than one.
+ * Keeps the first enabled P1 by rank and demotes every other P1 row to P2.
+ * Returns the template untouched when it already holds at most one P1.
+ */
+export function enforceTemplateSingleP1(template: RoutineTemplate): RoutineTemplate {
+  const contenders = [...template.items]
+    .sort((left, right) => left.rank.localeCompare(right.rank) || left.id.localeCompare(right.id))
+    .filter((item) => item.priority === "highest");
+  if (contenders.length < 2) return template;
+  const winner = contenders.find((item) => item.enabled) ?? contenders[0]!;
+  return {
+    ...template,
+    items: template.items.map((item) =>
+      item.priority === "highest" && item.id !== winner.id
+        ? { ...item, priority: "high" as const }
+        : item),
+  };
+}
+
 export function applyRoutineTemplate(
   template: RoutineTemplate,
   existing: readonly BrainTaskSnapshot[],
   date: string,
 ): { tasks: BrainTaskSnapshot[]; created: BrainTaskSnapshot[] } {
   const ids = new Set(existing.flatMap((task) => task.id ? [task.id] : []));
+  // A day owns exactly one P1. A P1 already on the board for that date keeps it; otherwise the
+  // first enabled row by rank claims it and every later P1 row is created as P2 instead.
+  let p1Claimed = existing.some((task) => task.taskDate === date && task.priority === "highest");
   const created = template.items
     .filter((item) => item.enabled)
     .sort((left, right) => left.rank.localeCompare(right.rank))
     .flatMap((item) => {
       const id = routineTaskId(template.id, item.id, date);
       if (ids.has(id)) return [];
+      let priority = item.priority;
+      if (priority === "highest") {
+        if (p1Claimed) priority = "high";
+        else p1Claimed = true;
+      }
       return [{
         id,
         title: item.title.trim(),
         status: "todo" as const,
         taskDate: date,
-        priority: item.priority,
+        priority,
         projectId: item.projectId,
         projectName: item.projectName,
         rank: item.rank,
