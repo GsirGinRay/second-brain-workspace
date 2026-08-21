@@ -113,7 +113,7 @@ import {
 } from "./ui-preferences";
 import appLogo from "./assets/app-logo.png";
 import { MarkdownEditor } from "./markdown-editor";
-import { formatMinutesAsTime, minutesFromOffset, timeFromSlotDrop } from "./day-schedule";
+import { formatMinutesAsTime, minutesFromOffset, snapMinutes, timeFromSlotDrop } from "./day-schedule";
 import { DaySchedule } from "./day-schedule-view";
 import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./architecture";
@@ -2958,12 +2958,14 @@ export function Calendar({
       schedule(taskId, date ?? selected, null);
     } else if (slot) {
       const rect = slot.getBoundingClientRect();
-      const time = timeFromSlotDrop(
-        Number(slot.dataset.scheduleMinutes),
-        event.clientY,
-        rect.top,
-        rect.height,
-      );
+      const time = rect.height > 0
+        ? timeFromSlotDrop(
+            Number(slot.dataset.scheduleMinutes),
+            event.clientY,
+            rect.top,
+            rect.height,
+          )
+        : formatMinutesAsTime(snapMinutes(Number(slot.dataset.scheduleMinutes)));
       schedule(taskId, date ?? selected, time);
     } else if (grid) {
       const rect = grid.getBoundingClientRect();

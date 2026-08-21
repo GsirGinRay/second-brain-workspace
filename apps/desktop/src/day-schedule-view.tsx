@@ -9,6 +9,7 @@ import {
   minutesFromOffset,
   parseTimeToMinutes,
   PX_PER_HOUR,
+  snapMinutes,
   taipeiMinutesOfDay,
   timeFromSlotDrop,
 } from "./day-schedule";
@@ -75,8 +76,19 @@ export function DaySchedule({
   const [dragId, setDragId] = useState<string | null>(null);
   const [previewTop, setPreviewTop] = useState<number | null>(null);
   const [previewHeight, setPreviewHeight] = useState<number | null>(null);
+  const [previewTime, setPreviewTime] = useState<string | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
-  const dragOrigin = useRef<{ id: string; startY: number; startMinutes: number; kind: DragKind; duration: number } | null>(null);
+  const dragOrigin = useRef<{
+    id: string;
+    kind: DragKind;
+    startMinutes: number;
+    duration: number;
+    grabOffsetMinutes: number;
+    startScrollTop: number;
+    startClientX: number;
+    startClientY: number;
+  } | null>(null);
+  const autoScrollRef = useRef<number | null>(null);
   const moved = useRef(false);
   const layouts = useMemo(
     () =>
@@ -106,16 +118,69 @@ export function DaySchedule({
     grid.scrollTop = target;
   }, [date, now]);
 
+  const stopAutoScroll = () => {
+    if (autoScrollRef.current != null) {
+      if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(autoScrollRef.current);
+      } else if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(autoScrollRef.current);
+      }
+      autoScrollRef.current = null;
+    }
+  };
+
+  const checkAutoScroll = (clientY: number) => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const raf = typeof requestAnimationFrame === "function"
+      ? requestAnimationFrame
+      : typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+        ? window.requestAnimationFrame.bind(window)
+        : null;
+    if (!raf) return;
+
+    const rect = grid.getBoundingClientRect();
+    const topEdge = rect.top + 40;
+    const bottomEdge = rect.bottom - 40;
+
+    stopAutoScroll();
+
+    if (clientY < topEdge && grid.scrollTop > 0) {
+      const intensity = Math.min(1, Math.max(0.1, (topEdge - clientY) / 40));
+      const step = () => {
+        if (!gridRef.current) return;
+        gridRef.current.scrollTop -= Math.round(10 * intensity);
+        if (gridRef.current.scrollTop > 0) {
+          autoScrollRef.current = raf(step);
+        }
+      };
+      autoScrollRef.current = raf(step);
+    } else if (clientY > bottomEdge && grid.scrollTop < grid.scrollHeight - grid.clientHeight) {
+      const intensity = Math.min(1, Math.max(0.1, (clientY - bottomEdge) / 40));
+      const step = () => {
+        if (!gridRef.current) return;
+        gridRef.current.scrollTop += Math.round(10 * intensity);
+        if (gridRef.current.scrollTop < gridRef.current.scrollHeight - gridRef.current.clientHeight) {
+          autoScrollRef.current = raf(step);
+        }
+      };
+      autoScrollRef.current = raf(step);
+    }
+  };
+
   const timeAtPoint = (clientY: number, target: HTMLElement | null) => {
     const slot = target?.closest<HTMLElement>("[data-schedule-minutes]");
     if (slot) {
       const rect = slot.getBoundingClientRect();
-      return timeFromSlotDrop(
-        Number(slot.dataset.scheduleMinutes),
-        clientY,
-        rect.top,
-        rect.height,
-      );
+      if (rect.height > 0) {
+        return timeFromSlotDrop(
+          Number(slot.dataset.scheduleMinutes),
+          clientY,
+          rect.top,
+          rect.height,
+        );
+      }
+      return formatMinutesAsTime(snapMinutes(Number(slot.dataset.scheduleMinutes)));
     }
     const grid = target?.closest<HTMLElement>("[data-day-schedule-grid]") ?? gridRef.current;
     if (!grid) return null;
@@ -124,34 +189,49 @@ export function DaySchedule({
   };
 
   const resetDrag = () => {
+    stopAutoScroll();
     moved.current = false;
     dragOrigin.current = null;
     setDragId(null);
     setPreviewTop(null);
     setPreviewHeight(null);
+    setPreviewTime(null);
   };
 
   const finishDrag = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
     if (!taskId) return;
     const origin = dragOrigin.current;
+    if (!origin) return;
     const clientX = event.clientX;
     const clientY = event.clientY;
+
+    try {
+      if (event.currentTarget && typeof event.currentTarget.releasePointerCapture === "function") {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+
     const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
     const releasedOnSelf = Boolean(target && event.currentTarget.contains(target));
-    const didMove = moved.current || !releasedOnSelf;
+    const isDragMove = moved.current || !releasedOnSelf || Math.hypot(clientX - origin.startClientX, clientY - origin.startClientY) > 3;
     resetDrag();
-    if (origin?.kind === "resize") {
-      if (!didMove) return;
-      onResize?.(taskId, durationFromResize(origin.startMinutes, origin.duration, clientY - origin.startY));
+    if (!isDragMove) return;
+
+    if (origin.kind === "resize") {
+      const grid = gridRef.current;
+      const scrollDelta = grid ? grid.scrollTop - origin.startScrollTop : 0;
+      const deltaY = (clientY - origin.startClientY) + scrollDelta;
+      onResize?.(taskId, durationFromResize(origin.startMinutes, origin.duration, deltaY));
       return;
     }
-    if (!didMove) return;
     if (target?.closest("[data-unscheduled-tray], [data-schedule-all-day]")) {
       onClearTime?.(taskId);
       return;
     }
     const grid = gridRef.current;
-    let isInsideGrid = Boolean(target?.closest("[data-day-schedule-grid]"));
+    let isInsideGrid = Boolean(target?.closest("[data-day-schedule-grid], [data-schedule-minutes]"));
     if (!isInsideGrid && grid) {
       const rect = grid.getBoundingClientRect();
       if (
@@ -163,13 +243,58 @@ export function DaySchedule({
         isInsideGrid = true;
       }
     }
-    if (!isInsideGrid) return;
-    if (origin?.kind === "timed") {
-      const deltaHours = (clientY - origin.startY) / PX_PER_HOUR;
-      onSchedule(
-        taskId,
-        formatMinutesAsTime(minutesFromOffset((origin.startMinutes / 60 + deltaHours) * PX_PER_HOUR)),
-      );
+    if (!isInsideGrid) {
+      if (showTray && grid) {
+        const rect = grid.getBoundingClientRect();
+        if (clientX < rect.left) {
+          onClearTime?.(taskId);
+          return;
+        }
+      }
+      return;
+    }
+    if (origin.kind === "timed") {
+      if (grid) {
+        const gridRect = grid.getBoundingClientRect();
+        const canvasY = clientY - gridRect.top + grid.scrollTop;
+        const currentMinutes = (canvasY / PX_PER_HOUR) * 60;
+        const targetMinutes = snapMinutes(currentMinutes - origin.grabOffsetMinutes);
+        const maxStart = 24 * 60 - Math.min(60, origin.duration);
+        const clampedMinutes = Math.max(0, Math.min(maxStart, targetMinutes));
+        onSchedule(taskId, formatMinutesAsTime(clampedMinutes));
+      } else {
+        const deltaHours = (clientY - origin.startClientY) / PX_PER_HOUR;
+        onSchedule(
+          taskId,
+          formatMinutesAsTime(minutesFromOffset((origin.startMinutes / 60 + deltaHours) * PX_PER_HOUR)),
+        );
+      }
+      return;
+    }
+    const slot = target?.closest<HTMLElement>("[data-schedule-minutes]");
+    if (slot) {
+      const rect = slot.getBoundingClientRect();
+      if (rect.height > 0) {
+        onSchedule(
+          taskId,
+          timeFromSlotDrop(
+            Number(slot.dataset.scheduleMinutes),
+            clientY,
+            rect.top,
+            rect.height,
+          ),
+        );
+        return;
+      }
+      onSchedule(taskId, formatMinutesAsTime(snapMinutes(Number(slot.dataset.scheduleMinutes))));
+      return;
+    }
+    if (grid) {
+      const gridRect = grid.getBoundingClientRect();
+      const canvasY = clientY - gridRect.top + grid.scrollTop;
+      const targetMinutes = snapMinutes((canvasY / PX_PER_HOUR) * 60);
+      const clampedMinutes = Math.max(0, Math.min(24 * 60 - 15, targetMinutes));
+      onSchedule(taskId, formatMinutesAsTime(clampedMinutes));
       return;
     }
     const time = timeAtPoint(clientY, target);
@@ -182,14 +307,24 @@ export function DaySchedule({
     const startMinutes = parseTimeToMinutes(task.startTime);
     if (startMinutes == null) return;
     moved.current = false;
+    const grid = gridRef.current;
+    const gridRect = grid?.getBoundingClientRect();
+    const canvasY = grid && gridRect ? (event.clientY - gridRect.top + grid.scrollTop) : (startMinutes / 60) * PX_PER_HOUR;
+    const clickMinutes = (canvasY / PX_PER_HOUR) * 60;
+    const duration = task.durationMinutes ?? 30;
+    const grabOffsetMinutes = Math.max(0, Math.min(duration, clickMinutes - startMinutes));
     dragOrigin.current = {
       id: task.id,
-      startY: event.clientY,
-      startMinutes,
       kind: "timed",
-      duration: task.durationMinutes ?? 30,
+      startMinutes,
+      duration,
+      grabOffsetMinutes,
+      startScrollTop: grid?.scrollTop ?? 0,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
     };
     setDragId(task.id);
+    setPreviewTime(task.startTime);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
@@ -199,12 +334,16 @@ export function DaySchedule({
     if (startMinutes == null) return;
     event.stopPropagation();
     moved.current = false;
+    const grid = gridRef.current;
     dragOrigin.current = {
       id: task.id,
-      startY: event.clientY,
-      startMinutes,
       kind: "resize",
+      startMinutes,
       duration: task.durationMinutes ?? 30,
+      grabOffsetMinutes: 0,
+      startScrollTop: grid?.scrollTop ?? 0,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
     };
     setDragId(task.id);
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -212,24 +351,34 @@ export function DaySchedule({
 
   const moveTimedDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (!dragOrigin.current || !gridRef.current) return;
-    if (Math.abs(event.clientY - dragOrigin.current.startY) > 4) moved.current = true;
+    if (Math.hypot(event.clientX - dragOrigin.current.startClientX, event.clientY - dragOrigin.current.startClientY) > 3) moved.current = true;
+    checkAutoScroll(event.clientY);
     if (dragOrigin.current.kind === "resize") {
+      const grid = gridRef.current;
+      const scrollDelta = grid.scrollTop - dragOrigin.current.startScrollTop;
+      const deltaY = (event.clientY - dragOrigin.current.startClientY) + scrollDelta;
       const next = durationFromResize(
         dragOrigin.current.startMinutes,
         dragOrigin.current.duration,
-        event.clientY - dragOrigin.current.startY,
+        deltaY,
       );
       setPreviewHeight(Math.max(MIN_BLOCK_HEIGHT, (next / 60) * PX_PER_HOUR));
       return;
     }
-    const deltaHours = (event.clientY - dragOrigin.current.startY) / PX_PER_HOUR;
-    const next = minutesFromOffset((dragOrigin.current.startMinutes / 60 + deltaHours) * PX_PER_HOUR);
-    setPreviewTop((next / 60) * PX_PER_HOUR);
+    const grid = gridRef.current;
+    const gridRect = grid.getBoundingClientRect();
+    const canvasY = event.clientY - gridRect.top + grid.scrollTop;
+    const currentMinutes = (canvasY / PX_PER_HOUR) * 60;
+    const targetMinutes = snapMinutes(currentMinutes - dragOrigin.current.grabOffsetMinutes);
+    const maxStart = 24 * 60 - Math.min(60, dragOrigin.current.duration);
+    const clampedMinutes = Math.max(0, Math.min(maxStart, targetMinutes));
+    setPreviewTop((clampedMinutes / 60) * PX_PER_HOUR);
+    setPreviewTime(formatMinutesAsTime(clampedMinutes));
   };
 
   const moveLooseDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (!dragOrigin.current || !gridRef.current) return;
-    if (Math.abs(event.clientY - dragOrigin.current.startY) > 4) moved.current = true;
+    if (Math.hypot(event.clientX - dragOrigin.current.startClientX, event.clientY - dragOrigin.current.startClientY) > 3) moved.current = true;
     const grid = gridRef.current;
     const rect = grid.getBoundingClientRect();
     if (
@@ -238,12 +387,18 @@ export function DaySchedule({
       event.clientY >= rect.top &&
       event.clientY <= rect.bottom
     ) {
-      const minutes = minutesFromOffset(event.clientY - rect.top + grid.scrollTop);
-      setPreviewTop((minutes / 60) * PX_PER_HOUR);
-      setPreviewHeight(MIN_BLOCK_HEIGHT);
+      checkAutoScroll(event.clientY);
+      const canvasY = event.clientY - rect.top + grid.scrollTop;
+      const targetMinutes = snapMinutes((canvasY / PX_PER_HOUR) * 60);
+      const clampedMinutes = Math.max(0, Math.min(24 * 60 - 15, targetMinutes));
+      setPreviewTop((clampedMinutes / 60) * PX_PER_HOUR);
+      setPreviewHeight(Math.max(MIN_BLOCK_HEIGHT, ((dragOrigin.current.duration ?? 30) / 60) * PX_PER_HOUR));
+      setPreviewTime(formatMinutesAsTime(clampedMinutes));
     } else {
+      stopAutoScroll();
       setPreviewTop(null);
       setPreviewHeight(null);
+      setPreviewTime(null);
     }
   };
 
@@ -267,7 +422,17 @@ export function DaySchedule({
                   onPointerDown={(event) => {
                     if (event.button !== 0 || !task.id || (event.target as HTMLElement).closest("button")) return;
                     moved.current = false;
-                    dragOrigin.current = { id: task.id, startY: event.clientY, startMinutes: 0, kind: "loose", duration: 30 };
+                    const grid = gridRef.current;
+                    dragOrigin.current = {
+                      id: task.id,
+                      kind: "loose",
+                      startMinutes: 0,
+                      duration: task.durationMinutes ?? 30,
+                      grabOffsetMinutes: 0,
+                      startScrollTop: grid?.scrollTop ?? 0,
+                      startClientX: event.clientX,
+                      startClientY: event.clientY,
+                    };
                     setDragId(task.id);
                     event.currentTarget.setPointerCapture(event.pointerId);
                   }}
@@ -319,7 +484,17 @@ export function DaySchedule({
                 onPointerDown={(event) => {
                   if (event.button !== 0 || !task.id) return;
                   moved.current = false;
-                  dragOrigin.current = { id: task.id, startY: event.clientY, startMinutes: 0, kind: "loose", duration: 30 };
+                  const grid = gridRef.current;
+                  dragOrigin.current = {
+                    id: task.id,
+                    kind: "loose",
+                    startMinutes: 0,
+                    duration: task.durationMinutes ?? 30,
+                    grabOffsetMinutes: 0,
+                    startScrollTop: grid?.scrollTop ?? 0,
+                    startClientX: event.clientX,
+                    startClientY: event.clientY,
+                  };
                   setDragId(task.id);
                   event.currentTarget.setPointerCapture(event.pointerId);
                 }}
@@ -369,10 +544,11 @@ export function DaySchedule({
                 height: previewHeight ?? MIN_BLOCK_HEIGHT,
                 left: "58px",
                 width: "calc(100% - 68px)",
+                pointerEvents: "none",
               }}
             >
               <div className="timed-block-head">
-                <strong>{formatMinutesAsTime(Math.round((previewTop / PX_PER_HOUR) * 60))}</strong>
+                <strong>{previewTime ?? formatMinutesAsTime(Math.round((previewTop / PX_PER_HOUR) * 60))}</strong>
               </div>
             </div>
           )}
@@ -425,7 +601,7 @@ export function DaySchedule({
                   ) : <strong>{task.title}</strong>}
                 </div>
                 <small>
-                  {task.startTime}
+                  {dragId === task.id && previewTime ? previewTime : task.startTime}
                   {task.durationMinutes ? ` · ${task.durationMinutes}m` : ""}
                 </small>
                 {(onComplete || onDelete) && (
