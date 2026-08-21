@@ -574,7 +574,11 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       }
       if (scanWarnings.length > 0) {
         const describeIssue = (issue: string) =>
-          issue === "unparsable" ? "標記無法解析" : "標記 id 不安全";
+          issue === "unparsable"
+            ? "標記無法解析"
+            : issue === "duplicate-id"
+              ? "id 與其他任務重複"
+              : "標記 id 不安全";
         const shown = scanWarnings
           .slice(0, 3)
           .map((w) => `${w.relativePath} 第 ${w.line} 行（${describeIssue(w.issue)}）`)

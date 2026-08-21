@@ -48,7 +48,7 @@ export interface ScanWarning {
   relativePath: string;
   /** 1-based line number, ready for display. */
   line: number;
-  issue: "unparsable" | "unsafe-id";
+  issue: "unparsable" | "unsafe-id" | "duplicate-id";
 }
 
 export interface StructuredVaultScan {
@@ -219,6 +219,7 @@ export function scanStructuredVault(
   const projects: BrainProjectSnapshot[] = [];
   const collections: BrainCollectionSnapshot[] = [];
   const warnings: ScanWarning[] = [];
+  const seenTaskIds = new Set<string>();
   const sources = new Map(files.map((file) => [file.relativePath, decodeFile(file)]));
   const changedSources = new Map<string, string>();
 
@@ -265,17 +266,27 @@ export function scanStructuredVault(
       if (insideTaskContent) continue;
       const parsed = parseTaskLine(lines[index]!, file.relativePath, index);
       if (!parsed) continue;
+      // A duplicated id (copy-pasted line, duplicated note, colliding
+      // placeholder) used to abort the whole scan via DUPLICATE_TASK_ID.
+      // First occurrence keeps the id; later ones are re-minted below.
+      let keptId = parsed.id;
+      let issue: ScanWarning["issue"] | undefined = parsed.markerIssue;
+      if (keptId && seenTaskIds.has(keptId)) {
+        keptId = null;
+        issue = "duplicate-id";
+      }
       // A broken marker is healed below (fresh id gets patched back in), but
       // the anomaly must stay visible: silent healing would hide real damage
       // such as an interrupted sync write.
-      if (parsed.markerIssue) {
+      if (issue) {
         warnings.push({
           relativePath: file.relativePath,
           line: index + 1,
-          issue: parsed.markerIssue,
+          issue,
         });
       }
-      const id = parsed.id ?? createId();
+      const id = keptId ?? createId();
+      seenTaskIds.add(id);
       const rank = parsed.rank || rankForIndex(tasks.length);
       const { lineIndex: _lineIndex, rawLine: _rawLine, markerIssue: _markerIssue, ...snapshot } = parsed;
       const task: BrainTaskSnapshot = {
@@ -287,7 +298,7 @@ export function scanStructuredVault(
         body: extractTaskMarkdownContent(source, id),
       };
       tasks.push(task);
-      if (!parsed.id || !parsed.rank) {
+      if (!keptId || !parsed.rank) {
         const patchedLine = patchTaskLineMinimal(parsed.rawLine, task);
         source = replaceLine(source, index, patchedLine);
         lines[index] = patchedLine;

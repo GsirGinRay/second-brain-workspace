@@ -48,10 +48,15 @@ test("structured vault scan links tasks to project ids and rejects duplicate ids
   });
   const result = scanStructuredVault([file("project.md", project), file("tasks.md", task)]);
   assert.equal(result.snapshot.tasks[0]?.projectId, projectId);
-  assert.throws(
-    () => scanStructuredVault([file("a.md", task), file("b.md", task)]),
-    /DUPLICATE_TASK_ID/,
+  // Duplicated ids no longer abort the scan; the later occurrence is re-minted
+  // and surfaced as a warning (see the dedicated test below).
+  const healed = scanStructuredVault(
+    [file("a.md", task), file("b.md", task)],
+    () => "99999999-9999-4999-8999-999999999999",
   );
+  assert.equal(healed.snapshot.tasks.length, 2);
+  assert.notEqual(healed.snapshot.tasks[0]?.id, healed.snapshot.tasks[1]?.id);
+  assert.equal(healed.warnings[0]?.issue, "duplicate-id");
 });
 
 test("structured vault scan indexes collection metadata and body without treating it as a project", () => {
@@ -320,4 +325,23 @@ test("an unsafe marker id is reported as a warning, not just healed", () => {
   assert.deepEqual(result.warnings, [
     { relativePath: "b.md", line: 1, issue: "unsafe-id" },
   ]);
+});
+
+test("a duplicated task id is re-minted with a warning instead of aborting the scan", () => {
+  // Copy-pasting a task line (or two placeholder markers colliding) used to
+  // kill the entire vault scan with DUPLICATE_TASK_ID and no file name.
+  const marker = '<!-- publisher-task:{"id":"...","status":"todo","rank":"00000000"} -->';
+  const a = "- [ ] #task 第一條 " + marker + "\r\n";
+  const b = "- [ ] #task 第二條 " + marker + "\r\n";
+  const result = scanStructuredVault([file("a.md", a), file("b.md", b)], () => taskId);
+  assert.equal(result.snapshot.tasks.length, 2, "both tasks survive");
+  assert.equal(result.snapshot.tasks[0]?.id, "...", "first occurrence keeps its id");
+  assert.equal(result.snapshot.tasks[1]?.id, taskId, "second occurrence is re-minted");
+  assert.deepEqual(result.warnings, [
+    { relativePath: "b.md", line: 1, issue: "duplicate-id" },
+  ]);
+  assert.ok(
+    result.bootstrapChanges.some((change) => change.relativePath === "b.md"),
+    "the re-minted id is patched back into the second file",
+  );
 });
