@@ -93,6 +93,7 @@ import {
   type BoardLane,
 } from "./task-actions";
 import { InlineTitle } from "./inline-title";
+import { CategoryInput } from "./category-input";
 import { ImportanceControl, PriorityControl, PriorityBadge } from "./priority-control";
 import {
   applyDesiredSnapshot,
@@ -1513,6 +1514,11 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           kind={createEntity}
           initialName={promotedTask?.title ?? ""}
           templates={templates}
+          existingCategories={
+            createEntity === "project"
+              ? [...new Set(projects.map((p) => p.area).filter((a): a is string => Boolean(a)))].sort()
+              : [...new Set(collections.map((c) => c.category).filter((c): c is string => Boolean(c)))].sort()
+          }
           onClose={() => {
             setCreateEntity(null);
             setPromotedTask(null);
@@ -3133,10 +3139,8 @@ export function Calendar({
                           className={`calendar-task-title ${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragTaskId === entry.task.id ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
                         >
                           <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
-                          {entry.task.status === "done"
-                            ? "✓ "
-                            : `${priorityDisplay(entry.task.priority).code} `}
-                          {entry.task.title}
+                          {entry.task.status === "done" && <span className="task-done-check">✓</span>}
+                          <span className="calendar-task-text">{entry.task.title}</span>
                         </span>
                       ))}
                       {dayEntries.length > 4 && (
@@ -3213,7 +3217,6 @@ export function Calendar({
                       >
                         <div className="task-title-row">
                           <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
-                          <PriorityBadge priority={entry.task.priority} />
                           <strong>
                             {entry.task.status === "done" ? "✓ " : ""}
                             {entry.task.title}
@@ -3547,6 +3550,7 @@ function ProjectEditor({
   project,
   openTasks,
   doingTasks,
+  existingAreas = [],
   onSave,
   onFocus,
   onComplete,
@@ -3558,6 +3562,7 @@ function ProjectEditor({
   project: BrainProjectSnapshot;
   openTasks: number;
   doingTasks: number;
+  existingAreas?: string[];
   onSave: (value: BrainProjectSnapshot) => void;
   onFocus: (enabled: boolean) => void;
   onComplete: () => void;
@@ -3630,10 +3635,13 @@ function ProjectEditor({
         </label>
         <label>
           {t("project.field.category")}
-          <input
+          <CategoryInput
             value={value.area ?? ""}
-            onChange={(event) =>
-              setValue({ ...value, area: event.target.value || null })
+            existingCategories={existingAreas}
+            listId={`project-area-list-${project.id ?? "new"}`}
+            ariaLabel={t("project.field.category")}
+            onChange={(area) =>
+              setValue({ ...value, area: area || null })
             }
           />
         </label>
@@ -3762,6 +3770,7 @@ function Projects({
         project={project}
         openTasks={openTasks}
         doingTasks={doingTasks}
+        existingAreas={areas}
         onOpen={() => project.id && onOpen(project.id)}
         onDelete={() => onDelete(project)}
         onSave={(value) => saveProject(project, value)}
@@ -3864,14 +3873,26 @@ function Collections({
           ))}
         </div>
         <article className="collection-preview">
-          {selected ? <CollectionEditor key={selected.id ?? selected.name} collection={selected} locale={preferences.language} onSave={onSave} onDelete={onDelete} /> : <Empty text={t("collection.select")} />}
+          {selected ? <CollectionEditor key={selected.id ?? selected.name} collection={selected} existingCategories={categories} locale={preferences.language} onSave={onSave} onDelete={onDelete} /> : <Empty text={t("collection.select")} />}
         </article>
       </div>
     </section>
   );
 }
 
-function CollectionEditor({ collection, locale, onSave, onDelete }: { collection: BrainCollectionSnapshot; locale: UiPreferences["language"]; onSave: (collection: BrainCollectionSnapshot) => void; onDelete: (collection: BrainCollectionSnapshot) => void }) {
+function CollectionEditor({
+  collection,
+  locale,
+  existingCategories = [],
+  onSave,
+  onDelete,
+}: {
+  collection: BrainCollectionSnapshot;
+  locale: UiPreferences["language"];
+  existingCategories?: string[];
+  onSave: (collection: BrainCollectionSnapshot) => void;
+  onDelete: (collection: BrainCollectionSnapshot) => void;
+}) {
   const { t } = useUiPreferences();
   const [value, setValue] = useState(collection);
   useEffect(() => {
@@ -3914,7 +3935,16 @@ function CollectionEditor({ collection, locale, onSave, onDelete }: { collection
   return <>
     <div className="project-editor-grid">
       <label>{t("entity.field.name")}<input value={value.name} maxLength={200} onChange={(event) => setValue({ ...value, name: event.target.value })} /></label>
-      <label>{t("entity.field.category")}<input value={value.category ?? ""} maxLength={200} onChange={(event) => setValue({ ...value, category: event.target.value || null })} /></label>
+      <label>
+        {t("entity.field.category")}
+        <CategoryInput
+          value={value.category ?? ""}
+          existingCategories={existingCategories}
+          listId={`collection-category-list-${collection.id ?? "new"}`}
+          ariaLabel={t("entity.field.category")}
+          onChange={(cat) => setValue({ ...value, category: cat || null })}
+        />
+      </label>
       <label>{t("entity.field.importance")}<select value={value.importance ?? ""} onChange={(event) => setValue({ ...value, importance: event.target.value ? Number(event.target.value) : null })}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
     </div>
     <MarkdownEditor value={value.body} onChange={(body) => setValue({ ...value, body })} mode={mode} onModeChange={setMode} iconToggle locale={locale} />
@@ -3947,12 +3977,14 @@ function CreateEntityModal({
   kind,
   initialName,
   templates = [],
+  existingCategories = [],
   onClose,
   onCreate,
 }: {
   kind: "project" | "collection";
   initialName: string;
   templates?: { name: string; body: string }[];
+  existingCategories?: string[];
   onClose: () => void;
   onCreate: (name: string, category: string | null, importance: number | null, body: string) => Promise<void>;
 }) {
@@ -3977,7 +4009,16 @@ function CreateEntityModal({
         <div className="modal-header"><div><span className="eyebrow">{kind === "project" ? "OUTCOME" : "REFERENCE"}</span><h2>{t(kind === "project" ? "entity.project.title" : "entity.collection.title")}</h2></div><button className="icon-button" aria-label={t("app.close")} title={t("app.close")} onClick={onClose}><X aria-hidden="true" /></button></div>
         <p className="entity-guidance">{t(kind === "project" ? "entity.project.help" : "entity.collection.help")}</p>
         <label>{t("entity.field.name")}<input autoFocus maxLength={200} value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <label>{t("entity.field.category")}<input maxLength={200} value={category} onChange={(event) => setCategory(event.target.value)} /></label>
+        <label>
+          {t("entity.field.category")}
+          <CategoryInput
+            value={category}
+            existingCategories={existingCategories}
+            listId={`create-entity-${kind}-category`}
+            ariaLabel={t("entity.field.category")}
+            onChange={setCategory}
+          />
+        </label>
         <label>{t("entity.field.importance")}<select value={importance} onChange={(event) => setImportance(event.target.value)}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
         {templates.length > 0 && (
           <label>{preferences.language === "zh-TW" ? "套用模板" : "Apply template"}<select value="" onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!name.trim()) setName(picked.name); } }}><option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>{templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>

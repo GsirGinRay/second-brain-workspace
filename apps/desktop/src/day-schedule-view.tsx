@@ -134,10 +134,11 @@ export function DaySchedule({
   const finishDrag = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
     if (!taskId) return;
     const origin = dragOrigin.current;
-    const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+    const clientX = event.clientX;
+    const clientY = event.clientY;
+    const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
     const releasedOnSelf = Boolean(target && event.currentTarget.contains(target));
     const didMove = moved.current || !releasedOnSelf;
-    const clientY = event.clientY;
     resetDrag();
     if (origin?.kind === "resize") {
       if (!didMove) return;
@@ -149,8 +150,20 @@ export function DaySchedule({
       onClearTime?.(taskId);
       return;
     }
-    const grid = target?.closest("[data-day-schedule-grid]");
-    if (!grid) return;
+    const grid = gridRef.current;
+    let isInsideGrid = Boolean(target?.closest("[data-day-schedule-grid]"));
+    if (!isInsideGrid && grid) {
+      const rect = grid.getBoundingClientRect();
+      if (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      ) {
+        isInsideGrid = true;
+      }
+    }
+    if (!isInsideGrid) return;
     if (origin?.kind === "timed") {
       const deltaHours = (clientY - origin.startY) / PX_PER_HOUR;
       onSchedule(
@@ -214,6 +227,26 @@ export function DaySchedule({
     setPreviewTop((next / 60) * PX_PER_HOUR);
   };
 
+  const moveLooseDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!dragOrigin.current || !gridRef.current) return;
+    if (Math.abs(event.clientY - dragOrigin.current.startY) > 4) moved.current = true;
+    const grid = gridRef.current;
+    const rect = grid.getBoundingClientRect();
+    if (
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom
+    ) {
+      const minutes = minutesFromOffset(event.clientY - rect.top + grid.scrollTop);
+      setPreviewTop((minutes / 60) * PX_PER_HOUR);
+      setPreviewHeight(MIN_BLOCK_HEIGHT);
+    } else {
+      setPreviewTop(null);
+      setPreviewHeight(null);
+    }
+  };
+
   return (
     <div className={`day-schedule ${showTray ? "has-tray" : ""}`}>
       {showTray && (
@@ -238,10 +271,7 @@ export function DaySchedule({
                     setDragId(task.id);
                     event.currentTarget.setPointerCapture(event.pointerId);
                   }}
-                  onPointerMove={(event) => {
-                    if (!dragId || !dragOrigin.current) return;
-                    if (Math.abs(event.clientY - dragOrigin.current.startY) > 4) moved.current = true;
-                  }}
+                  onPointerMove={moveLooseDrag}
                   onPointerUp={(event) => finishDrag(event, task.id)}
                   onPointerCancel={resetDrag}
                   onClick={() => task.id && onSelect?.(task.id)}
@@ -329,6 +359,21 @@ export function DaySchedule({
           {isToday && nowMinutes != null && (
             <div className="now-indicator" style={{ top: (nowMinutes / 60) * PX_PER_HOUR }}>
               <span />
+            </div>
+          )}
+          {dragId && previewTop != null && dragOrigin.current?.kind === "loose" && (
+            <div
+              className="timed-block drag-ghost"
+              style={{
+                top: previewTop,
+                height: previewHeight ?? MIN_BLOCK_HEIGHT,
+                left: "58px",
+                width: "calc(100% - 68px)",
+              }}
+            >
+              <div className="timed-block-head">
+                <strong>{formatMinutesAsTime(Math.round((previewTop / PX_PER_HOUR) * 60))}</strong>
+              </div>
             </div>
           )}
           {timedTasks.map((task) => {

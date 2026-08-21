@@ -41,9 +41,9 @@ test("double-clicking a title opens the editor", () => {
     const button = container.querySelector("button");
     assert.ok(button);
     flushSync(() => dispatch(button!, "dblclick"));
-    const input = container.querySelector("input");
+    const input = container.querySelector("textarea, input");
     assert.ok(input, "title editor opens");
-    assert.equal((input as HTMLInputElement).value, "買牛奶");
+    assert.equal((input as HTMLTextAreaElement).value, "買牛奶");
   } finally {
     container.remove();
   }
@@ -55,7 +55,7 @@ test("unchanged titles are not saved", () => {
     <InlineTitle value="原稿" editing onSave={(title) => saved.push(title)} ariaLabel="任務標題" hint="雙擊編輯" />,
   );
   try {
-    const input = container.querySelector("input");
+    const input = container.querySelector("textarea, input");
     assert.ok(input);
     flushSync(() => {
       input!.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }) as unknown as Event);

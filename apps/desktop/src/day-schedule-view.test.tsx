@@ -82,7 +82,7 @@ test("double-clicking a timeline title opens the in-place editor", () => {
     flushSync(() => {
       title!.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }) as unknown as Event);
     });
-    assert.ok(container.querySelector("input"), "title editor opens");
+    assert.ok(container.querySelector("textarea, input"), "title editor opens");
   } finally {
     container.remove();
   }

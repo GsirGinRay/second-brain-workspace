@@ -33,12 +33,23 @@ export function InlineTitle({
   const setIsEditing = onEditingChange ?? setInternalEditing;
   const closed = useRef(false);
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   useEffect(() => {
     setDraft(value);
   }, [value]);
 
   useEffect(() => {
-    if (isEditing) closed.current = false;
+    if (isEditing) {
+      closed.current = false;
+      if (textareaRef.current) {
+        const el = textareaRef.current;
+        el.style.height = "auto";
+        el.style.height = `${Math.max(28, el.scrollHeight)}px`;
+        el.focus();
+        el.select();
+      }
+    }
   }, [isEditing]);
 
   const finish = (next = draft) => {
@@ -57,18 +68,26 @@ export function InlineTitle({
     setIsEditing(false);
   };
 
+  const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setDraft(event.target.value);
+    event.target.style.height = "auto";
+    event.target.style.height = `${Math.max(28, event.target.scrollHeight)}px`;
+  };
+
   if (isEditing) {
     return (
-      <input
+      <textarea
+        ref={textareaRef}
+        rows={1}
         className={inputClassName}
         autoFocus
         aria-label={ariaLabel}
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={handleInput}
         onBlur={() => finish()}
         onPointerDown={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
-          if (event.key === "Enter") {
+          if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             finish();
           }

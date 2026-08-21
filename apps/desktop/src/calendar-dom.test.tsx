@@ -190,7 +190,7 @@ test("double-clicking an idea title opens the in-place editor", () => {
     flushSync(() => {
       title!.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }) as unknown as Event);
     });
-    assert.ok(rendered.container.querySelector("[data-idea-drawer] input"), "idea title editor opens");
+    assert.ok(rendered.container.querySelector("[data-idea-drawer] textarea, [data-idea-drawer] input"), "idea title editor opens");
   } finally {
     rendered.container.remove();
   }

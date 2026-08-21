@@ -56,6 +56,8 @@ function CodeBlock({ children, locale }: { children: ReactNode; locale: Markdown
   const [copied, setCopied] = useState(false);
   const text = useMemo(() => nodeText(children).replace(/^\n+|\n+$/g, ""), [children]);
   const languageClass = useMemo(() => codeClassName(children), [children]);
+  const lang = languageClass ? languageClass.replace("language-", "").trim() : "";
+  const langDisplay = lang ? lang.toUpperCase() : (locale === "en" ? "CODE" : "程式碼");
   const labels = locale === "en"
     ? { copy: "Copy", copied: "Copied" }
     : { copy: "複製", copied: "已複製" };
@@ -77,16 +79,19 @@ function CodeBlock({ children, locale }: { children: ReactNode; locale: Markdown
   };
   return (
     <figure className="code-block">
-      <button
-        type="button"
-        className={`code-copy${copied ? " copied" : ""}`}
-        aria-label={labels.copy}
-        title={labels.copy}
-        onClick={() => void copy()}
-      >
-        {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-        {copied ? labels.copied : labels.copy}
-      </button>
+      <div className="code-block-header">
+        <span className="code-block-lang">{langDisplay}</span>
+        <button
+          type="button"
+          className={`code-copy${copied ? " copied" : ""}`}
+          aria-label={labels.copy}
+          title={labels.copy}
+          onClick={() => void copy()}
+        >
+          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          {copied ? labels.copied : labels.copy}
+        </button>
+      </div>
       <pre><code className={languageClass}>{text}</code></pre>
     </figure>
   );
