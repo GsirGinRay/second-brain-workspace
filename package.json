@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "npm --workspace @second-brain/desktop run dev",
     "test": "tsx --test packages/brain-core/src/*.test.ts packages/brain-ui/src/*.test.ts apps/desktop/src/test.ts && npm run test:dom",
-    "test:dom": "tsx --tsconfig tsconfig.dom-test.json --test --test-force-exit apps/desktop/src/calendar-dom.test.tsx apps/desktop/src/calendar-e2e.test.tsx",
+    "test:dom": "tsx --tsconfig tsconfig.dom-test.json --test --test-force-exit apps/desktop/src/calendar-dom.test.tsx apps/desktop/src/calendar-e2e.test.tsx apps/desktop/src/today-routine-dom.test.tsx",
     "build": "npm --workspace @second-brain/desktop run build",
     "desktop:dev": "npm --workspace @second-brain/desktop run tauri:dev",
     "desktop:build": "npm --workspace @second-brain/desktop run tauri:build",
