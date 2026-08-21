@@ -51,6 +51,29 @@ test("renderIndexChange returns null when index is unchanged", () => {
   assert.equal(renderIndexChange(input, existing), null);
 });
 
+test("renderIndexChange returns null when only the generated-at timestamp differs", () => {
+  // Every render stamps a new millisecond timestamp; identical vault content
+  // must not count as a change, or every scan rewrites the file (git churn)
+  // and invalidates concurrently prepared hashes (scaffold-confirm race).
+  const base = {
+    today: "2026-08-15",
+    tasks: [],
+    projects: [],
+    collections: [],
+  };
+  const existing = file(
+    ".ai/INDEX.md",
+    renderVaultIndex({ ...base, generatedAt: "2026-08-15T00:00:00.000Z" }),
+  );
+  assert.equal(
+    renderIndexChange(
+      { ...base, generatedAt: "2026-08-15T09:41:07.123Z" },
+      existing,
+    ),
+    null,
+  );
+});
+
 test("renderIndexChange emits a create when index is missing and write when changed", () => {
   const input = {
     today: "2026-08-15",

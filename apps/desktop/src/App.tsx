@@ -111,6 +111,22 @@ import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./
 import "./styles.css";
 
 type View = "today" | "calendar" | "board" | "projects" | "collections" | "sync";
+// Native (Rust) errors arrive over IPC as plain strings (e.g. "Io", "UnsafePath"),
+// never as Error instances, so surface whatever we actually received instead of a
+// generic fallback code that hides the real cause.
+function describeError(cause: unknown, fallback: string): string {
+  if (cause instanceof Error && cause.message) return cause.message;
+  if (typeof cause === "string" && cause) return cause;
+  if (cause != null) {
+    try {
+      const text = JSON.stringify(cause);
+      if (text && text !== "{}" && text !== "null") return text;
+    } catch {
+      // fall through to the fallback code below
+    }
+  }
+  return fallback;
+}
 const STATUS_KEYS: Record<TaskStatus, string> = {
   todo: "task.status.todo",
   doing: "task.status.doing",
@@ -280,7 +296,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     try {
       imported = parsePluginExport(importText);
     } catch (cause) {
-      setImportError(cause instanceof Error ? cause.message : "IMPORT_FAILED");
+      setImportError(describeError(cause, "IMPORT_FAILED"));
       return;
     }
     const next = [
@@ -377,7 +393,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         }
       }).catch((cause) => {
         if (cause instanceof PublisherHttpError && cause.code === "ROUTINE_TEMPLATES_DISABLED") return;
-        const message = cause instanceof Error ? cause.message : "ROUTINE_TEMPLATE_SYNC_FAILED";
+        const message = describeError(cause, "ROUTINE_TEMPLATE_SYNC_FAILED");
         setError(`每日啟動模板同步失敗：${message}`);
       });
     }, 500);
@@ -425,7 +441,11 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     ) => {
       if (!enabled) return;
       try {
-        const existingFiles = await native.readMarkdownFiles([".ai/INDEX.md"]);
+        // Missing .ai/INDEX.md reads as an IPC error; fall back to "not created
+        // yet" so the background refresh can create the initial index.
+        const existingFiles = await native
+          .readMarkdownFiles([".ai/INDEX.md"])
+          .catch(() => []);
         const change = renderIndexChange(
           {
             today: taipeiDateKey(),
@@ -490,7 +510,11 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         files.map((file) => file.relativePath),
         selectedPacks,
       );
-      const existingFiles = await native.readMarkdownFiles([".ai/INDEX.md"]);
+      // A brand-new vault has no .ai/INDEX.md yet; treat the failed read as
+      // "not created" so scaffolding (whose job is to create it) can proceed.
+      const existingFiles = await native
+        .readMarkdownFiles([".ai/INDEX.md"])
+        .catch(() => []);
       const indexChange = renderIndexChange(
         {
           today: taipeiDateKey(),
@@ -512,7 +536,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setPendingScaffold(changes);
       setArchitectureOpen(false);
     } catch (cause) {
-      setError(`準備知識架構失敗：${cause instanceof Error ? cause.message : "SCAFFOLD_PREP_FAILED"}`);
+      setError(`準備知識架構失敗：${describeError(cause, "SCAFFOLD_PREP_FAILED")}`);
     } finally {
       setWorking(false);
     }
@@ -523,11 +547,36 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     setWorking(true);
     setError("");
     try {
-      await native.applyMarkdownChanges(pendingScaffold);
+      // Re-resolve the index change at confirm time: the background index
+      // refresh may have (re)written .ai/INDEX.md while the review modal was
+      // open, which would invalidate the hash captured during preparation and
+      // fail the whole batch with HashPrecondition.
+      const changes = pendingScaffold.filter(
+        (change) => change.relativePath !== ".ai/INDEX.md",
+      );
+      const existingIndex = await native
+        .readMarkdownFiles([".ai/INDEX.md"])
+        .catch(() => []);
+      const indexChange = renderIndexChange(
+        {
+          today: taipeiDateKey(),
+          generatedAt: new Date().toISOString(),
+          tasks,
+          projects,
+          collections,
+        },
+        existingIndex[0],
+      );
+      if (indexChange) changes.push(indexChange);
+      if (changes.length === 0) {
+        setStatus("知識架構已存在，未覆寫任何既有檔案");
+        return;
+      }
+      await native.applyMarkdownChanges(changes);
       await reloadLocal();
       setStatus("知識架構已建立；AI 委任檔、索引與模板已就緒");
     } catch (cause) {
-      setError(`建立知識架構失敗：${cause instanceof Error ? cause.message : "SCAFFOLD_FAILED"}`);
+      setError(`建立知識架構失敗：${describeError(cause, "SCAFFOLD_FAILED")}`);
     } finally {
       setPendingScaffold(null);
       setScaffoldPreviewPaths([]);
@@ -611,7 +660,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   useEffect(() => {
     void reloadLocal().catch((cause) => {
       const message =
-        cause instanceof Error ? cause.message : "DIAGNOSTICS_FAILED";
+        describeError(cause, "DIAGNOSTICS_FAILED");
       setError(`App 啟動診斷失敗：${message}`);
     });
   }, [reloadLocal]);
@@ -653,7 +702,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         if (currentState?.kind === "modified")
           cloudEtagRef.current = currentState.etag;
       } catch (cause) {
-        const message = cause instanceof Error ? cause.message : "SYNC_FAILED";
+        const message = describeError(cause, "SYNC_FAILED");
         if (!background) {
           if (/401|DEVICE_|AUTH/i.test(message)) {
             setDevicePaired(false);
@@ -785,7 +834,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       }
       return true;
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "WRITE_FAILED";
+      const message = describeError(cause, "WRITE_FAILED");
       // A concurrent writer (background sync, the web adapter, or another
       // editor) can move a file between our scan and the write. Re-scan once
       // and re-apply the diff so the user's calendar edit still lands instead
@@ -857,7 +906,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setStatus(promotedTask ? "想法已升級為規劃中專案" : "已建立規劃中專案");
       return true;
     } catch (cause) {
-      setError(`建立專案失敗：${cause instanceof Error ? cause.message : "CREATE_PROJECT_FAILED"}`);
+      setError(`建立專案失敗：${describeError(cause, "CREATE_PROJECT_FAILED")}`);
       return false;
     } finally {
       setWorking(false);
@@ -880,7 +929,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setStatus("收藏已建立；內容保留在本機 Markdown");
       return true;
     } catch (cause) {
-      setError(`建立收藏失敗：${cause instanceof Error ? cause.message : "CREATE_COLLECTION_FAILED"}`);
+      setError(`建立收藏失敗：${describeError(cause, "CREATE_COLLECTION_FAILED")}`);
       return false;
     } finally {
       setWorking(false);
@@ -910,12 +959,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           setPendingProjectDeletions(pendingProjectDeletions().filter((id) => id !== project.id));
         } catch (cause) {
           setPendingProjectDeletions([...pendingProjectDeletions(), project.id]);
-          setError(`本機專案已刪除；遠端刪除待重試：${cause instanceof Error ? cause.message : "DELETE_FAILED"}`);
+          setError(`本機專案已刪除；遠端刪除待重試：${describeError(cause, "DELETE_FAILED")}`);
         }
       }
       setStatus("專案已刪除，關聯任務已保留並解除連結");
     } catch (cause) {
-      setError(`刪除專案失敗：${cause instanceof Error ? cause.message : "DELETE_PROJECT_FAILED"}`);
+      setError(`刪除專案失敗：${describeError(cause, "DELETE_PROJECT_FAILED")}`);
     } finally {
       setWorking(false);
     }
@@ -960,7 +1009,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       if (selectedCollectionId === collection.id) setSelectedCollectionId(null);
       setStatus("收藏已刪除");
     } catch (cause) {
-      setError(`刪除收藏失敗：${cause instanceof Error ? cause.message : "DELETE_COLLECTION_FAILED"}`);
+      setError(`刪除收藏失敗：${describeError(cause, "DELETE_COLLECTION_FAILED")}`);
     } finally {
       setWorking(false);
     }
@@ -1045,7 +1094,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       await reloadLocal();
     } catch (cause) {
       setError(
-        `無法使用此資料夾：${cause instanceof Error ? cause.message : "VAULT_SELECTION_FAILED"}`,
+        `無法使用此資料夾：${describeError(cause, "VAULT_SELECTION_FAILED")}`,
       );
     } finally {
       setWorking(false);
@@ -1066,7 +1115,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       return true;
     } catch (cause) {
       setError(
-        `無法選擇資料夾：${cause instanceof Error ? cause.message : "FOLDER_PICKER_FAILED"}`,
+        `無法選擇資料夾：${describeError(cause, "FOLDER_PICKER_FAILED")}`,
       );
       return false;
     } finally {
@@ -1096,7 +1145,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       await client.openPairingPage(result.pairingId);
     } catch (cause) {
       setError(
-        `無法開始配對：${cause instanceof Error ? cause.message : "PAIR_FAILED"}`,
+        `無法開始配對：${describeError(cause, "PAIR_FAILED")}`,
       );
     } finally {
       setWorking(false);
@@ -1106,7 +1155,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   function openPairingWebsite() {
     if (!client || !pairing) return;
     void client.openPairingPage(pairing.pairingId).catch((cause) => {
-      setError(`無法開啟 Publisher 配對頁：${cause instanceof Error ? cause.message : "OPEN_PAIRING_FAILED"}`);
+      setError(`無法開啟 Publisher 配對頁：${describeError(cause, "OPEN_PAIRING_FAILED")}`);
     });
   }
 
@@ -1130,7 +1179,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           })
           .catch((cause) =>
             setError(
-              `無法完成配對：${cause instanceof Error ? cause.message : "PAIRING_FAILED"}`,
+              `無法完成配對：${describeError(cause, "PAIRING_FAILED")}`,
             ),
           ),
       2_000,
@@ -1160,7 +1209,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setStatus("衝突已解決並同步");
     } catch (cause) {
       setError(
-        `衝突提交失敗：${cause instanceof Error ? cause.message : "COMMIT_FAILED"}`,
+        `衝突提交失敗：${describeError(cause, "COMMIT_FAILED")}`,
       );
     } finally {
       setWorking(false);
