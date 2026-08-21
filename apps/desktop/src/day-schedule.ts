@@ -2,6 +2,8 @@ export const MINUTES_PER_DAY = 24 * 60;
 export const PX_PER_HOUR = 56;
 export const SNAP_MINUTES = 15;
 export const MIN_BLOCK_HEIGHT = 22;
+export const MIN_DURATION_MINUTES = 15;
+export const MAX_DURATION_MINUTES = 8 * 60;
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -22,6 +24,19 @@ export function formatMinutesAsTime(minutes: number): string {
 export function snapMinutes(minutes: number, step = SNAP_MINUTES): number {
   const snapped = Math.round(minutes / step) * step;
   return Math.max(0, Math.min(MINUTES_PER_DAY - step, snapped));
+}
+
+export function durationFromResize(
+  startMinutes: number,
+  originDuration: number,
+  deltaY: number,
+  pxPerHour = PX_PER_HOUR,
+): number {
+  const raw = originDuration + (deltaY / pxPerHour) * 60;
+  const snapped = Math.round(raw / SNAP_MINUTES) * SNAP_MINUTES;
+  const remaining = MINUTES_PER_DAY - startMinutes;
+  const max = Math.max(MIN_DURATION_MINUTES, Math.min(MAX_DURATION_MINUTES, remaining));
+  return Math.max(MIN_DURATION_MINUTES, Math.min(max, snapped));
 }
 
 export function minutesFromOffset(

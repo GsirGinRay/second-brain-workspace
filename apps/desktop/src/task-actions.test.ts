@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BrainTaskSnapshot } from "@second-brain/brain-core";
-import { archiveTask, boardLane, completedForDate, filterCompletedTasks, isCompleteShortcut, isQuickAddShortcut, markMostImportant, moveTaskToLane, nextWeekPriorities, priorityDisplay, scheduleTask } from "./task-actions";
+import { applyTaskPriority, archiveTask, boardLane, completedForDate, filterCompletedTasks, isCompleteShortcut, isQuickAddShortcut, markMostImportant, moveTaskToLane, nextWeekPriorities, priorityDisplay, scheduleTask } from "./task-actions";
+import { committedTitle } from "./inline-title";
 
 function task(id: string, taskDate: string | null, priority: BrainTaskSnapshot["priority"] = "normal"): BrainTaskSnapshot {
   return {
@@ -20,6 +21,12 @@ function task(id: string, taskDate: string | null, priority: BrainTaskSnapshot["
   };
 }
 
+test("inline title commits trim non-empty changes only", () => {
+  assert.equal(committedTitle(" 買牛奶 ", "原稿"), "買牛奶");
+  assert.equal(committedTitle("原稿", "原稿"), null);
+  assert.equal(committedTitle("   ", "原稿"), null);
+});
+
 test("a date can have exactly one most important task", () => {
   const tasks = [task("old", "2026-08-12", "highest"), task("next", null), task("other-day", "2026-08-13", "highest")];
   const result = markMostImportant(tasks, "next", "2026-08-12");
@@ -28,6 +35,16 @@ test("a date can have exactly one most important task", () => {
   assert.equal(result.find((item) => item.id === "old")?.priority, "high");
   assert.equal(result.find((item) => item.id === "other-day")?.priority, "highest");
   assert.equal(result.filter((item) => item.taskDate === "2026-08-12" && item.priority === "highest").length, 1);
+});
+
+test("choosing P2 changes only that task; choosing P1 demotes the previous top task", () => {
+  const tasks = [task("old", "2026-08-12", "highest"), task("next", "2026-08-12", "normal")];
+  const demoted = applyTaskPriority(tasks, "next", "high", "2026-08-12");
+  assert.equal(demoted.find((item) => item.id === "next")?.priority, "high");
+  assert.equal(demoted.find((item) => item.id === "old")?.priority, "highest");
+  const promoted = applyTaskPriority(tasks, "next", "highest", "2026-08-12");
+  assert.equal(promoted.find((item) => item.id === "next")?.priority, "highest");
+  assert.equal(promoted.find((item) => item.id === "old")?.priority, "high");
 });
 
 test("safe delete archives a task and preserves Markdown history", () => {

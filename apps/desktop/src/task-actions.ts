@@ -88,6 +88,16 @@ export function markMostImportant(
   });
 }
 
+export function applyTaskPriority(
+  tasks: BrainTaskSnapshot[],
+  taskId: string,
+  priority: BrainTaskSnapshot["priority"],
+  date: string,
+): BrainTaskSnapshot[] {
+  if (priority === "highest") return markMostImportant(tasks, taskId, date);
+  return tasks.map((task) => (task.id === taskId ? { ...task, priority } : task));
+}
+
 export function archiveTask(task: BrainTaskSnapshot, completedAt: string): BrainTaskSnapshot {
   return { ...task, status: "done", completedAt };
 }

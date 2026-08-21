@@ -181,6 +181,21 @@ test("week view keeps a bounded stage so the idea inbox stays reachable", () => 
   }
 });
 
+test("double-clicking an idea title opens the in-place editor", () => {
+  const idea = task("idea-1", "還沒排的想法", null);
+  const rendered = renderCalendar([idea]);
+  try {
+    const title = rendered.container.querySelector("[data-idea-drawer] .idea-card-body button");
+    assert.ok(title, "idea title is editable");
+    flushSync(() => {
+      title!.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }) as unknown as Event);
+    });
+    assert.ok(rendered.container.querySelector("[data-idea-drawer] input"), "idea title editor opens");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
 test("schedule mode accepts an idea dropped onto an hour slot", () => {
   if (!globalThis.crypto?.randomUUID) {
     Object.defineProperty(globalThis, "crypto", {
@@ -196,7 +211,7 @@ test("schedule mode accepts an idea dropped onto an hour slot", () => {
     flushSync(() => {
       clickEvent(scheduleButton!, "click");
     });
-    const source = rendered.container.querySelector<HTMLElement>("[data-idea-drawer] article");
+    const source = rendered.container.querySelector<HTMLElement>("[data-idea-drawer] [data-drag-handle]");
     const slot = rendered.container.querySelector<HTMLElement>('[data-schedule-minutes="540"]');
     assert.ok(source, "idea card exists");
     assert.ok(slot, "hour slot exists in schedule mode");

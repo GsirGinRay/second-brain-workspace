@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  durationFromResize,
   formatMinutesAsTime,
   layoutTimedBlocks,
   minutesFromOffset,
@@ -22,6 +23,15 @@ test("clock times round-trip through minutes and snap to quarter hours", () => {
 test("dropping on an hour slot uses the slot's hour when height is unknown", () => {
   assert.equal(timeFromSlotDrop(9 * 60, 10, 0, 0), "09:00");
   assert.equal(timeFromSlotDrop(9 * 60, 42, 0, 56), "09:45");
+});
+
+test("resizing a timed block snaps duration to 15 minutes and stays in range", () => {
+  assert.equal(durationFromResize(9 * 60, 30, PX_PER_HOUR / 4), 45);
+  assert.equal(durationFromResize(9 * 60, 30, PX_PER_HOUR / 2), 60);
+  assert.equal(durationFromResize(9 * 60, 30, PX_PER_HOUR), 90);
+  assert.equal(durationFromResize(9 * 60, 30, -PX_PER_HOUR), 15);
+  assert.equal(durationFromResize(9 * 60, 30, PX_PER_HOUR * 20), 8 * 60);
+  assert.equal(durationFromResize(23 * 60 + 30, 30, PX_PER_HOUR), 30);
 });
 
 test("timed blocks stack into columns when they overlap", () => {

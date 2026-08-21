@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MarkdownEditor, MarkdownPreview } from "./markdown-editor";
+import { fencedCodeInsertion, MarkdownEditor, MarkdownPreview } from "./markdown-editor";
 
 test("Markdown preview renders useful syntax without interpreting raw HTML", () => {
   const html = renderToStaticMarkup(<MarkdownPreview value={'## Title\n\n- **Bold**\n\n<script>alert(1)</script>'} />);
@@ -18,6 +18,18 @@ test("Markdown preview renders fenced code blocks with a copy control", () => {
   assert.match(html, /class="code-copy"/);
   assert.match(html, /<pre><code class="language-js">const a = 1;\s*<\/code><\/pre>/);
   assert.match(html, /複製<\/button>/);
+});
+
+test("fenced code insertion and preview drop a leading blank line", () => {
+  assert.deepEqual(fencedCodeInsertion("", "code"), {
+    insertion: "```\ncode\n```",
+    selectStart: 4,
+    selectLength: 4,
+  });
+  assert.deepEqual(fencedCodeInsertion("const a = 1;", "code").insertion, "```\nconst a = 1;\n```");
+  const html = renderToStaticMarkup(<MarkdownPreview value={"```js\n\nconst a = 1;\n```"} />);
+  assert.match(html, /<pre><code class="language-js">const a = 1;<\/code><\/pre>/);
+  assert.doesNotMatch(html, /<pre><code class="language-js">\n/);
 });
 
 test("MarkdownEditor starts in write mode and honours a controlled preview mode", () => {

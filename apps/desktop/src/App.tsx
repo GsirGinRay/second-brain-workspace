@@ -77,6 +77,7 @@ import {
 import { SyncEngine, type SyncResult } from "./sync-engine";
 import { deleteTaskLocalFirst } from "./task-deletion";
 import {
+  applyTaskPriority,
   archiveTask,
   boardLane,
   completedForDate,
@@ -91,6 +92,8 @@ import {
   scheduleTask,
   type BoardLane,
 } from "./task-actions";
+import { InlineTitle } from "./inline-title";
+import { ImportanceControl, PriorityControl, PriorityBadge } from "./priority-control";
 import {
   applyDesiredSnapshot,
   buildCollectionCreateChange,
@@ -1922,32 +1925,13 @@ function TaskActionBar({
   );
 }
 
-function PriorityBadge({
-  priority,
-}: {
-  priority: BrainTaskSnapshot["priority"];
-}) {
-  const { t } = useUiPreferences();
-  const item = priorityDisplay(priority);
-  const label = t(`task.priority.${priority}`);
-  return (
-    <span
-      className={`priority-badge priority-${priority}`}
-      title={t("task.priority.label", { code: item.code, label })}
-    >
-      {item.code}
-      <small>{label}</small>
-    </span>
-  );
-}
-
 export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onQuickAdd, routineTemplate, onRoutineTemplateChange }: {
   tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; showCompleted: boolean;
   onShowCompletedChange: (value: boolean) => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onQuickAdd: () => void;
   routineTemplate: RoutineTemplate; onRoutineTemplateChange: (template: RoutineTemplate) => void;
 }) {
-  const { t } = useUiPreferences();
+  const { t, preferences } = useUiPreferences();
   const today = taipeiDateKey();
   const groups = splitTodayTasks(tasks, projects, today);
   const completed = completedForDate(tasks, today);
@@ -2014,11 +1998,23 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
           dropToSchedule: t("today.dropToSchedule"),
           addAtTime: (time) => t("today.addAtTime", { time }),
           empty: t("today.empty"),
+          editTitle: t("task.hint.editTitle"),
+          editPriority: t("task.hint.editPriority"),
+          complete: t("task.action.complete"),
+          reopen: t("task.action.reopen"),
+          delete: t("task.action.delete"),
+          resize: t("today.resizeDuration"),
         }}
+        locale={preferences.language}
         onSchedule={(taskId, startTime) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, today, startTime) : item))}
         onClearTime={(taskId) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, item.taskDate ?? today, null) : item))}
         onCreateAt={(title, startTime) => onSave([...tasks, newTask(title, { taskDate: today, startTime, durationMinutes: 30 })])}
         onSelect={setExpandedId}
+        onRename={(taskId, title) => onSave(tasks.map((item) => item.id === taskId ? { ...item, title } : item))}
+        onPriority={(taskId, priority) => onSave(applyTaskPriority(tasks, taskId, priority, today))}
+        onDelete={onDelete}
+        onComplete={(task) => complete(task)}
+        onResize={(taskId, durationMinutes) => onSave(tasks.map((item) => item.id === taskId ? { ...item, durationMinutes } : item))}
       />
     </section>
     {expanded && (
@@ -2032,12 +2028,10 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
 }
 
 function InlineTaskCard({ task, projects, today, onPatch, onComplete, onDelete }: { task: BrainTaskSnapshot; projects: BrainProjectSnapshot[]; today: string; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [title, setTitle] = useState(task.title);
+  const { t, preferences } = useUiPreferences();
   const [editing, setEditing] = useState(false);
-  const saveTitle = () => { const next = title.trim(); if (next && next !== task.title) onPatch(task, { title: next }); else setTitle(task.title); setEditingTitle(false); };
   const overdueDays = task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
-  return <article className={`inline-task-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityBadge priority={task.priority} />{editingTitle ? <input autoFocus aria-label="任務標題" value={title} onChange={(event) => setTitle(event.target.value)} onBlur={saveTitle} onKeyDown={(event) => { if (event.key === "Enter") saveTitle(); if (event.key === "Escape") { setTitle(task.title); setEditingTitle(false); } }} /> : <button className="inline-title-button" onClick={() => setEditingTitle(true)}>{task.title}</button>}</div><div className="inline-fields"><select aria-label={`${task.title}所屬專案`} value={task.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); onPatch(task, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><TaskDateInput ariaLabel={`${task.title}日期`} value={task.taskDate ?? null} onCommit={(next) => onPatch(task, { taskDate: next })} /><input aria-label={`${task.title}開始時間`} type="time" value={task.startTime ?? ""} onChange={(event) => onPatch(task, { startTime: event.target.value || null, durationMinutes: event.target.value ? task.durationMinutes ?? 30 : null, timeZone: "Asia/Taipei" })} /><select aria-label={`${task.title}持續時間`} disabled={!task.startTime} value={task.durationMinutes ?? 30} onChange={(event) => onPatch(task, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions"><button aria-label="編輯任務" title="編輯任務" onClick={() => setEditing((value) => !value)}><Pencil /></button><button className={task.priority === "highest" ? "active" : ""} aria-label="設為今日最重要" title="設為今日最重要" onClick={() => onPatch(task, { priority: "highest", taskDate: today })}><Star fill={task.priority === "highest" ? "currentColor" : "none"} /></button>{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={() => onPatch(task, { taskDate: today })}><CalendarDays /></button>}<button className="danger-icon" aria-label="永久刪除" title="永久刪除" onClick={() => onDelete(task)}><Trash2 /></button></div>{editing && <div className="inline-task-editor"><TaskEditor task={task} projects={projects} onSave={(next) => { setEditing(false); onPatch(task, next); }} /></div>}</article>;
+  return <article className={`inline-task-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><InlineTitle value={task.title} onSave={(title) => onPatch(task, { title })} ariaLabel={t("task.field.title")} hint={t("task.hint.editTitle")} /></div><div className="inline-fields"><select aria-label={`${task.title}所屬專案`} value={task.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); onPatch(task, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><TaskDateInput ariaLabel={`${task.title}日期`} value={task.taskDate ?? null} onCommit={(next) => onPatch(task, { taskDate: next })} /><input aria-label={`${task.title}開始時間`} type="time" value={task.startTime ?? ""} onChange={(event) => onPatch(task, { startTime: event.target.value || null, durationMinutes: event.target.value ? task.durationMinutes ?? 30 : null, timeZone: "Asia/Taipei" })} /><select aria-label={`${task.title}持續時間`} disabled={!task.startTime} value={task.durationMinutes ?? 30} onChange={(event) => onPatch(task, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions"><button aria-label="編輯任務" title="編輯任務" onClick={() => setEditing((value) => !value)}><Pencil /></button><button className={task.priority === "highest" ? "active" : ""} aria-label="設為今日最重要" title="設為今日最重要" onClick={() => onPatch(task, { priority: "highest", taskDate: today })}><Star fill={task.priority === "highest" ? "currentColor" : "none"} /></button>{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={() => onPatch(task, { taskDate: today })}><CalendarDays /></button>}<button className="danger-icon" aria-label="永久刪除" title="永久刪除" onClick={() => onDelete(task)}><Trash2 /></button></div>{editing && <div className="inline-task-editor"><TaskEditor task={task} projects={projects} onSave={(next) => { setEditing(false); onPatch(task, next); }} /></div>}</article>;
 }
 
 function TaskDateInput({
@@ -2107,21 +2101,18 @@ function TaskDateInput({
 }
 
 function AgendaInlineTitle({ task, onSave }: { task: BrainTaskSnapshot; onSave: (title: string) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(task.title);
-  const finish = () => {
-    const title = value.trim();
-    if (title && title !== task.title) onSave(title);
-    else setValue(task.title);
-    setEditing(false);
-  };
-  if (editing) {
-    return <input className="agenda-inline-title-input" autoFocus aria-label="任務名稱" value={value} onChange={(event) => setValue(event.target.value)} onBlur={finish} onKeyDown={(event) => {
-      if (event.key === "Enter") finish();
-      if (event.key === "Escape") { setValue(task.title); setEditing(false); }
-    }} />;
-  }
-  return <button className="agenda-inline-title" title="點一下直接編輯" onClick={() => setEditing(true)}>{task.status === "done" ? "✓ " : ""}{task.title}</button>;
+  const { t } = useUiPreferences();
+  return (
+    <InlineTitle
+      value={task.title}
+      onSave={onSave}
+      prefix={task.status === "done" ? "✓ " : ""}
+      className="agenda-inline-title"
+      inputClassName="agenda-inline-title-input"
+      ariaLabel={t("task.field.title")}
+      hint={t("task.hint.editTitle")}
+    />
+  );
 }
 
 function LegacyToday({
@@ -2573,9 +2564,11 @@ function Board({
   onProjectFilterChange: (projectId: string | null) => void;
   onBackToProjects: () => void;
 }) {
-  const { t } = useUiPreferences();
+  const { t, preferences } = useUiPreferences();
   const [drag, setDrag] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const boardDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
   const today = taipeiDateKey();
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const lanes: Array<{ id: BoardLane; label: string; hint: string }> = [
@@ -2598,10 +2591,13 @@ function Board({
   };
   const finishBoardPointer = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
     if (!taskId) return;
+    const origin = boardDrag.current;
+    boardDrag.current = null;
+    setDrag(null);
+    if (!origin?.moved) return;
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
     const lane = target?.closest<HTMLElement>("[data-board-lane]")?.dataset.boardLane as BoardLane | undefined;
     if (lane) moveToLane(taskId, lane);
-    setDrag(null);
   };
   const moveWithinColumn = (id: string | null, delta: -1 | 1) => {
     if (!id) return;
@@ -2673,9 +2669,26 @@ function Board({
                 )}
                 {laneTasks.map((task) => (
                   <article
-                    onPointerDown={(event) => { if (event.button === 0 && !(event.target as HTMLElement).closest("button,select,input")) { setDrag(task.id); event.currentTarget.setPointerCapture(event.pointerId); } }}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0 || !task.id || !(event.target as HTMLElement).closest("[data-drag-handle]")) return;
+                      boardDrag.current = { id: task.id, x: event.clientX, y: event.clientY, moved: false };
+                      setDrag(task.id);
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    }}
+                    onPointerMove={(event) => {
+                      if (!boardDrag.current) return;
+                      if (Math.abs(event.clientX - boardDrag.current.x) > 4 || Math.abs(event.clientY - boardDrag.current.y) > 4) {
+                        boardDrag.current = { ...boardDrag.current, moved: true };
+                      }
+                    }}
                     onPointerUp={(event) => finishBoardPointer(event, task.id)}
+                    onPointerCancel={() => { boardDrag.current = null; setDrag(null); }}
                     onKeyDown={(event) => {
+                      if (event.key === "F2" && task.id) {
+                        event.preventDefault();
+                        setRenamingId(task.id);
+                        return;
+                      }
                       if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
                       event.preventDefault();
                       const index = lanes.findIndex((item) => item.id === boardLane(task));
@@ -2688,11 +2701,24 @@ function Board({
                     tabIndex={0}
                   >
                     <div className="task-title-row">
-                      <PriorityBadge priority={task.priority} />
-                      <strong>
-                        {task.status === "done" ? "✓ " : ""}
-                        {task.title}
-                      </strong>
+                      <button type="button" className="board-drag-handle" data-drag-handle aria-label={`拖曳 ${task.title}`}>
+                        <GripVertical aria-hidden="true" />
+                      </button>
+                      <PriorityControl
+                        priority={task.priority}
+                        locale={preferences.language}
+                        onChange={(priority) => task.id && void onSave(applyTaskPriority(tasks, task.id, priority, task.taskDate ?? today))}
+                      />
+                      <InlineTitle
+                        value={task.title}
+                        prefix={task.status === "done" ? "✓ " : ""}
+                        editing={renamingId === task.id}
+                        onEditingChange={(next) => setRenamingId(next ? task.id : null)}
+                        onSave={(title) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, title } : item))}
+                        className="board-inline-title"
+                        ariaLabel={t("task.field.title")}
+                        hint={t("task.hint.editTitle")}
+                      />
                     </div>
                     <small>{task.projectName ?? t("app.unassigned")}</small>
                     <label className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
@@ -2801,6 +2827,8 @@ export function Calendar({
     x: number;
     y: number;
   } | null>(null);
+  const [renamingIdeaId, setRenamingIdeaId] = useState<string | null>(null);
+  const calendarDragMoved = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const clock = useMemo(() => new Date(), [today]);
   const flashNotice = (message: string) => {
@@ -2837,6 +2865,7 @@ export function Calendar({
     };
   }, [ideaContextMenu]);
   const beginDrag = (id: string | null, originDate: string | null) => {
+    calendarDragMoved.current = false;
     setDragTaskId(id);
     setDragOriginDate(originDate);
     setDropTargetDate(null);
@@ -2908,6 +2937,13 @@ export function Calendar({
   const finishPointerDrag = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
     if (!taskId) return;
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+    const releasedOnSelf = Boolean(target && event.currentTarget.contains(target));
+    const didMove = calendarDragMoved.current || !releasedOnSelf;
+    calendarDragMoved.current = false;
+    if (!didMove) {
+      resetDrag();
+      return;
+    }
     const slot = target?.closest<HTMLElement>("[data-schedule-minutes]");
     const grid = target?.closest<HTMLElement>("[data-day-schedule-grid]");
     const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate
@@ -3026,11 +3062,23 @@ export function Calendar({
               dropToSchedule: t("today.dropToSchedule"),
               addAtTime: (time) => t("today.addAtTime", { time }),
               empty: t("today.empty"),
+              editTitle: t("task.hint.editTitle"),
+              editPriority: t("task.hint.editPriority"),
+              complete: t("task.action.complete"),
+              reopen: t("task.action.reopen"),
+              delete: t("task.action.delete"),
+              resize: t("today.resizeDuration"),
             }}
+            locale={preferences.language}
             onSchedule={(taskId, startTime) => schedule(taskId, selected, startTime)}
             onClearTime={(taskId) => schedule(taskId, selected, null)}
             onCreateAt={(title, startTime) => void onSave([...tasks, newTask(title, { taskDate: selected, startTime, durationMinutes: 30 })])}
             onSelect={(taskId) => setActiveTaskId(taskId)}
+            onRename={(taskId, title) => void onSave(tasks.map((item) => item.id === taskId ? { ...item, title } : item))}
+            onPriority={(taskId, priority) => void onSave(applyTaskPriority(tasks, taskId, priority, selected))}
+            onDelete={remove}
+            onComplete={(task) => complete(task.id)}
+            onResize={(taskId, durationMinutes) => void onSave(tasks.map((item) => item.id === taskId ? { ...item, durationMinutes } : item))}
           />
         ) : mode === "month" ? (
           <>
@@ -3210,39 +3258,64 @@ export function Calendar({
             ) : (
               visibleIdeas.map((task) => (
                 <article
-                  onPointerDown={(event) => {
-                    if (event.button === 0 && task.id) {
-                      beginDrag(task.id, null);
-                      event.currentTarget.setPointerCapture(event.pointerId);
+                  onClick={() => setActiveTaskId(task.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "F2" && task.id) {
+                      event.preventDefault();
+                      setRenamingIdeaId(task.id);
                     }
                   }}
-                  onPointerMove={(event) => {
-                    if (!dragTaskId) return;
-                    const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-                    const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
-                    setDropTargetDate(date ?? null);
-                  }}
-                  onPointerUp={(event) => finishPointerDrag(event, task.id)}
-                  onClick={() => setActiveTaskId(task.id)}
+                  tabIndex={0}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
                     setActiveTaskId(task.id);
                     setIdeaContextMenu({
                       task,
-                      x: Math.min(event.clientX, window.innerWidth - 210),
-                      y: Math.min(event.clientY, window.innerHeight - 64),
+                      x: Math.min(event.clientX, window.innerWidth - 220),
+                      y: Math.min(event.clientY, window.innerHeight - 200),
                     });
                   }}
                   style={taskProjectStyle(task)}
                   className={`${activeTaskId === task.id ? "selected-task" : ""} ${dragTaskId === task.id ? "dragging" : ""}`}
                   key={task.id ?? task.title}
                 >
-                  <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
+                  <button
+                    type="button"
+                    className="idea-drag-handle"
+                    data-drag-handle
+                    aria-label={`拖曳 ${task.title}`}
+                    title="拖曳到日期"
+                    onPointerDown={(event) => {
+                      if (event.button !== 0 || !task.id) return;
+                      beginDrag(task.id, null);
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    }}
+                    onPointerMove={(event) => {
+                      if (!dragTaskId) return;
+                      const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+                      const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
+                      setDropTargetDate(date ?? null);
+                    }}
+                    onPointerUp={(event) => finishPointerDrag(event, task.id)}
+                  >
+                    <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
+                  </button>
                   <div className="idea-card-body">
-                    <strong>{task.title}</strong>
+                    <InlineTitle
+                      value={task.title}
+                      editing={renamingIdeaId === task.id}
+                      onEditingChange={(next) => setRenamingIdeaId(next && task.id ? task.id : null)}
+                      onSave={(title) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, title } : item))}
+                      ariaLabel={t("task.field.title")}
+                      hint={t("task.hint.editTitle")}
+                    />
                     <span>
-                      <PriorityBadge priority={task.priority} />
+                      <PriorityControl
+                        priority={task.priority}
+                        locale={preferences.language}
+                        onChange={(priority) => task.id && void onSave(applyTaskPriority(tasks, task.id, priority, today))}
+                      />
                       <small>{task.projectName ?? t("app.unassigned")}</small>
                     </span>
                     <button
@@ -3294,6 +3367,43 @@ export function Calendar({
             <button
               type="button"
               role="menuitem"
+              onClick={() => {
+                const task = ideaContextMenu.task;
+                setIdeaContextMenu(null);
+                if (task.id) setRenamingIdeaId(task.id);
+              }}
+            >
+              <Pencil aria-hidden="true" />
+              {t("task.action.rename")}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const task = ideaContextMenu.task;
+                setIdeaContextMenu(null);
+                if (task.id) void onSave(applyTaskPriority(tasks, task.id, "highest", today));
+              }}
+            >
+              <Star aria-hidden="true" />
+              {t("task.action.important")}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const task = ideaContextMenu.task;
+                setIdeaContextMenu(null);
+                if (task.id) schedule(task.id, today);
+              }}
+            >
+              <CalendarDays aria-hidden="true" />
+              {t("task.action.scheduleToday")}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="danger"
               onClick={() => {
                 const task = ideaContextMenu.task;
                 setIdeaContextMenu(null);
@@ -3358,7 +3468,11 @@ export function Calendar({
                 </button>
                 <div>
                   <div className="task-title-row">
-                    <PriorityBadge priority={task.priority} />
+                    <PriorityControl
+                      priority={task.priority}
+                      locale={preferences.language}
+                      onChange={(priority) => task.id && void onSave(applyTaskPriority(tasks, task.id, priority, selected))}
+                    />
                     <AgendaInlineTitle task={task} onSave={(title) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, title } : item))} />
                   </div>
                   <select
@@ -3470,6 +3584,15 @@ function ProjectEditor({
         <div>
           <span className="eyebrow">{value.area ?? t("app.uncategorized")}</span>
           <h3>{value.name}</h3>
+          <ImportanceControl
+            value={value.priority}
+            locale={preferences.language}
+            onChange={(priority) => {
+              const next = { ...value, priority };
+              setValue(next);
+              onSave(next);
+            }}
+          />
         </div>
         <label className="focus">
           <input
@@ -3727,10 +3850,17 @@ function Collections({
       <div className="collection-layout">
         <div className="collection-list">
           {visible.length === 0 ? <Empty text={t("collection.empty")} hint={t("collection.emptyHelp")} actionLabel={t("collection.action.add")} onAction={onCreate} /> : visible.map((item) => (
-            <button key={item.id ?? item.sourcePath} className={selected?.id === item.id ? "active" : ""} onClick={() => onSelect(item.id)}>
-              <span><strong>{item.name}</strong><small>{item.category ?? t("app.uncategorized")} · {item.importance ? `${t("project.field.importance")} ${item.importance}` : t("project.importance.unset")}</small></span>
-              <small>{item.body.slice(0, 100) || t("app.noContent")}</small>
-            </button>
+            <div key={item.id ?? item.sourcePath} className={`collection-list-item ${selected?.id === item.id ? "active" : ""}`}>
+              <button type="button" className="collection-list-main" onClick={() => onSelect(item.id)}>
+                <span><strong>{item.name}</strong><small>{item.category ?? t("app.uncategorized")}</small></span>
+                <small>{item.body.slice(0, 100) || t("app.noContent")}</small>
+              </button>
+              <ImportanceControl
+                value={item.importance}
+                locale={preferences.language}
+                onChange={(importance) => onSave({ ...item, importance })}
+              />
+            </div>
           ))}
         </div>
         <article className="collection-preview">
@@ -3744,6 +3874,9 @@ function Collections({
 function CollectionEditor({ collection, locale, onSave, onDelete }: { collection: BrainCollectionSnapshot; locale: UiPreferences["language"]; onSave: (collection: BrainCollectionSnapshot) => void; onDelete: (collection: BrainCollectionSnapshot) => void }) {
   const { t } = useUiPreferences();
   const [value, setValue] = useState(collection);
+  useEffect(() => {
+    setValue((current) => ({ ...current, importance: collection.importance }));
+  }, [collection.importance]);
   const [mode, setMode] = useState<"write" | "preview">("preview");
   const isPrompt = (value.category ?? "").trim().toLowerCase().startsWith("提示詞");
   const variables = useMemo(() => extractPromptVariables(value.body), [value.body]);

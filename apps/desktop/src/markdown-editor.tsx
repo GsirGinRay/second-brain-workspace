@@ -31,9 +31,31 @@ function nodeText(node: ReactNode): string {
   return "";
 }
 
+export function fencedCodeInsertion(selected: string, placeholder: string): { insertion: string; selectStart: number; selectLength: number } {
+  const body = selected.replace(/^\r?\n+|\r?\n+$/g, "") || placeholder;
+  const prefix = "```\n";
+  const suffix = "\n```";
+  return { insertion: prefix + body + suffix, selectStart: prefix.length, selectLength: body.length };
+}
+
+function codeClassName(node: ReactNode): string | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = codeClassName(child);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!React.isValidElement(node)) return undefined;
+  const props = node.props as { className?: string; children?: ReactNode };
+  if (typeof props.className === "string" && props.className.includes("language-")) return props.className;
+  return codeClassName(props.children);
+}
+
 function CodeBlock({ children, locale }: { children: ReactNode; locale: MarkdownEditorLocale }) {
   const [copied, setCopied] = useState(false);
-  const text = useMemo(() => nodeText(children).replace(/\n$/, ""), [children]);
+  const text = useMemo(() => nodeText(children).replace(/^\n+|\n+$/g, ""), [children]);
+  const languageClass = useMemo(() => codeClassName(children), [children]);
   const labels = locale === "en"
     ? { copy: "Copy", copied: "Copied" }
     : { copy: "複製", copied: "已複製" };
@@ -65,7 +87,7 @@ function CodeBlock({ children, locale }: { children: ReactNode; locale: Markdown
         {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
         {copied ? labels.copied : labels.copy}
       </button>
-      <pre>{children}</pre>
+      <pre><code className={languageClass}>{text}</code></pre>
     </figure>
   );
 }
@@ -100,13 +122,13 @@ export function MarkdownEditor({ value, onChange, locale = "zh-TW", minRows = 10
         title: "Markdown content", write: "Write", preview: "Preview", placeholder: "Write Markdown here…",
         code: "Code block", bold: "Bold", italic: "Italic", heading: "Heading", quote: "Quote",
         list: "Bullet list", task: "Task item", link: "Link", rule: "Divider",
-        boldText: "bold text", italicText: "italic text", linkText: "text",
+        boldText: "bold text", italicText: "italic text", linkText: "text", codeSample: "code",
       }
     : {
         title: "Markdown 內容", write: "編輯", preview: "預覽", placeholder: "在這裡輸入 Markdown…",
         code: "程式碼區塊", bold: "粗體", italic: "斜體", heading: "標題", quote: "引用",
         list: "項目清單", task: "待辦項目", link: "連結", rule: "分隔線",
-        boldText: "粗體文字", italicText: "斜體文字", linkText: "文字",
+        boldText: "粗體文字", italicText: "斜體文字", linkText: "文字", codeSample: "程式碼",
       };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   /** 在選取範圍前後包上語法；無選取時插入佔位文字並選取它。 */
@@ -157,8 +179,20 @@ export function MarkdownEditor({ value, onChange, locale = "zh-TW", minRows = 10
       textarea.setSelectionRange(anchor, anchor);
     });
   };
+  const insertCodeFence = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const { insertion, selectStart, selectLength } = fencedCodeInsertion(value.slice(start, end), labels.codeSample);
+    onChange(value.slice(0, start) + insertion + value.slice(end));
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + selectStart, start + selectStart + selectLength);
+    });
+  };
   const tools = [
-    { label: labels.code, icon: Code, run: () => applyWrap("```\n", "\n```", "") },
+    { label: labels.code, icon: Code, run: insertCodeFence },
     { label: labels.bold, icon: Bold, run: () => applyWrap("**", "**", labels.boldText) },
     { label: labels.italic, icon: Italic, run: () => applyWrap("*", "*", labels.italicText) },
     { label: labels.heading, icon: Heading2, run: () => applyLinePrefix("## ") },

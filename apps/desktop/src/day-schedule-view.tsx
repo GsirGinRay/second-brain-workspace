@@ -1,23 +1,36 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { GripVertical } from "lucide-react";
+import { Check, GripVertical, Trash2 } from "lucide-react";
 import type { BrainTaskSnapshot } from "@second-brain/brain-core";
 import {
+  durationFromResize,
   formatMinutesAsTime,
   layoutTimedBlocks,
+  MIN_BLOCK_HEIGHT,
   minutesFromOffset,
   parseTimeToMinutes,
   PX_PER_HOUR,
   taipeiMinutesOfDay,
   timeFromSlotDrop,
 } from "./day-schedule";
+import { InlineTitle } from "./inline-title";
+import { PriorityControl } from "./priority-control";
+import type { UiLanguage } from "./ui-preferences";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+
+type DragKind = "timed" | "loose" | "resize";
 
 export interface DayScheduleLabels {
   unscheduled: string;
   dropToSchedule: string;
   addAtTime: (time: string) => string;
   empty: string;
+  editTitle: string;
+  editPriority: string;
+  complete: string;
+  reopen: string;
+  delete: string;
+  resize: string;
 }
 
 export function DaySchedule({
@@ -32,6 +45,12 @@ export function DaySchedule({
   onClearTime,
   onCreateAt,
   onSelect,
+  onRename,
+  onPriority,
+  onDelete,
+  onComplete,
+  onResize,
+  locale = "zh-TW",
 }: {
   date: string;
   timedTasks: BrainTaskSnapshot[];
@@ -44,12 +63,20 @@ export function DaySchedule({
   onClearTime?: (taskId: string) => void;
   onCreateAt: (title: string, startTime: string) => void;
   onSelect?: (taskId: string) => void;
+  onRename?: (taskId: string, title: string) => void;
+  onPriority?: (taskId: string, priority: BrainTaskSnapshot["priority"]) => void;
+  onDelete?: (task: BrainTaskSnapshot) => void;
+  onComplete?: (task: BrainTaskSnapshot) => void;
+  onResize?: (taskId: string, durationMinutes: number) => void;
+  locale?: UiLanguage;
 }) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [composer, setComposer] = useState<{ time: string } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [previewTop, setPreviewTop] = useState<number | null>(null);
-  const dragOrigin = useRef<{ id: string; startY: number; startMinutes: number; kind: "timed" | "loose" } | null>(null);
+  const [previewHeight, setPreviewHeight] = useState<number | null>(null);
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const dragOrigin = useRef<{ id: string; startY: number; startMinutes: number; kind: DragKind; duration: number } | null>(null);
   const moved = useRef(false);
   const layouts = useMemo(
     () =>
@@ -101,6 +128,7 @@ export function DaySchedule({
     dragOrigin.current = null;
     setDragId(null);
     setPreviewTop(null);
+    setPreviewHeight(null);
   };
 
   const finishDrag = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
@@ -109,7 +137,13 @@ export function DaySchedule({
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
     const releasedOnSelf = Boolean(target && event.currentTarget.contains(target));
     const didMove = moved.current || !releasedOnSelf;
+    const clientY = event.clientY;
     resetDrag();
+    if (origin?.kind === "resize") {
+      if (!didMove) return;
+      onResize?.(taskId, durationFromResize(origin.startMinutes, origin.duration, clientY - origin.startY));
+      return;
+    }
     if (!didMove) return;
     if (target?.closest("[data-unscheduled-tray], [data-schedule-all-day]")) {
       onClearTime?.(taskId);
@@ -118,23 +152,47 @@ export function DaySchedule({
     const grid = target?.closest("[data-day-schedule-grid]");
     if (!grid) return;
     if (origin?.kind === "timed") {
-      const deltaHours = (event.clientY - origin.startY) / PX_PER_HOUR;
+      const deltaHours = (clientY - origin.startY) / PX_PER_HOUR;
       onSchedule(
         taskId,
         formatMinutesAsTime(minutesFromOffset((origin.startMinutes / 60 + deltaHours) * PX_PER_HOUR)),
       );
       return;
     }
-    const time = timeAtPoint(event.clientY, target);
+    const time = timeAtPoint(clientY, target);
     if (time) onSchedule(taskId, time);
   };
 
   const beginTimedDrag = (event: ReactPointerEvent<HTMLElement>, task: BrainTaskSnapshot) => {
     if (event.button !== 0 || !task.id || !task.startTime) return;
+    if ((event.target as HTMLElement).closest("button, input, [data-resize-handle]")) return;
     const startMinutes = parseTimeToMinutes(task.startTime);
     if (startMinutes == null) return;
     moved.current = false;
-    dragOrigin.current = { id: task.id, startY: event.clientY, startMinutes, kind: "timed" };
+    dragOrigin.current = {
+      id: task.id,
+      startY: event.clientY,
+      startMinutes,
+      kind: "timed",
+      duration: task.durationMinutes ?? 30,
+    };
+    setDragId(task.id);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const beginResize = (event: ReactPointerEvent<HTMLElement>, task: BrainTaskSnapshot) => {
+    if (event.button !== 0 || !task.id || !task.startTime) return;
+    const startMinutes = parseTimeToMinutes(task.startTime);
+    if (startMinutes == null) return;
+    event.stopPropagation();
+    moved.current = false;
+    dragOrigin.current = {
+      id: task.id,
+      startY: event.clientY,
+      startMinutes,
+      kind: "resize",
+      duration: task.durationMinutes ?? 30,
+    };
     setDragId(task.id);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -142,6 +200,15 @@ export function DaySchedule({
   const moveTimedDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (!dragOrigin.current || !gridRef.current) return;
     if (Math.abs(event.clientY - dragOrigin.current.startY) > 4) moved.current = true;
+    if (dragOrigin.current.kind === "resize") {
+      const next = durationFromResize(
+        dragOrigin.current.startMinutes,
+        dragOrigin.current.duration,
+        event.clientY - dragOrigin.current.startY,
+      );
+      setPreviewHeight(Math.max(MIN_BLOCK_HEIGHT, (next / 60) * PX_PER_HOUR));
+      return;
+    }
     const deltaHours = (event.clientY - dragOrigin.current.startY) / PX_PER_HOUR;
     const next = minutesFromOffset((dragOrigin.current.startMinutes / 60 + deltaHours) * PX_PER_HOUR);
     setPreviewTop((next / 60) * PX_PER_HOUR);
@@ -167,7 +234,7 @@ export function DaySchedule({
                   onPointerDown={(event) => {
                     if (event.button !== 0 || !task.id || (event.target as HTMLElement).closest("button")) return;
                     moved.current = false;
-                    dragOrigin.current = { id: task.id, startY: event.clientY, startMinutes: 0, kind: "loose" };
+                    dragOrigin.current = { id: task.id, startY: event.clientY, startMinutes: 0, kind: "loose", duration: 30 };
                     setDragId(task.id);
                     event.currentTarget.setPointerCapture(event.pointerId);
                   }}
@@ -179,6 +246,11 @@ export function DaySchedule({
                   onPointerCancel={resetDrag}
                   onClick={() => task.id && onSelect?.(task.id)}
                   onKeyDown={(event) => {
+                    if (event.key === "F2" && task.id) {
+                      event.preventDefault();
+                      setEditingTitleId(task.id);
+                      return;
+                    }
                     if ((event.key === "Enter" || event.key === " ") && task.id) {
                       event.preventDefault();
                       onSelect?.(task.id);
@@ -186,8 +258,20 @@ export function DaySchedule({
                   }}
                 >
                   <GripVertical aria-hidden="true" />
-                  <strong>{task.title}</strong>
-                  {task.taskDate && task.taskDate < date ? <small>{task.taskDate}</small> : null}
+                  <div className="schedule-tray-body">
+                    {onPriority && task.id ? <PriorityControl priority={task.priority} onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
+                    {onRename && task.id ? (
+                      <InlineTitle
+                        value={task.title}
+                        onSave={(title) => onRename(task.id!, title)}
+                        editing={editingTitleId === task.id}
+                        onEditingChange={(next) => setEditingTitleId(next ? task.id! : null)}
+                        ariaLabel={labels.editTitle}
+                        hint={labels.editTitle}
+                      />
+                    ) : <strong>{task.title}</strong>}
+                    {task.taskDate && task.taskDate < date ? <small>{task.taskDate}</small> : null}
+                  </div>
                 </article>
               ))}
             </div>
@@ -205,7 +289,7 @@ export function DaySchedule({
                 onPointerDown={(event) => {
                   if (event.button !== 0 || !task.id) return;
                   moved.current = false;
-                  dragOrigin.current = { id: task.id, startY: event.clientY, startMinutes: 0, kind: "loose" };
+                  dragOrigin.current = { id: task.id, startY: event.clientY, startMinutes: 0, kind: "loose", duration: 30 };
                   setDragId(task.id);
                   event.currentTarget.setPointerCapture(event.pointerId);
                 }}
@@ -252,13 +336,14 @@ export function DaySchedule({
             const layout = layoutById.get(task.id);
             if (!layout) return null;
             const top = dragId === task.id && previewTop != null ? previewTop : layout.top;
+            const height = dragId === task.id && previewHeight != null ? previewHeight : layout.height;
             const width = `calc((100% - 58px) / ${layout.columns})`;
             const left = `calc(58px + ((100% - 58px) / ${layout.columns}) * ${layout.column})`;
             return (
               <article
                 key={task.id}
                 className={`timed-block ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""}`}
-                style={{ top, height: layout.height, left, width }}
+                style={{ top, height, left, width }}
                 tabIndex={0}
                 onPointerDown={(event) => beginTimedDrag(event, task)}
                 onPointerMove={moveTimedDrag}
@@ -269,17 +354,79 @@ export function DaySchedule({
                   onSelect?.(task.id!);
                 }}
                 onKeyDown={(event) => {
+                  if (event.key === "F2") {
+                    event.preventDefault();
+                    setEditingTitleId(task.id!);
+                    return;
+                  }
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     onSelect?.(task.id!);
                   }
                 }}
               >
-                <strong>{task.title}</strong>
+                <div className="timed-block-head">
+                  {onPriority ? <PriorityControl priority={task.priority} onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
+                  {onRename ? (
+                    <InlineTitle
+                      value={task.title}
+                      onSave={(title) => onRename(task.id!, title)}
+                      editing={editingTitleId === task.id}
+                      onEditingChange={(next) => setEditingTitleId(next ? task.id! : null)}
+                      className="timed-block-title"
+                      ariaLabel={labels.editTitle}
+                      hint={labels.editTitle}
+                    />
+                  ) : <strong>{task.title}</strong>}
+                </div>
                 <small>
                   {task.startTime}
                   {task.durationMinutes ? ` · ${task.durationMinutes}m` : ""}
                 </small>
+                {(onComplete || onDelete) && (
+                  <div className="timed-block-actions">
+                    {onComplete && (
+                      <button
+                        type="button"
+                        className="timed-block-action"
+                        aria-label={task.status === "done" ? labels.reopen : labels.complete}
+                        title={task.status === "done" ? labels.reopen : labels.complete}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onComplete(task);
+                        }}
+                      >
+                        <Check aria-hidden="true" />
+                      </button>
+                    )}
+                    {onDelete && (
+                      <button
+                        type="button"
+                        className="timed-block-action danger"
+                        aria-label={labels.delete}
+                        title={labels.delete}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onDelete(task);
+                        }}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                )}
+                {onResize && (
+                  <div
+                    className="timed-block-resize"
+                    data-resize-handle
+                    title={labels.resize}
+                    aria-label={labels.resize}
+                    onPointerDown={(event) => beginResize(event, task)}
+                    onPointerMove={moveTimedDrag}
+                    onPointerUp={(event) => finishDrag(event, task.id)}
+                    onPointerCancel={resetDrag}
+                  />
+                )}
               </article>
             );
           })}
