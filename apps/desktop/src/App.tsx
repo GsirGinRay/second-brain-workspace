@@ -28,6 +28,7 @@ import {
 import {
   applyRoutineTemplate,
   createDefaultRoutineTemplate,
+  enforceTemplateSingleP1,
   getTodayTasks,
   splitTodayTasks,
   completeProject,
@@ -356,14 +357,17 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   useEffect(() => {
     void native.loadRoutineTemplate?.().then((value) => {
       if (value) {
-        routineTemplateRef.current = value;
-        setRoutineTemplate(value);
+        // Templates stored before the single-P1 rule existed can hold several; fold them on the way in.
+        const single = enforceTemplateSingleP1(value);
+        routineTemplateRef.current = single;
+        setRoutineTemplate(single);
       }
     }).catch(() => undefined);
   }, [native]);
 
   const saveRoutineTemplate = useCallback((value: RoutineTemplate) => {
-    const next = { ...value, version: value.version + 1, updatedAt: new Date().toISOString() };
+    const single = enforceTemplateSingleP1(value);
+    const next = { ...single, version: single.version + 1, updatedAt: new Date().toISOString() };
     routineTemplateRef.current = next;
     setRoutineTemplate(next);
     void native.saveRoutineTemplate?.(next);
@@ -382,9 +386,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           return;
         }
         if (remote.version !== local.version || remote.updatedAt !== local.updatedAt) {
-          routineTemplateRef.current = remote;
-          setRoutineTemplate(remote);
-          await native.saveRoutineTemplate?.(remote);
+          const single = enforceTemplateSingleP1(remote);
+          routineTemplateRef.current = single;
+          setRoutineTemplate(single);
+          await native.saveRoutineTemplate?.(single);
         }
       }).catch((cause) => {
         if (cause instanceof PublisherHttpError && cause.code === "ROUTINE_TEMPLATES_DISABLED") return;
@@ -1924,7 +1929,7 @@ function PriorityBadge({
   );
 }
 
-function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuickAdd, routineTemplate, onRoutineTemplateChange }: {
+export function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuickAdd, routineTemplate, onRoutineTemplateChange }: {
   tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; showCompleted: boolean;
   onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onQuickAdd: () => void;
   routineTemplate: RoutineTemplate; onRoutineTemplateChange: (template: RoutineTemplate) => void;
@@ -1948,7 +1953,8 @@ function Today({ tasks, projects, showCompleted, onSave, onDelete, onQuickAdd, r
     if (result.created.length) onSave(result.tasks);
     setNotice(result.created.length ? `已建立 ${result.created.length} 項今日例行任務` : "今天的例行任務都已建立");
   };
-  const updateItem = (id: string, patch: Partial<RoutineTemplateItem>) => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.map((item) => item.id === id ? { ...item, ...patch } : item) });
+  // Setting a row to P1 demotes whichever row already held it, mirroring markMostImportant: a day owns one P1.
+  const updateItem = (id: string, patch: Partial<RoutineTemplateItem>) => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.map((item) => item.id === id ? { ...item, ...patch } : patch.priority === "highest" && item.priority === "highest" ? { ...item, priority: "high" as const } : item) });
   const dropItem = (targetId: string) => {
     if (!draggedItem || draggedItem === targetId) return;
     const items = [...routineTemplate.items];

@@ -64,7 +64,12 @@ export {
   splitTodayTasks,
   rankForIndex,
 } from "./today";
-export { applyRoutineTemplate, createDefaultRoutineTemplate, routineTaskId } from "./routine";
+export {
+  applyRoutineTemplate,
+  createDefaultRoutineTemplate,
+  enforceTemplateSingleP1,
+  routineTaskId,
+} from "./routine";
 export { projectColor } from "./visuals";
 export type { ProjectColor } from "./visuals";
 export { renderVaultIndex } from "./vault-index";
