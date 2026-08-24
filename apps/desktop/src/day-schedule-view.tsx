@@ -86,7 +86,7 @@ export function DaySchedule({
   } | null>(null);
   const autoScrollRef = useRef<number | null>(null);
   const moved = useRef(false);
-  const suppressClick = useRef(false);
+  const suppressClickUntil = useRef(0);
   const layouts = useMemo(
     () =>
       layoutTimedBlocks(
@@ -213,7 +213,10 @@ export function DaySchedule({
     const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
     const releasedOnSelf = Boolean(target && event.currentTarget.contains(target));
     const isDragMove = moved.current || !releasedOnSelf || Math.hypot(clientX - origin.startClientX, clientY - origin.startClientY) > 3;
-    suppressClick.current = isDragMove;
+    // The browser follows a pointer press and release with a click on the element that
+    // contains both, so finishing a drag also fires the card's select handler. Use a
+    // self-expiring window so a missing stray click cannot swallow a later real one.
+    if (isDragMove) suppressClickUntil.current = performance.now() + 300;
     resetDrag();
     if (!isDragMove) return;
 
@@ -444,8 +447,7 @@ export function DaySchedule({
                     if (dragOrigin.current?.id === task.id) resetDrag();
                   }}
                   onClick={() => {
-                    if (suppressClick.current) {
-                      suppressClick.current = false;
+                    if (performance.now() < suppressClickUntil.current) {
                       return;
                     }
                     if (task.id) onOpenTask?.(task.id);
@@ -506,10 +508,7 @@ export function DaySchedule({
                   if (dragOrigin.current?.id === task.id) resetDrag();
                 }}
                 onClick={() => {
-                  if (suppressClick.current) {
-                    suppressClick.current = false;
-                    return;
-                  }
+                  if (performance.now() < suppressClickUntil.current) return;
                   if (task.id) onOpenTask?.(task.id);
                 }}
               >
@@ -586,10 +585,7 @@ export function DaySchedule({
                 }}
                 onClick={(event) => {
                   event.stopPropagation();
-                  if (suppressClick.current) {
-                    suppressClick.current = false;
-                    return;
-                  }
+                  if (performance.now() < suppressClickUntil.current) return;
                   onOpenTask?.(task.id!);
                 }}
                 onKeyDown={(event) => {

@@ -115,6 +115,16 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .priority-badge { display:inline-flex;align-items:center;gap:4px;border:1px solid #b8b8b5;border-radius:6px;background:#fff;padding:2px 5px;font-size:10px;font-weight:900;line-height:1.1;color:#222;white-space:nowrap; }.priority-badge small{font-size:9px;color:#686865}.priority-badge.priority-highest{border-color:var(--accent-red);background:var(--red-soft);color:#9b1f16}.priority-badge.priority-highest small{color:#9b1f16}.priority-badge.priority-high{border-color:#555}.priority-badge.priority-low{color:#777;border-color:#d7d7d4}
 .completed-section{margin-top:28px;border-top:1px solid var(--line);padding-top:18px}.completed-section>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}.completed-section h3{margin:0;font-size:15px}.completed-section>header span{font-size:11px;color:var(--muted)}.completed-task{opacity:.58;background:#f4f4f2!important}.completed-task strong,.calendar-task-title.completed-task{text-decoration:line-through;text-decoration-thickness:1.5px}.completed-task .priority-badge{filter:grayscale(1)}
 .important-badge { background: var(--accent-red); color: #fff; font-size: 10px; font-weight: 850; padding: 4px 7px; border-radius: 5px; }
+
+/* The hour canvas is 24h x 56px = 1344px tall. .day-schedule caps its own box with
+   max-height but leaves the grid row auto-sized, and an auto row takes its content's
+   height — so the canvas drew straight past the container and over whatever followed it,
+   which is what buried the selected-task panel. A definite height with rows that fill it
+   keeps the scrolling inside the grid.
+   Stated as an override rather than edited into the rule itself: that rule shares a single
+   3.8k-character line with dozens of others, so editing it in place collides with every
+   other branch touching that line. */
+.day-schedule { grid-auto-rows:minmax(0,1fr);height:min(72vh,760px);overflow:hidden; }
 .status { font-size: 10px; padding: 5px 8px; border-radius: 20px; background: #eeeeec; color: #444; }
 .status.doing { background: #dfe9ff; color: #204b9d; }.status.waiting { background: #fff0cc; color: #7c5710; }.status.done { background: #e5e5e3; color: #555; }
 .edit-button, .important-button, .archive-button, .secondary-button, .browse-button { border: 1px solid #777b81; background: #fff; color: var(--ink); border-radius: 8px; padding: 7px 10px; font-weight: 750; }
