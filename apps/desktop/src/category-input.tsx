@@ -21,7 +21,10 @@ export function CategoryInput({
 }) {
   const sortedCategories = [
     ...new Set(existingCategories.map((cat) => cat.trim()).filter(Boolean)),
-  ].sort((a, b) => a.localeCompare(b));
+    // Pin the collation to the component's UI locale: localeCompare without an
+    // explicit locale falls back to the machine default, which reordered CJK
+    // categories differently on CI than on dev machines.
+  ].sort((a, b) => a.localeCompare(b, locale === "zh-TW" ? "zh-Hant-TW" : "en"));
 
   const selectPlaceholder =
     locale === "zh-TW" ? "選擇現有分類…" : "Select existing…";

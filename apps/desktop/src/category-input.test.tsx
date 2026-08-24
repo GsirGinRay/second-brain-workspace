@@ -45,7 +45,10 @@ test("CategoryInput provides datalist and quick-select options for existing cate
     const datalist = container.querySelector("datalist#test-categories");
     assert.ok(datalist);
     const options = [...datalist.querySelectorAll("option")].map((o) => o.value);
-    assert.deepEqual(options, ["工作", "生活", "提示詞/寫作"]);
+    // The component pins its collation to its UI locale; mirror that here so the
+    // assertion stays valid regardless of the machine's default locale.
+    const expectedOrder = [...existing].sort((a, b) => a.localeCompare(b, "zh-Hant-TW"));
+    assert.deepEqual(options, expectedOrder);
 
     const select = container.querySelector("select.category-quick-select");
     assert.ok(select, "quick select dropdown exists");
