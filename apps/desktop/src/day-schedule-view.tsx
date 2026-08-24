@@ -13,7 +13,6 @@ import {
   taipeiMinutesOfDay,
   timeFromSlotDrop,
 } from "./day-schedule";
-import { InlineTitle } from "./inline-title";
 import { PriorityControl } from "./priority-control";
 import type { UiLanguage } from "./ui-preferences";
 
@@ -45,8 +44,7 @@ export function DaySchedule({
   onSchedule,
   onClearTime,
   onCreateAt,
-  onSelect,
-  onRename,
+  onOpenTask,
   onPriority,
   onDelete,
   onComplete,
@@ -63,8 +61,7 @@ export function DaySchedule({
   onSchedule: (taskId: string, startTime: string) => void;
   onClearTime?: (taskId: string) => void;
   onCreateAt: (title: string, startTime: string) => void;
-  onSelect?: (taskId: string) => void;
-  onRename?: (taskId: string, title: string) => void;
+  onOpenTask?: (taskId: string) => void;
   onPriority?: (taskId: string, priority: BrainTaskSnapshot["priority"]) => void;
   onDelete?: (task: BrainTaskSnapshot) => void;
   onComplete?: (task: BrainTaskSnapshot) => void;
@@ -77,7 +74,6 @@ export function DaySchedule({
   const [previewTop, setPreviewTop] = useState<number | null>(null);
   const [previewHeight, setPreviewHeight] = useState<number | null>(null);
   const [previewTime, setPreviewTime] = useState<string | null>(null);
-  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const dragOrigin = useRef<{
     id: string;
     kind: DragKind;
@@ -90,6 +86,7 @@ export function DaySchedule({
   } | null>(null);
   const autoScrollRef = useRef<number | null>(null);
   const moved = useRef(false);
+  const suppressClick = useRef(false);
   const layouts = useMemo(
     () =>
       layoutTimedBlocks(
@@ -216,6 +213,7 @@ export function DaySchedule({
     const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
     const releasedOnSelf = Boolean(target && event.currentTarget.contains(target));
     const isDragMove = moved.current || !releasedOnSelf || Math.hypot(clientX - origin.startClientX, clientY - origin.startClientY) > 3;
+    suppressClick.current = isDragMove;
     resetDrag();
     if (!isDragMove) return;
 
@@ -323,7 +321,6 @@ export function DaySchedule({
       startClientX: event.clientX,
       startClientY: event.clientY,
     };
-    setDragId(task.id);
     setPreviewTime(task.startTime);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -345,13 +342,15 @@ export function DaySchedule({
       startClientX: event.clientX,
       startClientY: event.clientY,
     };
-    setDragId(task.id);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
   const moveTimedDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (!dragOrigin.current || !gridRef.current) return;
-    if (Math.hypot(event.clientX - dragOrigin.current.startClientX, event.clientY - dragOrigin.current.startClientY) > 3) moved.current = true;
+    if (Math.hypot(event.clientX - dragOrigin.current.startClientX, event.clientY - dragOrigin.current.startClientY) > 4) {
+      moved.current = true;
+      setDragId(dragOrigin.current.id);
+    }
     checkAutoScroll(event.clientY);
     if (dragOrigin.current.kind === "resize") {
       const grid = gridRef.current;
@@ -378,7 +377,10 @@ export function DaySchedule({
 
   const moveLooseDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (!dragOrigin.current || !gridRef.current) return;
-    if (Math.hypot(event.clientX - dragOrigin.current.startClientX, event.clientY - dragOrigin.current.startClientY) > 3) moved.current = true;
+    if (Math.hypot(event.clientX - dragOrigin.current.startClientX, event.clientY - dragOrigin.current.startClientY) > 4) {
+      moved.current = true;
+      setDragId(dragOrigin.current.id);
+    }
     const grid = gridRef.current;
     const rect = grid.getBoundingClientRect();
     if (
@@ -420,7 +422,7 @@ export function DaySchedule({
                   className={`schedule-tray-card ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""}`}
                   tabIndex={0}
                   onPointerDown={(event) => {
-                    if (event.button !== 0 || !task.id || (event.target as HTMLElement).closest("button")) return;
+                    if (event.button !== 0 || !task.id || (event.target as HTMLElement).closest("button,input,select,textarea,a")) return;
                     moved.current = false;
                     const grid = gridRef.current;
                     dragOrigin.current = {
@@ -433,40 +435,40 @@ export function DaySchedule({
                       startClientX: event.clientX,
                       startClientY: event.clientY,
                     };
-                    setDragId(task.id);
                     event.currentTarget.setPointerCapture(event.pointerId);
                   }}
                   onPointerMove={moveLooseDrag}
                   onPointerUp={(event) => finishDrag(event, task.id)}
                   onPointerCancel={resetDrag}
-                  onClick={() => task.id && onSelect?.(task.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === "F2" && task.id) {
-                      event.preventDefault();
-                      setEditingTitleId(task.id);
+                  onLostPointerCapture={() => {
+                    if (dragOrigin.current?.id === task.id) resetDrag();
+                  }}
+                  onClick={() => {
+                    if (suppressClick.current) {
+                      suppressClick.current = false;
                       return;
                     }
+                    if (task.id) onOpenTask?.(task.id);
+                  }}
+                  onKeyDown={(event) => {
                     if ((event.key === "Enter" || event.key === " ") && task.id) {
                       event.preventDefault();
-                      onSelect?.(task.id);
+                      onOpenTask?.(task.id);
                     }
                   }}
                 >
                   <GripVertical aria-hidden="true" />
                   <div className="schedule-tray-body">
-                    {onPriority && task.id ? <PriorityControl priority={task.priority} onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
-                    {onRename && task.id ? (
-                      <InlineTitle
-                        value={task.title}
-                        onSave={(title) => onRename(task.id!, title)}
-                        editing={editingTitleId === task.id}
-                        onEditingChange={(next) => setEditingTitleId(next ? task.id! : null)}
-                        ariaLabel={labels.editTitle}
-                        hint={labels.editTitle}
-                      />
-                    ) : <strong>{task.title}</strong>}
+                    {onPriority && task.id ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
+                    <strong className="inline-title-button">{task.title}</strong>
                     {task.taskDate && task.taskDate < date ? <small>{task.taskDate}</small> : null}
                   </div>
+                  {(onComplete || onDelete) && (
+                    <div className="schedule-tray-actions">
+                      {onComplete && <button type="button" aria-label={task.status === "done" ? labels.reopen : labels.complete} title={task.status === "done" ? labels.reopen : labels.complete} onClick={(event) => { event.stopPropagation(); onComplete(task); }}><Check aria-hidden="true" /></button>}
+                      {onDelete && <button type="button" className="danger" aria-label={labels.delete} title={labels.delete} onClick={(event) => { event.stopPropagation(); onDelete(task); }}><Trash2 aria-hidden="true" /></button>}
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
@@ -495,12 +497,21 @@ export function DaySchedule({
                     startClientX: event.clientX,
                     startClientY: event.clientY,
                   };
-                  setDragId(task.id);
                   event.currentTarget.setPointerCapture(event.pointerId);
                 }}
+                onPointerMove={moveLooseDrag}
                 onPointerUp={(event) => finishDrag(event, task.id)}
                 onPointerCancel={resetDrag}
-                onClick={() => task.id && onSelect?.(task.id)}
+                onLostPointerCapture={() => {
+                  if (dragOrigin.current?.id === task.id) resetDrag();
+                }}
+                onClick={() => {
+                  if (suppressClick.current) {
+                    suppressClick.current = false;
+                    return;
+                  }
+                  if (task.id) onOpenTask?.(task.id);
+                }}
               >
                 {task.title}
               </button>
@@ -570,35 +581,27 @@ export function DaySchedule({
                 onPointerMove={moveTimedDrag}
                 onPointerUp={(event) => finishDrag(event, task.id)}
                 onPointerCancel={resetDrag}
+                onLostPointerCapture={() => {
+                  if (dragOrigin.current?.id === task.id) resetDrag();
+                }}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onSelect?.(task.id!);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "F2") {
-                    event.preventDefault();
-                    setEditingTitleId(task.id!);
+                  if (suppressClick.current) {
+                    suppressClick.current = false;
                     return;
                   }
+                  onOpenTask?.(task.id!);
+                }}
+                onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    onSelect?.(task.id!);
+                    onOpenTask?.(task.id!);
                   }
                 }}
               >
                 <div className="timed-block-head">
-                  {onPriority ? <PriorityControl priority={task.priority} onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
-                  {onRename ? (
-                    <InlineTitle
-                      value={task.title}
-                      onSave={(title) => onRename(task.id!, title)}
-                      editing={editingTitleId === task.id}
-                      onEditingChange={(next) => setEditingTitleId(next ? task.id! : null)}
-                      className="timed-block-title"
-                      ariaLabel={labels.editTitle}
-                      hint={labels.editTitle}
-                    />
-                  ) : <strong>{task.title}</strong>}
+                  {onPriority ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
+                  <strong className="timed-block-title">{task.title}</strong>
                 </div>
                 <small>
                   {dragId === task.id && previewTime ? previewTime : task.startTime}
@@ -646,6 +649,9 @@ export function DaySchedule({
                     onPointerMove={moveTimedDrag}
                     onPointerUp={(event) => finishDrag(event, task.id)}
                     onPointerCancel={resetDrag}
+                    onLostPointerCapture={() => {
+                      if (dragOrigin.current?.id === task.id) resetDrag();
+                    }}
                   />
                 )}
               </article>

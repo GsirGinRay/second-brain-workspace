@@ -59,10 +59,11 @@ function stubPointer() {
   }
 }
 
-test("double-clicking a timeline title opens the in-place editor", () => {
+test("clicking a timeline task opens the shared detail without inline editing", () => {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  const opened: string[] = [];
   try {
     flushSync(() => {
       root.render(
@@ -73,16 +74,17 @@ test("double-clicking a timeline title opens the in-place editor", () => {
           labels={labels}
           onSchedule={() => undefined}
           onCreateAt={() => undefined}
-          onRename={() => undefined}
+          onOpenTask={(taskId) => opened.push(taskId)}
         />,
       );
     });
-    const title = container.querySelector(".timed-block-title, .inline-title-button, button[aria-label='雙擊編輯']");
-    assert.ok(title, "timeline title control exists");
+    const timedBlock = container.querySelector(".timed-block");
+    assert.ok(timedBlock, "timeline task exists");
     flushSync(() => {
-      title!.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }) as unknown as Event);
+      timedBlock!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event);
     });
-    assert.ok(container.querySelector("textarea, input"), "title editor opens");
+    assert.deepEqual(opened, ["a"]);
+    assert.equal(container.querySelector("textarea, input"), null);
   } finally {
     container.remove();
   }

@@ -5,6 +5,8 @@ import test from "node:test";
 
 const app = () => readFileSync(resolve(import.meta.dirname, "App.tsx"), "utf8");
 const css = () => readFileSync(resolve(import.meta.dirname, "styles.css"), "utf8");
+const detail = () => readFileSync(resolve(import.meta.dirname, "entity-detail-dialog.tsx"), "utf8");
+const blockEditor = () => readFileSync(resolve(import.meta.dirname, "markdown-block-editor.tsx"), "utf8");
 const tauriConfig = () =>
   JSON.parse(
     readFileSync(
@@ -43,7 +45,8 @@ test("desktop supports quick add, editing, task actions and readable icons", () 
     "Trash2", "CheckCircle2", "RefreshCw", "Plus", "Pencil", "Search",
     "Star", "Menu", "Eye", "Save", "RotateCcw",
   ]) assert.match(source, new RegExp(`<${icon}\\b`));
-  assert.match(source, /<TaskEditor/);
+  assert.match(source, /<TaskDetailDialog/);
+  assert.match(source, /<ProjectDetailDialog/);
   assert.match(source, /deleteTaskPermanently/);
   assert.match(source, /markMostImportant/);
 });
@@ -139,21 +142,26 @@ test("task actions are compact accessible icons and permanent delete is never ar
   assert.doesNotMatch(source, /永久刪除[\s\S]{0,180}archive\(/);
   assert.match(styles, /\.task-action-button[^}]*min-width:\s*40px/);
   assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(4/);
-  assert.match(source, /function AgendaInlineTitle/);
-  assert.match(source, /onEdit=\{\(\) => setEditingTaskId/);
+  assert.match(source, /onOpenTask=\{setSelectedTaskId\}/);
+  assert.match(source, /className="week-task-actions"/);
+  assert.match(source, /className=\{`calendar-quick-check/);
   assert.match(source, /className="agenda-drag-handle"[\s\S]{0,400}setPointerCapture/);
   assert.match(source, /remoteEnabled:\s*devicePaired/);
   assert.match(source, /if \(devicePaired\) \{[\s\S]{0,160}runSync\(\{ background: true \}\)/);
 });
 
-test("today focus and calendar agenda expose the task body editor", () => {
+test("tasks use one Notion-like live Markdown detail canvas", () => {
   const source = app();
   const styles = css();
-  assert.match(source, /inline-task-editor/);
-  assert.match(source, /agenda-editor/);
-  assert.match(source, /onEdit=\{\(\) => setEditingTaskId/);
-  assert.match(source, /aria-label="編輯任務"/);
-  assert.match(styles, /\.inline-task-editor,\.agenda-editor\{grid-column:1\/-1/);
+  const detailSource = detail();
+  const blockSource = blockEditor();
+  assert.match(source, /selectedTaskId/);
+  assert.match(detailSource, /<MarkdownBlockEditor/);
+  assert.doesNotMatch(detailSource, /<MarkdownEditor/);
+  assert.doesNotMatch(detailSource, /role="tablist"/);
+  assert.match(blockSource, /data-markdown-drag-handle/);
+  assert.match(blockSource, /type="checkbox"/);
+  assert.match(styles, /\.markdown-block-editor/);
 });
 
 test("today command center exposes template management from the hero", () => {
@@ -196,11 +204,13 @@ test("desktop separates collections from outcome projects and supports promotion
   assert.match(source, /search\.placeholder/);
 });
 
-test("desktop calendar and board expose the task editor", () => {
+test("desktop calendar and board open the shared task detail", () => {
   const source = app();
   assert.match(source, /<Board[\s\S]*projects=\{projects\}/);
   assert.match(source, /<Calendar[\s\S]*projects=\{projects\}/);
-  assert.match(source, /<TaskEditor[\s\S]*task=\{task\}[\s\S]*projects=\{projects\}/);
+  assert.match(source, /<Board[\s\S]*onOpenTask=\{setSelectedTaskId\}/);
+  assert.match(source, /<Calendar[\s\S]*onOpenTask=\{setSelectedTaskId\}/);
+  assert.match(source, /<TaskDetailDialog[\s\S]*task=\{selectedTask\}/);
 });
 
 test("completed tasks are hidden by default and the preference is local", () => {

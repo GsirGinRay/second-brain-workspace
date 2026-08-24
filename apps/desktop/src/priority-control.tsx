@@ -49,19 +49,21 @@ function Popover({
 export function PriorityBadge({
   priority,
   locale = "zh-TW",
+  compact = false,
 }: {
   priority: BrainTaskSnapshot["priority"];
   locale?: UiLanguage;
+  compact?: boolean;
 }) {
   const item = priorityDisplay(priority);
   const label = translate(locale, `task.priority.${priority}`);
   return (
     <span
-      className={`priority-badge priority-${priority}`}
+      className={`priority-badge priority-${priority} ${compact ? "priority-compact" : ""}`}
       title={translate(locale, "task.priority.label", { code: item.code, label })}
     >
       {item.code}
-      <small>{label}</small>
+      {!compact && <small>{label}</small>}
     </span>
   );
 }
@@ -70,10 +72,12 @@ export function PriorityControl({
   priority,
   onChange,
   locale = "zh-TW",
+  compact = false,
 }: {
   priority: BrainTaskSnapshot["priority"];
   onChange: (priority: BrainTaskSnapshot["priority"]) => void;
   locale?: UiLanguage;
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const menuId = useId();
@@ -99,7 +103,7 @@ export function PriorityControl({
           setOpen(true);
         }}
       >
-        <PriorityBadge priority={priority} locale={locale} />
+        <PriorityBadge priority={priority} locale={locale} compact={compact} />
       </button>
       <Popover open={open} onClose={() => setOpen(false)}>
         <div id={menuId}>

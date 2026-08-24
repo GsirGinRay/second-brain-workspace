@@ -55,6 +55,7 @@ function renderToday(tasks: BrainTaskSnapshot[], routineTemplate: RoutineTemplat
         onShowCompletedChange={() => undefined}
         onSave={(next) => saved.push(next.map((item) => ({ ...item })))}
         onDelete={() => undefined}
+        onOpenTask={() => undefined}
         onQuickAdd={() => undefined}
         routineTemplate={routineTemplate}
         onRoutineTemplateChange={() => undefined}
@@ -190,6 +191,53 @@ test("dragging an unscheduled today task onto an hour slot sets the start time",
     }
     assert.equal(rendered.saved.length, 1, "drop onto the hour grid saves once");
     const updated = rendered.saved[0]!.find((item) => item.id === "open-today");
+    assert.equal(updated?.startTime, "10:00");
+    assert.equal(updated?.taskDate, today);
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("dragging an unscheduled task by its title schedules it on the timeline", () => {
+  const today = taipeiDateKey(new Date());
+  const open: BrainTaskSnapshot = {
+    schemaVersion: 6,
+    id: "title-drag-task",
+    title: "抓住標題拖曳",
+    status: "todo",
+    taskDate: today,
+    priority: "normal",
+    projectId: null,
+    projectName: null,
+    rank: "00000001",
+    sourcePath: "10-收件匣/待辦收件匣.md",
+    sourceHeading: null,
+    completedAt: null,
+  };
+  const rendered = renderToday([open], createDefaultRoutineTemplate("55555555-5555-4555-8555-555555555555"));
+  try {
+    const title = rendered.container.querySelector<HTMLElement>(".schedule-tray-card .inline-title-button");
+    const slot = rendered.container.querySelector<HTMLElement>('[data-schedule-minutes="600"]');
+    assert.ok(title, "the task title is rendered inside the draggable card");
+    assert.ok(slot, "10:00 hour slot exists");
+    const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+    if (typeof proto.setPointerCapture !== "function") {
+      Object.defineProperty(proto, "setPointerCapture", { value: () => undefined, configurable: true, writable: true });
+    }
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => slot;
+    try {
+      flushSync(() => {
+        title!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 2, clientX: 8, clientY: 8 }) as unknown as Event);
+        title!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 2, clientX: 160, clientY: 80 }) as unknown as Event);
+        title!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 2, clientX: 160, clientY: 80 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+    assert.equal(rendered.saved.length, 1, "dropping the title schedules exactly once");
+    const updated = rendered.saved[0]!.find((item) => item.id === open.id);
     assert.equal(updated?.startTime, "10:00");
     assert.equal(updated?.taskDate, today);
   } finally {

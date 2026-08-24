@@ -54,6 +54,7 @@ const projects: BrainProjectSnapshot[] = [];
 interface Rendered {
   container: HTMLElement;
   saved: BrainTaskSnapshot[][];
+  opened: string[];
 }
 
 function renderCalendar(tasks: BrainTaskSnapshot[]): Rendered {
@@ -61,6 +62,7 @@ function renderCalendar(tasks: BrainTaskSnapshot[]): Rendered {
   document.body.appendChild(container);
   const root = createRoot(container);
   const saved: BrainTaskSnapshot[][] = [];
+  const opened: string[] = [];
   const onSave = (next: BrainTaskSnapshot[]) => {
     saved.push(next.map((item) => ({ ...item })));
   };
@@ -73,11 +75,12 @@ function renderCalendar(tasks: BrainTaskSnapshot[]): Rendered {
         onShowCompletedChange={() => undefined}
         onSave={onSave}
         onDelete={() => undefined}
+        onOpenTask={(taskId) => opened.push(taskId)}
         onPromote={() => undefined}
       />,
     );
   });
-  return { container, saved };
+  return { container, saved, opened };
 }
 
 function dayCell(container: HTMLElement, date: string): HTMLElement | null {
@@ -181,16 +184,17 @@ test("week view keeps a bounded stage so the idea inbox stays reachable", () => 
   }
 });
 
-test("double-clicking an idea title opens the in-place editor", () => {
+test("clicking an idea opens the shared task detail without inline editing", () => {
   const idea = task("idea-1", "還沒排的想法", null);
   const rendered = renderCalendar([idea]);
   try {
-    const title = rendered.container.querySelector("[data-idea-drawer] .idea-card-body button");
-    assert.ok(title, "idea title is editable");
+    const card = rendered.container.querySelector("[data-idea-drawer] article");
+    assert.ok(card, "idea card is available");
     flushSync(() => {
-      title!.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }) as unknown as Event);
+      card!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event);
     });
-    assert.ok(rendered.container.querySelector("[data-idea-drawer] textarea, [data-idea-drawer] input"), "idea title editor opens");
+    assert.deepEqual(rendered.opened, ["idea-1"]);
+    assert.equal(rendered.container.querySelector("[data-idea-drawer] textarea"), null);
   } finally {
     rendered.container.remove();
   }

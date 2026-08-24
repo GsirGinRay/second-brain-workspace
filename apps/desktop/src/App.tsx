@@ -115,6 +115,7 @@ import appLogo from "./assets/app-logo.png";
 import { MarkdownEditor } from "./markdown-editor";
 import { formatMinutesAsTime, minutesFromOffset, snapMinutes, timeFromSlotDrop } from "./day-schedule";
 import { DaySchedule } from "./day-schedule-view";
+import { ProjectDetailDialog, TaskDetailDialog } from "./entity-detail-dialog";
 import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./architecture";
 import "./styles.css";
@@ -247,6 +248,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [onboardingOpen, setOnboardingOpen] = useState(() => localStorage.getItem("second-brain.onboardingCompleted") !== "true");
   const [closeGuardOpen, setCloseGuardOpen] = useState(false);
   const [selectedBoardProjectId, setSelectedBoardProjectId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedProjectDetailId, setSelectedProjectDetailId] = useState<string | null>(null);
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
   const [createEntity, setCreateEntity] = useState<"project" | "collection" | null>(null);
   const [promotedTask, setPromotedTask] = useState<BrainTaskSnapshot | null>(null);
@@ -299,6 +302,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const promptCollections = collections.filter((item) =>
     (item.category ?? "").trim().toLowerCase().startsWith("提示詞"),
   );
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const selectedProjectDetail = projects.find((project) => project.id === selectedProjectDetailId) ?? null;
   const doImportPrompts = () => {
     setImportError("");
     let imported;
@@ -1273,6 +1278,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onShowCompletedChange={setCompletedVisibility}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
+        onOpenTask={setSelectedTaskId}
         onQuickAdd={() => setQuickAddOpen(true)}
         routineTemplate={routineTemplate}
         onRoutineTemplateChange={saveRoutineTemplate}
@@ -1285,6 +1291,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onShowCompletedChange={setCompletedVisibility}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
+        onOpenTask={setSelectedTaskId}
         onPromote={(task) => {
           setPromotedTask(task);
           setCreateEntity("project");
@@ -1298,6 +1305,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onShowCompletedChange={setCompletedVisibility}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
+        onOpenTask={setSelectedTaskId}
         selectedProjectId={selectedBoardProjectId}
         onProjectFilterChange={setSelectedBoardProjectId}
         onBackToProjects={() => setView("projects")}
@@ -1306,13 +1314,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       <Projects
         projects={projects}
         tasks={tasks}
-        onSave={(nextProjects, nextTasks) => persistLocal(nextTasks, nextProjects)}
-        onOpen={(projectId) => {
+        onOpenProject={setSelectedProjectDetailId}
+        onOpenBoard={(projectId) => {
           setSelectedBoardProjectId(projectId);
           setView("board");
         }}
         onCreate={() => setCreateEntity("project")}
-        onDelete={(project) => void permanentlyDeleteProject(project)}
       />
     ) : view === "collections" ? (
       <Collections
@@ -1491,13 +1498,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           onSelect={(result) => {
             setSearchOpen(false);
             if (result.kind === "project") {
-              setSelectedBoardProjectId(result.id);
-              setView("board");
+              setSelectedProjectDetailId(result.id);
             } else if (result.kind === "collection") {
               setSelectedCollectionId(result.id);
               setView("collections");
             } else {
-              setView(result.value.taskDate ? "calendar" : "today");
+              setSelectedTaskId(result.id);
             }
           }}
           actions={[
@@ -1507,6 +1513,56 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             { label: preferences.language === "zh-TW" ? "建立知識架構" : "Build architecture", run: () => setArchitectureOpen(true) },
             { label: preferences.language === "zh-TW" ? "前往同步與設定" : "Go to sync & settings", run: () => setView("sync") },
           ]}
+        />
+      )}
+      {selectedTask && (
+        <TaskDetailDialog
+          key={selectedTask.id ?? selectedTask.title}
+          task={selectedTask}
+          projects={projects}
+          locale={preferences.language}
+          t={t}
+          onClose={() => setSelectedTaskId(null)}
+          onSave={async (next) => {
+            const prepared = { ...next, completedAt: next.status === "done" ? (next.completedAt ?? taipeiDateKey()) : null };
+            const changed = tasks.map((task) => task.id === prepared.id ? prepared : task);
+            return persistLocal(
+              prepared.priority === "highest" && prepared.id
+                ? markMostImportant(changed, prepared.id, prepared.taskDate ?? taipeiDateKey())
+                : changed,
+            );
+          }}
+          onDelete={(task) => void permanentlyDeleteTask(task)}
+        />
+      )}
+      {selectedProjectDetail && (
+        <ProjectDetailDialog
+          key={selectedProjectDetail.id ?? selectedProjectDetail.name}
+          project={selectedProjectDetail}
+          openTasks={tasks.filter((task) => task.projectId === selectedProjectDetail.id && task.status !== "done").length}
+          doingTasks={tasks.filter((task) => task.projectId === selectedProjectDetail.id && task.status === "doing").length}
+          existingAreas={[...new Set(projects.map((project) => project.area).filter((area): area is string => Boolean(area)))].sort()}
+          locale={preferences.language}
+          t={t}
+          onClose={() => setSelectedProjectDetailId(null)}
+          onSave={(next) => persistLocal(tasks, projects.map((project) => {
+            if (project.id === next.id) return next;
+            return next.focusToday && project.focusToday ? { ...project, focusToday: false } : project;
+          }))}
+          onOpenBoard={() => {
+            setSelectedBoardProjectId(selectedProjectDetail.id);
+            setSelectedProjectDetailId(null);
+            setView("board");
+          }}
+          onComplete={() => {
+            const openCount = tasks.filter((task) => task.projectId === selectedProjectDetail.id && task.status !== "done").length;
+            if (!window.confirm(`完成「${selectedProjectDetail.name}」？\n\n將同時完成 ${openCount} 項未完成任務，並保留完整歷史。`)) return;
+            const completed = completeProject(selectedProjectDetail, tasks, taipeiDateKey());
+            void persistLocal(completed.tasks, projects.map((project) => project.id === selectedProjectDetail.id ? completed.project : project));
+          }}
+          onReopen={() => void persistLocal(tasks, projects.map((project) => project.id === selectedProjectDetail.id ? { ...project, status: "active", completedAt: null, focusToday: false } : project))}
+          onArchive={() => void persistLocal(tasks, projects.map((project) => project.id === selectedProjectDetail.id ? { ...project, status: "archived", focusToday: false } : project))}
+          onDelete={() => void permanentlyDeleteProject(selectedProjectDetail)}
         />
       )}
       {createEntity && (
@@ -1931,10 +1987,10 @@ function TaskActionBar({
   );
 }
 
-export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onQuickAdd, routineTemplate, onRoutineTemplateChange }: {
+export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onOpenTask, onQuickAdd, routineTemplate, onRoutineTemplateChange }: {
   tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; showCompleted: boolean;
   onShowCompletedChange: (value: boolean) => void;
-  onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onQuickAdd: () => void;
+  onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onOpenTask: (taskId: string) => void; onQuickAdd: () => void;
   routineTemplate: RoutineTemplate; onRoutineTemplateChange: (template: RoutineTemplate) => void;
 }) {
   const { t, preferences } = useUiPreferences();
@@ -1953,7 +2009,6 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
   const [notice, setNotice] = useState("");
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [dragHandleId, setDragHandleId] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const clock = useMemo(() => new Date(), [today]);
   const patchTask = (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => {
     const changed = tasks.map((item) => item.id === task.id ? { ...item, ...patch } : item);
@@ -1979,7 +2034,6 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     setDraggedItem(null);
   };
   const important = groups.today.find((task) => task.priority === "highest") ?? null;
-  const expanded = [...groups.overdue, ...groups.today, ...completed].find((task) => task.id === expandedId) ?? null;
   return <section className="command-center">
     <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
@@ -2015,29 +2069,21 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
         onSchedule={(taskId, startTime) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, today, startTime) : item))}
         onClearTime={(taskId) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, item.taskDate ?? today, null) : item))}
         onCreateAt={(title, startTime) => onSave([...tasks, newTask(title, { taskDate: today, startTime, durationMinutes: 30 })])}
-        onSelect={setExpandedId}
-        onRename={(taskId, title) => onSave(tasks.map((item) => item.id === taskId ? { ...item, title } : item))}
+        onOpenTask={onOpenTask}
         onPriority={(taskId, priority) => onSave(applyTaskPriority(tasks, taskId, priority, today))}
         onDelete={onDelete}
         onComplete={(task) => complete(task)}
         onResize={(taskId, durationMinutes) => onSave(tasks.map((item) => item.id === taskId ? { ...item, durationMinutes } : item))}
       />
     </section>
-    {expanded && (
-      <section className="selected-task-editor">
-        <header className="today-panel"><h3>{t("today.editSelected")}</h3></header>
-        <InlineTaskCard task={expanded} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} />
-      </section>
-    )}
-    {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} projects={projects} today={today} onPatch={patchTask} onComplete={complete} onDelete={onDelete} />)}</div></details>}
+    {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} />)}</div></details>}
   </section>;
 }
 
-function InlineTaskCard({ task, projects, today, onPatch, onComplete, onDelete }: { task: BrainTaskSnapshot; projects: BrainProjectSnapshot[]; today: string; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
+function InlineTaskCard({ task, today, onOpen, onPatch, onComplete, onDelete }: { task: BrainTaskSnapshot; today: string; onOpen: (taskId: string) => void; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
   const { t, preferences } = useUiPreferences();
-  const [editing, setEditing] = useState(false);
   const overdueDays = task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
-  return <article className={`inline-task-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><InlineTitle value={task.title} onSave={(title) => onPatch(task, { title })} ariaLabel={t("task.field.title")} hint={t("task.hint.editTitle")} /></div><div className="inline-fields"><select aria-label={`${task.title}所屬專案`} value={task.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); onPatch(task, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><TaskDateInput ariaLabel={`${task.title}日期`} value={task.taskDate ?? null} onCommit={(next) => onPatch(task, { taskDate: next })} /><input aria-label={`${task.title}開始時間`} type="time" value={task.startTime ?? ""} onChange={(event) => onPatch(task, { startTime: event.target.value || null, durationMinutes: event.target.value ? task.durationMinutes ?? 30 : null, timeZone: "Asia/Taipei" })} /><select aria-label={`${task.title}持續時間`} disabled={!task.startTime} value={task.durationMinutes ?? 30} onChange={(event) => onPatch(task, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions"><button aria-label="編輯任務" title="編輯任務" onClick={() => setEditing((value) => !value)}><Pencil /></button><button className={task.priority === "highest" ? "active" : ""} aria-label="設為今日最重要" title="設為今日最重要" onClick={() => onPatch(task, { priority: "highest", taskDate: today })}><Star fill={task.priority === "highest" ? "currentColor" : "none"} /></button>{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={() => onPatch(task, { taskDate: today })}><CalendarDays /></button>}<button className="danger-icon" aria-label="永久刪除" title="永久刪除" onClick={() => onDelete(task)}><Trash2 /></button></div>{editing && <div className="inline-task-editor"><TaskEditor task={task} projects={projects} onSave={(next) => { setEditing(false); onPatch(task, next); }} /></div>}</article>;
+  return <article className={`inline-task-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={(event) => { event.stopPropagation(); onComplete(task); }}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong>{task.title}</strong></div><small>{task.projectName ?? t("app.unassigned")}{task.startTime ? ` · ${task.startTime}` : ""}</small>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<button className="danger-icon" aria-label="永久刪除" title="永久刪除" onClick={(event) => { event.stopPropagation(); onDelete(task); }}><Trash2 /></button></div></article>;
 }
 
 function TaskDateInput({
@@ -2556,6 +2602,7 @@ function Board({
   onShowCompletedChange,
   onSave,
   onDelete,
+  onOpenTask,
   selectedProjectId,
   onProjectFilterChange,
   onBackToProjects,
@@ -2566,14 +2613,13 @@ function Board({
   onShowCompletedChange: (value: boolean) => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void;
   onDelete: (task: BrainTaskSnapshot) => void;
+  onOpenTask: (taskId: string) => void;
   selectedProjectId: string | null;
   onProjectFilterChange: (projectId: string | null) => void;
   onBackToProjects: () => void;
 }) {
   const { t, preferences } = useUiPreferences();
   const [drag, setDrag] = useState<string | null>(null);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
   const boardDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
   const today = taipeiDateKey();
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
@@ -2689,10 +2735,13 @@ function Board({
                     }}
                     onPointerUp={(event) => finishBoardPointer(event, task.id)}
                     onPointerCancel={() => { boardDrag.current = null; setDrag(null); }}
+                    onClick={(event) => {
+                      if (!(event.target as HTMLElement).closest("button,input,select,textarea,a") && task.id) onOpenTask(task.id);
+                    }}
                     onKeyDown={(event) => {
-                      if (event.key === "F2" && task.id) {
+                      if ((event.key === "Enter" || event.key === " ") && !event.altKey && task.id) {
                         event.preventDefault();
-                        setRenamingId(task.id);
+                        onOpenTask(task.id);
                         return;
                       }
                       if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
@@ -2707,24 +2756,16 @@ function Board({
                     tabIndex={0}
                   >
                     <div className="task-title-row">
-                      <button type="button" className="board-drag-handle" data-drag-handle aria-label={`拖曳 ${task.title}`}>
+                      <button type="button" className="board-drag-handle" data-drag-handle aria-label={`拖曳 ${task.title}`} onClick={(event) => event.stopPropagation()}>
                         <GripVertical aria-hidden="true" />
                       </button>
                       <PriorityControl
                         priority={task.priority}
+                        compact
                         locale={preferences.language}
                         onChange={(priority) => task.id && void onSave(applyTaskPriority(tasks, task.id, priority, task.taskDate ?? today))}
                       />
-                      <InlineTitle
-                        value={task.title}
-                        prefix={task.status === "done" ? "✓ " : ""}
-                        editing={renamingId === task.id}
-                        onEditingChange={(next) => setRenamingId(next ? task.id : null)}
-                        onSave={(title) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, title } : item))}
-                        className="board-inline-title"
-                        ariaLabel={t("task.field.title")}
-                        hint={t("task.hint.editTitle")}
-                      />
+                      <strong className="board-inline-title">{task.status === "done" ? "✓ " : ""}{task.title}</strong>
                     </div>
                     <small>{task.projectName ?? t("app.unassigned")}</small>
                     <label className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
@@ -2769,25 +2810,10 @@ function Board({
                         important={task.priority === "highest"}
                         onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, task.taskDate ?? today))}
                         onComplete={() => moveToLane(task.id, task.status === "done" ? "todo" : "done")}
-                        onEdit={() => setEditingTaskId(editingTaskId === task.id ? null : task.id)}
+                        onEdit={() => task.id && onOpenTask(task.id)}
                         onDelete={onDelete}
                       />
                     </div>
-                    {editingTaskId === task.id && (
-                      <TaskEditor
-                        task={task}
-                        projects={projects}
-                        onSave={(next) => {
-                          setEditingTaskId(null);
-                          const changed = tasks.map((item) => item.id === task.id ? next : item);
-                          void onSave(
-                            next.priority === "highest" && next.id
-                              ? markMostImportant(changed, next.id, next.taskDate ?? today)
-                              : changed,
-                          );
-                        }}
-                      />
-                    )}
                   </article>
                 ))}
               </section>
@@ -2805,6 +2831,7 @@ export function Calendar({
   onShowCompletedChange,
   onSave,
   onDelete,
+  onOpenTask,
   onPromote,
 }: {
   tasks: BrainTaskSnapshot[];
@@ -2813,6 +2840,7 @@ export function Calendar({
   onShowCompletedChange: (value: boolean) => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void;
   onDelete: (task: BrainTaskSnapshot) => void;
+  onOpenTask: (taskId: string) => void;
   onPromote: (task: BrainTaskSnapshot) => void;
 }) {
   const { preferences, t } = useUiPreferences();
@@ -2826,15 +2854,16 @@ export function Calendar({
   const [dragOriginDate, setDragOriginDate] = useState<string | null>(null);
   const [dropTargetDate, setDropTargetDate] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [ideasExpanded, setIdeasExpanded] = useState(false);
   const [ideaContextMenu, setIdeaContextMenu] = useState<{
     task: BrainTaskSnapshot;
     x: number;
     y: number;
   } | null>(null);
-  const [renamingIdeaId, setRenamingIdeaId] = useState<string | null>(null);
   const calendarDragMoved = useRef(false);
+  const calendarDragOrigin = useRef<{ x: number; y: number } | null>(null);
+  const calendarDragCandidate = useRef<{ id: string; originDate: string | null } | null>(null);
+  const suppressCalendarClick = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const clock = useMemo(() => new Date(), [today]);
   const flashNotice = (message: string) => {
@@ -2870,17 +2899,42 @@ export function Calendar({
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [ideaContextMenu]);
-  const beginDrag = (id: string | null, originDate: string | null) => {
+  const beginDrag = (id: string | null, originDate: string | null, x: number, y: number) => {
     calendarDragMoved.current = false;
-    setDragTaskId(id);
-    setDragOriginDate(originDate);
+    calendarDragOrigin.current = { x, y };
+    calendarDragCandidate.current = id ? { id, originDate } : null;
+    setDragTaskId(null);
+    setDragOriginDate(null);
     setDropTargetDate(null);
     setActiveTaskId(id);
   };
   const resetDrag = () => {
+    calendarDragOrigin.current = null;
+    calendarDragCandidate.current = null;
+    calendarDragMoved.current = false;
     setDragTaskId(null);
     setDragOriginDate(null);
     setDropTargetDate(null);
+  };
+  const openTask = (id: string | null) => {
+    if (!id) return;
+    if (suppressCalendarClick.current) {
+      suppressCalendarClick.current = false;
+      return;
+    }
+    setActiveTaskId(id);
+    onOpenTask(id);
+  };
+  const trackCalendarDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const origin = calendarDragOrigin.current;
+    if (origin && !calendarDragMoved.current && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 4) {
+      calendarDragMoved.current = true;
+      setDragTaskId(calendarDragCandidate.current?.id ?? null);
+      setDragOriginDate(calendarDragCandidate.current?.originDate ?? null);
+    }
+    const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+    const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
+    setDropTargetDate(date ?? null);
   };
   function shift(delta: number) {
     if (mode === "week") {
@@ -2945,7 +2999,8 @@ export function Calendar({
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
     const releasedOnSelf = Boolean(target && event.currentTarget.contains(target));
     const didMove = calendarDragMoved.current || !releasedOnSelf;
-    calendarDragMoved.current = false;
+    suppressCalendarClick.current = didMove;
+    if (didMove) window.setTimeout(() => { suppressCalendarClick.current = false; }, 0);
     if (!didMove) {
       resetDrag();
       return;
@@ -3081,8 +3136,7 @@ export function Calendar({
             onSchedule={(taskId, startTime) => schedule(taskId, selected, startTime)}
             onClearTime={(taskId) => schedule(taskId, selected, null)}
             onCreateAt={(title, startTime) => void onSave([...tasks, newTask(title, { taskDate: selected, startTime, durationMinutes: 30 })])}
-            onSelect={(taskId) => setActiveTaskId(taskId)}
-            onRename={(taskId, title) => void onSave(tasks.map((item) => item.id === taskId ? { ...item, title } : item))}
+            onOpenTask={openTask}
             onPriority={(taskId, priority) => void onSave(applyTaskPriority(tasks, taskId, priority, selected))}
             onDelete={remove}
             onComplete={(task) => complete(task.id)}
@@ -3099,7 +3153,7 @@ export function Calendar({
               {cells.map((cell) => {
                 const dayEntries = byDate.get(cell.date) ?? [];
                 return (
-                  <button
+                  <section
                     key={cell.date}
                     className={`calendar-day ${cell.currentMonth ? "" : "muted"} ${selected === cell.date ? "selected" : ""} ${cell.date === today ? "today" : ""} ${dragTaskId && dragOriginDate === cell.date ? "drag-origin" : ""} ${dragTaskId && dropTargetDate === cell.date && dragOriginDate !== cell.date ? "drop-target" : ""}`}
                     data-calendar-date={cell.date}
@@ -3116,31 +3170,29 @@ export function Calendar({
                       {dayEntries.slice(0, 4).map((entry) => (
                         <span
                           onPointerDown={(event) => {
-                            if (event.button === 0 && entry.task.id) {
-                              beginDrag(entry.task.id, entry.date);
+                            if (event.button === 0 && entry.task.id && !(event.target as HTMLElement).closest("button,input")) {
+                              beginDrag(entry.task.id, entry.date, event.clientX, event.clientY);
                               event.currentTarget.setPointerCapture(event.pointerId);
                             }
                           }}
                           onPointerMove={(event) => {
-                            if (!dragTaskId) return;
-                            const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-                            const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
-                            setDropTargetDate(date ?? null);
+                            trackCalendarDrag(event);
                           }}
                           onPointerUp={(event) => finishPointerDrag(event, entry.task.id)}
+                          onPointerCancel={resetDrag}
+                          onLostPointerCapture={() => {
+                            if (calendarDragCandidate.current?.id === entry.task.id || dragTaskId === entry.task.id) resetDrag();
+                          }}
                           onClick={(event) => {
                             event.stopPropagation();
-                            setActiveTaskId(entry.task.id);
-                          }}
-                          onDoubleClick={(event) => {
-                            event.stopPropagation();
-                            openSchedule(entry.date);
+                            openTask(entry.task.id);
                           }}
                           style={taskProjectStyle(entry.task)}
                           key={`${entry.task.id}:${entry.date}`}
                           className={`calendar-task-title ${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragTaskId === entry.task.id ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
                         >
                           <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
+                          <button type="button" className={`calendar-quick-check ${entry.task.status === "done" ? "done" : ""}`} aria-label={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} title={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); complete(entry.task.id); }}>{entry.task.status === "done" ? "✓" : ""}</button>
                           {entry.task.status === "done" && <span className="task-done-check">✓</span>}
                           <span className="calendar-task-text">{entry.task.title}</span>
                         </span>
@@ -3150,7 +3202,7 @@ export function Calendar({
                       )}
                     </div>
                     {dragTaskId && <i className="drop-hint">拖到這一天排程</i>}
-                  </button>
+                  </section>
                 );
               })}
             </div>
@@ -3196,23 +3248,23 @@ export function Calendar({
                     {dayEntries.map((entry) => (
                       <article
                         onPointerDown={(event) => {
-                          if (event.button === 0 && entry.task.id) {
-                            beginDrag(entry.task.id, entry.date);
+                          if (event.button === 0 && entry.task.id && !(event.target as HTMLElement).closest("button,input,select")) {
+                            beginDrag(entry.task.id, entry.date, event.clientX, event.clientY);
                             event.currentTarget.setPointerCapture(event.pointerId);
                           }
                         }}
                         onPointerMove={(event) => {
-                          if (!dragTaskId) return;
-                          const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-                          const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
-                          setDropTargetDate(date ?? null);
+                          trackCalendarDrag(event);
                         }}
                         onPointerUp={(event) => finishPointerDrag(event, entry.task.id)}
+                        onPointerCancel={resetDrag}
+                        onLostPointerCapture={() => {
+                          if (calendarDragCandidate.current?.id === entry.task.id || dragTaskId === entry.task.id) resetDrag();
+                        }}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setActiveTaskId(entry.task.id);
+                           openTask(entry.task.id);
                         }}
-                        onDoubleClick={() => openSchedule(entry.date)}
                         style={taskProjectStyle(entry.task)}
                         className={`${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragTaskId === entry.task.id ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
                         key={`${entry.task.id}:${entry.date}`}
@@ -3227,6 +3279,7 @@ export function Calendar({
                         <small>
                           {entry.task.projectName ?? "無專案"}
                         </small>
+                        <div className="week-task-actions"><button type="button" aria-label={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} title={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} onClick={(event) => { event.stopPropagation(); complete(entry.task.id); }}><CheckCircle2 aria-hidden="true" /></button><button type="button" className="danger" aria-label={t("task.action.delete")} title={t("task.action.delete")} onClick={(event) => { event.stopPropagation(); remove(entry.task); }}><Trash2 aria-hidden="true" /></button></div>
                       </article>
                     ))}
                   </div>
@@ -3263,11 +3316,11 @@ export function Calendar({
             ) : (
               visibleIdeas.map((task) => (
                 <article
-                  onClick={() => setActiveTaskId(task.id)}
+                  onClick={() => openTask(task.id)}
                   onKeyDown={(event) => {
-                    if (event.key === "F2" && task.id) {
+                    if ((event.key === "Enter" || event.key === " ") && task.id) {
                       event.preventDefault();
-                      setRenamingIdeaId(task.id);
+                      openTask(task.id);
                     }
                   }}
                   tabIndex={0}
@@ -3293,31 +3346,30 @@ export function Calendar({
                     title="拖曳到日期"
                     onPointerDown={(event) => {
                       if (event.button !== 0 || !task.id) return;
-                      beginDrag(task.id, null);
+                      beginDrag(task.id, null, event.clientX, event.clientY);
                       event.currentTarget.setPointerCapture(event.pointerId);
                     }}
                     onPointerMove={(event) => {
-                      if (!dragTaskId) return;
-                      const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-                      const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
-                      setDropTargetDate(date ?? null);
+                      trackCalendarDrag(event);
                     }}
                     onPointerUp={(event) => finishPointerDrag(event, task.id)}
+                    onPointerCancel={resetDrag}
+                    onLostPointerCapture={() => {
+                      if (calendarDragCandidate.current?.id === task.id || dragTaskId === task.id) resetDrag();
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      suppressCalendarClick.current = false;
+                    }}
                   >
                     <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
                   </button>
                   <div className="idea-card-body">
-                    <InlineTitle
-                      value={task.title}
-                      editing={renamingIdeaId === task.id}
-                      onEditingChange={(next) => setRenamingIdeaId(next && task.id ? task.id : null)}
-                      onSave={(title) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, title } : item))}
-                      ariaLabel={t("task.field.title")}
-                      hint={t("task.hint.editTitle")}
-                    />
+                    <strong>{task.title}</strong>
                     <span>
                       <PriorityControl
                         priority={task.priority}
+                        compact
                         locale={preferences.language}
                         onChange={(priority) => task.id && void onSave(applyTaskPriority(tasks, task.id, priority, today))}
                       />
@@ -3375,7 +3427,7 @@ export function Calendar({
               onClick={() => {
                 const task = ideaContextMenu.task;
                 setIdeaContextMenu(null);
-                if (task.id) setRenamingIdeaId(task.id);
+                    if (task.id) openTask(task.id);
               }}
             >
               <Pencil aria-hidden="true" />
@@ -3463,11 +3515,17 @@ export function Calendar({
                   title="拖曳到其他日期"
                   onPointerDown={(event) => {
                     if (event.button === 0) {
-                      setDragTaskId(task.id);
+                      beginDrag(task.id, date, event.clientX, event.clientY);
                       event.currentTarget.setPointerCapture(event.pointerId);
                     }
                   }}
+                  onPointerMove={trackCalendarDrag}
                   onPointerUp={(event) => finishPointerDrag(event, task.id)}
+                  onPointerCancel={resetDrag}
+                  onLostPointerCapture={() => {
+                    if (dragTaskId === task.id) resetDrag();
+                  }}
+                  onClick={(event) => event.stopPropagation()}
                 >
                   <GripVertical aria-hidden="true" />
                 </button>
@@ -3475,10 +3533,11 @@ export function Calendar({
                   <div className="task-title-row">
                     <PriorityControl
                       priority={task.priority}
+                      compact
                       locale={preferences.language}
                       onChange={(priority) => task.id && void onSave(applyTaskPriority(tasks, task.id, priority, selected))}
                     />
-                    <AgendaInlineTitle task={task} onSave={(title) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, title } : item))} />
+                    <button type="button" className="agenda-task-title" onClick={() => openTask(task.id)}>{task.title}</button>
                   </div>
                   <select
                     className="agenda-project-select"
@@ -3518,27 +3577,10 @@ export function Calendar({
                     important={task.priority === "highest"}
                     onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, selected))}
                     onComplete={() => complete(task.id)}
-                    onEdit={() => setEditingTaskId(editingTaskId === task.id ? null : task.id)}
+                    onEdit={() => task.id && openTask(task.id)}
                     onDelete={remove}
                   />
                 </div>
-                {editingTaskId === task.id && (
-                  <div className="agenda-editor">
-                    <TaskEditor
-                      task={task}
-                      projects={projects}
-                      onSave={(next) => {
-                        setEditingTaskId(null);
-                        const changed = tasks.map((item) => item.id === task.id ? next : item);
-                        void onSave(
-                          next.priority === "highest" && next.id
-                            ? markMostImportant(changed, next.id, next.taskDate ?? today)
-                            : changed,
-                        );
-                      }}
-                    />
-                  </div>
-                )}
               </article>
             ))
           )}
@@ -3714,17 +3756,15 @@ function ProjectEditor({
 function Projects({
   projects,
   tasks,
-  onSave,
-  onOpen,
+  onOpenProject,
+  onOpenBoard,
   onCreate,
-  onDelete,
 }: {
   projects: BrainProjectSnapshot[];
   tasks: BrainTaskSnapshot[];
-  onSave: (projects: BrainProjectSnapshot[], tasks: BrainTaskSnapshot[]) => void;
-  onOpen: (projectId: string) => void;
+  onOpenProject: (projectId: string) => void;
+  onOpenBoard: (projectId: string) => void;
   onCreate: () => void;
-  onDelete: (project: BrainProjectSnapshot) => void;
 }) {
   const { t } = useUiPreferences();
   const [tab, setTab] = useState<"current" | "completed" | "archived">("current");
@@ -3753,38 +3793,17 @@ function Projects({
       if (sort === "endDate") return (left.endDate ?? "9999-12-31").localeCompare(right.endDate ?? "9999-12-31") || left.name.localeCompare(right.name);
       return left.name.localeCompare(right.name);
     });
-  const saveProject = (project: BrainProjectSnapshot, value: BrainProjectSnapshot) =>
-    onSave(projects.map((item) => item.id === project.id ? value : item), tasks);
-  const finishProject = (project: BrainProjectSnapshot) => {
-    const openCount = tasks.filter((task) => task.projectId === project.id && task.status !== "done").length;
-    if (!window.confirm(`完成「${project.name}」？\n\n將同時完成 ${openCount} 項未完成任務，並保留完整歷史。`)) return;
-    const completed = completeProject(project, tasks, taipeiDateKey());
-    onSave(projects.map((item) => item.id === project.id ? completed.project : item), completed.tasks);
-    setTab("completed");
-  };
   const renderProject = (project: BrainProjectSnapshot) => {
     const projectTasks = tasks.filter((task) => task.projectId === project.id);
     const openTasks = projectTasks.filter((task) => task.status !== "done").length;
     const doingTasks = projectTasks.filter((task) => task.status === "doing").length;
-    return (
-      <ProjectEditor
-        key={project.id ?? project.name}
-        project={project}
-        openTasks={openTasks}
-        doingTasks={doingTasks}
-        existingAreas={areas}
-        onOpen={() => project.id && onOpen(project.id)}
-        onDelete={() => onDelete(project)}
-        onSave={(value) => saveProject(project, value)}
-        onFocus={(enabled) => void onSave(projects.map((item) => ({
-          ...item,
-          focusToday: item.id === project.id ? enabled : false,
-        })), tasks)}
-        onComplete={() => finishProject(project)}
-        onReopen={() => saveProject(project, { ...project, status: "active", completedAt: null, focusToday: false })}
-        onArchive={() => saveProject(project, { ...project, status: "archived", focusToday: false })}
-      />
-    );
+    return <article key={project.id ?? project.name} className="project-card project-summary-card" tabIndex={0} onClick={() => project.id && onOpenProject(project.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && project.id) { event.preventDefault(); onOpenProject(project.id); } }}>
+      <div className="project-head"><div><span className="eyebrow">{project.area ?? t("app.uncategorized")}</span><h3>{project.name}</h3></div>{project.focusToday && <span className="focus">{t("project.focusToday")}</span>}</div>
+      <div className="project-summary-status"><span>{t(`project.status.${project.status}`)}</span><span>{project.priority ? `${project.priority} · ${project.priority === 1 ? t("project.importance.high") : project.priority === 2 ? t("project.importance.medium") : t("project.importance.low")}` : t("project.importance.unset")}</span></div>
+      <div className="progress"><i style={{ width: `${project.progress ?? 0}%` }} /></div>
+      <div className="project-meta"><span>{project.progress ?? 0}%</span><span>{t("task.count.open", { count: openTasks })}</span><span>{t("task.count.doing", { count: doingTasks })}</span><span>{project.startDate || project.endDate ? `${project.startDate ?? t("project.date.undecided")} → ${project.endDate ?? t("project.date.undecided")}` : t("project.period.none")}</span></div>
+      <button type="button" className="secondary-button action-with-icon project-board-button" onClick={(event) => { event.stopPropagation(); if (project.id) onOpenBoard(project.id); }}><FolderKanban aria-hidden="true" />{t("project.action.open")}</button>
+    </article>;
   };
   return (
     <section className="projects-workspace">
@@ -4000,7 +4019,7 @@ function CreateEntityModal({
     if (!name.trim() || name.trim().length > 200 || submitting) return;
     setSubmitting(true);
     try {
-      await onCreate(name.trim(), category.trim() || null, importance ? Number(importance) : null, body);
+      await onCreate(name.trim(), category.trim() || null, importance ? Number(importance) : null, kind === "project" ? "" : body);
     } finally {
       setSubmitting(false);
     }
@@ -4022,10 +4041,10 @@ function CreateEntityModal({
           />
         </label>
         <label>{t("entity.field.importance")}<select value={importance} onChange={(event) => setImportance(event.target.value)}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
-        {templates.length > 0 && (
+        {kind === "collection" && templates.length > 0 && (
           <label>{preferences.language === "zh-TW" ? "套用模板" : "Apply template"}<select value="" onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!name.trim()) setName(picked.name); } }}><option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>{templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
         )}
-        <MarkdownEditor value={body} onChange={setBody} locale={preferences.language} minRows={8} />
+        {kind === "collection" && <MarkdownEditor value={body} onChange={setBody} locale={preferences.language} minRows={8} />}
         <div className="modal-actions"><button className="secondary-button" onClick={onClose}>{t("app.cancel")}</button><button className="primary" disabled={!name.trim() || submitting} onClick={() => void submit()}>{t(submitting ? "app.creating" : "app.create")}</button></div>
       </section>
     </div>
