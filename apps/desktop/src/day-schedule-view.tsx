@@ -78,6 +78,7 @@ export function DaySchedule({
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const dragOrigin = useRef<{ id: string; startY: number; startMinutes: number; kind: DragKind; duration: number } | null>(null);
   const moved = useRef(false);
+  const suppressClickUntil = useRef(0);
   const layouts = useMemo(
     () =>
       layoutTimedBlocks(
@@ -138,6 +139,11 @@ export function DaySchedule({
     const releasedOnSelf = Boolean(target && event.currentTarget.contains(target));
     const didMove = moved.current || !releasedOnSelf;
     const clientY = event.clientY;
+    // The browser follows a pointer press and release with a click on the element that
+    // contains both, so finishing a drag also fires the card's "select this task" handler.
+    // moved.current cannot answer that at click time because resetDrag clears it first,
+    // so record that a drag just ended and let the stray click be ignored once.
+    if (didMove) suppressClickUntil.current = performance.now() + 300;
     resetDrag();
     if (origin?.kind === "resize") {
       if (!didMove) return;
@@ -161,6 +167,11 @@ export function DaySchedule({
     }
     const time = timeAtPoint(clientY, target);
     if (time) onSchedule(taskId, time);
+  };
+
+  const selectOnClick = (taskId: string | null | undefined) => {
+    if (!taskId || performance.now() < suppressClickUntil.current) return;
+    onSelect?.(taskId);
   };
 
   const beginTimedDrag = (event: ReactPointerEvent<HTMLElement>, task: BrainTaskSnapshot) => {
@@ -244,7 +255,7 @@ export function DaySchedule({
                   }}
                   onPointerUp={(event) => finishDrag(event, task.id)}
                   onPointerCancel={resetDrag}
-                  onClick={() => task.id && onSelect?.(task.id)}
+                  onClick={() => selectOnClick(task.id)}
                   onKeyDown={(event) => {
                     if (event.key === "F2" && task.id) {
                       event.preventDefault();
@@ -295,7 +306,7 @@ export function DaySchedule({
                 }}
                 onPointerUp={(event) => finishDrag(event, task.id)}
                 onPointerCancel={resetDrag}
-                onClick={() => task.id && onSelect?.(task.id)}
+                onClick={() => selectOnClick(task.id)}
               >
                 {task.title}
               </button>
@@ -351,7 +362,7 @@ export function DaySchedule({
                 onPointerCancel={resetDrag}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onSelect?.(task.id!);
+                  selectOnClick(task.id);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "F2") {
