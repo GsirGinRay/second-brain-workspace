@@ -12,3 +12,5 @@ import "./draft-workspace.test";
 import "./architecture.test";
 import "./ui-preferences.test";
 import "./day-schedule.test";
+import "./undo-history.test";
+import "./task-reorder.test";

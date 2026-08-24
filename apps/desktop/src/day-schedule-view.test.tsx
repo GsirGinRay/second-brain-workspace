@@ -212,3 +212,81 @@ test("dragging a timed task to the unscheduled tray clears its time", () => {
     container.remove();
   }
 });
+
+test("releasing a tray card onto a sibling reorders the tray instead of clearing", () => {
+  stubPointer();
+  const drops: Array<{ draggedId: string; targetId: string; place: string }> = [];
+  const cleared: string[] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[]}
+          trayTasks={[task("a", "第一件事", "09:00"), task("b", "第二件事", "10:00")]}
+          showTray
+          labels={labels}
+          onSchedule={() => undefined}
+          onClearTime={(id) => cleared.push(id)}
+          onCreateAt={() => undefined}
+          onReorderTray={(drop) => drops.push(drop)}
+        />,
+      );
+    });
+    const cards = container.querySelectorAll<HTMLElement>("[data-tray-card-id]");
+    assert.equal(cards.length, 2, "two tray cards render");
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => cards[1] ?? null;
+    try {
+      flushSync(() => {
+        cards[0]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 3, clientX: 30, clientY: 20 }) as unknown as Event);
+        cards[0]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 3, clientX: 30, clientY: 60 }) as unknown as Event);
+        cards[0]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 3, clientX: 30, clientY: 60 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+    assert.equal(cleared.length, 0, "staying inside the tray never clears the time");
+    assert.deepEqual(drops[0], { draggedId: "a", targetId: "b", place: "after" });
+  } finally {
+    container.remove();
+  }
+});
+
+test("Alt+ArrowUp/Down reorders tray cards from the keyboard", () => {
+  const drops: Array<{ draggedId: string; targetId: string; place: string }> = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[]}
+          trayTasks={[task("a", "第一件事", "09:00"), task("b", "第二件事", "10:00")]}
+          showTray
+          labels={labels}
+          onSchedule={() => undefined}
+          onCreateAt={() => undefined}
+          onReorderTray={(drop) => drops.push(drop)}
+        />,
+      );
+    });
+    const cards = container.querySelectorAll<HTMLElement>("[data-tray-card-id]");
+    flushSync(() => {
+      cards[1]!.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp", altKey: true }) as unknown as Event);
+    });
+    assert.deepEqual(drops[0], { draggedId: "b", targetId: "a", place: "before" });
+    flushSync(() => {
+      cards[0]!.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown", altKey: true }) as unknown as Event);
+    });
+    assert.deepEqual(drops[1], { draggedId: "a", targetId: "b", place: "after" });
+  } finally {
+    container.remove();
+  }
+});

@@ -14,6 +14,7 @@ import {
   timeFromSlotDrop,
 } from "./day-schedule";
 import { PriorityControl } from "./priority-control";
+import type { DropPosition } from "./task-reorder";
 import type { UiLanguage } from "./ui-preferences";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
@@ -33,6 +34,12 @@ export interface DayScheduleLabels {
   resize: string;
 }
 
+export interface TrayReorderDrop {
+  draggedId: string;
+  targetId: string;
+  place: DropPosition;
+}
+
 export function DaySchedule({
   date,
   timedTasks,
@@ -49,6 +56,7 @@ export function DaySchedule({
   onDelete,
   onComplete,
   onResize,
+  onReorderTray,
   locale = "zh-TW",
 }: {
   date: string;
@@ -66,6 +74,8 @@ export function DaySchedule({
   onDelete?: (task: BrainTaskSnapshot) => void;
   onComplete?: (task: BrainTaskSnapshot) => void;
   onResize?: (taskId: string, durationMinutes: number) => void;
+  /** Vertical drag inside the unscheduled tray reorders tasks instead of rescheduling. */
+  onReorderTray?: (drop: TrayReorderDrop) => void;
   locale?: UiLanguage;
 }) {
   const gridRef = useRef<HTMLDivElement>(null);
@@ -74,9 +84,12 @@ export function DaySchedule({
   const [previewTop, setPreviewTop] = useState<number | null>(null);
   const [previewHeight, setPreviewHeight] = useState<number | null>(null);
   const [previewTime, setPreviewTime] = useState<string | null>(null);
+  // Live insertion hint while a tray card hovers over its siblings.
+  const [trayHint, setTrayHint] = useState<{ id: string; place: DropPosition } | null>(null);
   const dragOrigin = useRef<{
     id: string;
     kind: DragKind;
+    fromTray: boolean;
     startMinutes: number;
     duration: number;
     grabOffsetMinutes: number;
@@ -193,6 +206,16 @@ export function DaySchedule({
     setPreviewTop(null);
     setPreviewHeight(null);
     setPreviewTime(null);
+    setTrayHint(null);
+  };
+
+  /** Where over the tray the pointer is, as a sibling id plus before/after. */
+  const trayDropAt = (clientX: number, clientY: number, draggedId: string): TrayReorderDrop | null => {
+    const card = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-tray-card-id]");
+    const targetId = card?.dataset.trayCardId;
+    if (!targetId || targetId === draggedId) return null;
+    const rect = card!.getBoundingClientRect();
+    return { draggedId, targetId, place: clientY <= rect.top + rect.height / 2 ? "before" : "after" };
   };
 
   const finishDrag = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
@@ -227,7 +250,18 @@ export function DaySchedule({
       onResize?.(taskId, durationFromResize(origin.startMinutes, origin.duration, deltaY));
       return;
     }
-    if (target?.closest("[data-unscheduled-tray], [data-schedule-all-day]")) {
+    if (target?.closest("[data-unscheduled-tray]")) {
+      // Releasing a tray card back onto the tray reorders it; a card that came
+      // from the time grid still unschedules (existing behaviour).
+      if (origin.fromTray && onReorderTray) {
+        const drop = trayDropAt(clientX, clientY, taskId);
+        if (drop) onReorderTray(drop);
+        return;
+      }
+      onClearTime?.(taskId);
+      return;
+    }
+    if (target?.closest("[data-schedule-all-day]")) {
       onClearTime?.(taskId);
       return;
     }
@@ -317,6 +351,7 @@ export function DaySchedule({
     dragOrigin.current = {
       id: task.id,
       kind: "timed",
+      fromTray: false,
       startMinutes,
       duration,
       grabOffsetMinutes,
@@ -338,6 +373,7 @@ export function DaySchedule({
     dragOrigin.current = {
       id: task.id,
       kind: "resize",
+      fromTray: false,
       startMinutes,
       duration: task.durationMinutes ?? 30,
       grabOffsetMinutes: 0,
@@ -384,6 +420,13 @@ export function DaySchedule({
       moved.current = true;
       setDragId(dragOrigin.current.id);
     }
+    const overTray = Boolean(document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-unscheduled-tray]"));
+    if (dragOrigin.current.fromTray && onReorderTray && overTray) {
+      const drop = trayDropAt(event.clientX, event.clientY, dragOrigin.current.id);
+      setTrayHint(drop ? { id: drop.targetId, place: drop.place } : null);
+    } else {
+      setTrayHint(null);
+    }
     const grid = gridRef.current;
     const rect = grid.getBoundingClientRect();
     if (
@@ -422,7 +465,8 @@ export function DaySchedule({
               {trayTasks.map((task) => (
                 <article
                   key={task.id ?? task.title}
-                  className={`schedule-tray-card ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""}`}
+                  data-tray-card-id={task.id ?? undefined}
+                  className={`schedule-tray-card ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${trayHint?.id === task.id ? (trayHint.place === "before" ? "drop-before" : "drop-after") : ""}`}
                   tabIndex={0}
                   onPointerDown={(event) => {
                     if (event.button !== 0 || !task.id || (event.target as HTMLElement).closest("button,input,select,textarea,a")) return;
@@ -431,6 +475,7 @@ export function DaySchedule({
                     dragOrigin.current = {
                       id: task.id,
                       kind: "loose",
+                      fromTray: true,
                       startMinutes: 0,
                       duration: task.durationMinutes ?? 30,
                       grabOffsetMinutes: 0,
@@ -456,6 +501,16 @@ export function DaySchedule({
                     if ((event.key === "Enter" || event.key === " ") && task.id) {
                       event.preventDefault();
                       onOpenTask?.(task.id);
+                      return;
+                    }
+                    // Alt+↑/↓ reorders without reaching for the pointer.
+                    if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown") && task.id && onReorderTray) {
+                      const index = trayTasks.findIndex((item) => item.id === task.id);
+                      const neighbour = trayTasks[event.key === "ArrowUp" ? index - 1 : index + 1];
+                      if (neighbour?.id) {
+                        event.preventDefault();
+                        onReorderTray({ draggedId: task.id, targetId: neighbour.id, place: event.key === "ArrowUp" ? "before" : "after" });
+                      }
                     }
                   }}
                 >
@@ -492,6 +547,7 @@ export function DaySchedule({
                   dragOrigin.current = {
                     id: task.id,
                     kind: "loose",
+                    fromTray: false,
                     startMinutes: 0,
                     duration: task.durationMinutes ?? 30,
                     grabOffsetMinutes: 0,

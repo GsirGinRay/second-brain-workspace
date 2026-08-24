@@ -26,6 +26,8 @@ import {
   Star,
   Sun,
   Trash2,
+  Undo2,
+  Redo2,
   X,
 } from "lucide-react";
 import {
@@ -117,6 +119,20 @@ import { formatMinutesAsTime, minutesFromOffset, snapMinutes, timeFromSlotDrop }
 import { DaySchedule } from "./day-schedule-view";
 import { ProjectDetailDialog, TaskDetailDialog } from "./entity-detail-dialog";
 import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
+import {
+  applyRedo,
+  applyUndo,
+  emptyUndoState,
+  recordUndo,
+  type UndoState,
+  type WorkspaceSnapshot,
+} from "./undo-history";
+import {
+  reorderDisplayed,
+  reorderTodayTray,
+  todayTraySegmentKey,
+  withReassignedRanks,
+} from "./task-reorder";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./architecture";
 import "./styles.css";
 
@@ -829,7 +845,15 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     };
   }, [engine, pollCloudRevision, reloadLocal, runSync]);
 
-  async function persistLocal(
+  // Every mutation that reaches Markdown funnels through persistLocal, so recording
+  // the pre-change workspace here gives one undo history that covers schedule drags,
+  // calendar date drops, board lane moves, inline edits and deletions alike.
+  const undoRef = useRef<UndoState>(emptyUndoState());
+  const [undoCounts, setUndoCounts] = useState({ undo: 0, redo: 0 });
+  const syncUndoCounts = () =>
+    setUndoCounts({ undo: undoRef.current.past.length, redo: undoRef.current.future.length });
+
+  async function applyPersistLocal(
     nextTasks: BrainTaskSnapshot[],
     nextProjects = projects,
     nextCollections = collections,
@@ -902,6 +926,56 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setWorking(false);
     }
   }
+
+  async function persistLocal(
+    nextTasks: BrainTaskSnapshot[],
+    nextProjects = projects,
+    nextCollections = collections,
+  ): Promise<boolean> {
+    const previous: WorkspaceSnapshot = { tasks, projects, collections };
+    const ok = await applyPersistLocal(nextTasks, nextProjects, nextCollections);
+    if (ok) {
+      undoRef.current = recordUndo(undoRef.current, previous);
+      syncUndoCounts();
+    }
+    return ok;
+  }
+
+  // Plain functions (not memoised): applyPersistLocal closes over the latest vault
+  // scan/files each render, so restoring must always call the current instance.
+  function restoreWorkspace(snapshot: WorkspaceSnapshot, message: string): void {
+    void applyPersistLocal(snapshot.tasks, snapshot.projects, snapshot.collections).then((ok) => {
+      if (ok) setStatus(message);
+    });
+  }
+
+  function performUndo() {
+    const result = applyUndo(undoRef.current, { tasks, projects, collections });
+    if (!result.snapshot) return;
+    undoRef.current = result.next;
+    syncUndoCounts();
+    restoreWorkspace(result.snapshot, preferences.language === "zh-TW" ? "已復原上一個變更（Ctrl+Shift+Z 可重做）" : "Undone (Ctrl+Shift+Z to redo)");
+  }
+
+  function performRedo() {
+    const result = applyRedo(undoRef.current, { tasks, projects, collections });
+    if (!result.snapshot) return;
+    undoRef.current = result.next;
+    syncUndoCounts();
+    restoreWorkspace(result.snapshot, preferences.language === "zh-TW" ? "已重做變更" : "Change reapplied");
+  }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
+      if (event.defaultPrevented || isEditableElement(event.target)) return;
+      event.preventDefault();
+      if (event.shiftKey) performRedo();
+      else performUndo();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   async function createProject(
     name: string,
@@ -1401,6 +1475,24 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             </div>
           </div>
           <div className="top-actions">
+            <button
+              className="icon-button top-icon-action"
+              disabled={undoCounts.undo === 0 || working}
+              aria-label={t("app.undo")}
+              title={`${t("app.undo")} · Ctrl/Cmd+Z`}
+              onClick={performUndo}
+            >
+              <Undo2 aria-hidden="true" />
+            </button>
+            <button
+              className="icon-button top-icon-action"
+              disabled={undoCounts.redo === 0 || working}
+              aria-label={t("app.redo")}
+              title={`${t("app.redo")} · Ctrl/Cmd+Shift+Z`}
+              onClick={performRedo}
+            >
+              <Redo2 aria-hidden="true" />
+            </button>
             <button className="icon-button top-icon-action" aria-label={t("app.search")} title={`${t("app.search")} · Ctrl/Cmd+K`} onClick={() => setSearchOpen(true)}>
               <Search aria-hidden="true" />
             </button>
@@ -2074,6 +2166,19 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
         onDelete={onDelete}
         onComplete={(task) => complete(task)}
         onResize={(taskId, durationMinutes) => onSave(tasks.map((item) => item.id === taskId ? { ...item, durationMinutes } : item))}
+        onReorderTray={({ draggedId, targetId, place }) => {
+          // A vertical drop reorders inside the task's own priority/date group;
+          // ranks of just that group are rewritten so the order persists to Markdown.
+          const ordered = reorderTodayTray(trayTasks, today, draggedId, targetId, place);
+          if (!ordered) return;
+          const dragged = tasks.find((item) => item.id === draggedId);
+          if (!dragged) return;
+          const key = todayTraySegmentKey(dragged, today);
+          const segmentIds = ordered
+            .filter((item) => todayTraySegmentKey(item, today) === key)
+            .map((item) => item.id);
+          onSave(withReassignedRanks(tasks, segmentIds));
+        }}
       />
     </section>
     {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} />)}</div></details>}
@@ -2864,6 +2969,7 @@ export function Calendar({
   const calendarDragOrigin = useRef<{ x: number; y: number } | null>(null);
   const calendarDragCandidate = useRef<{ id: string; originDate: string | null } | null>(null);
   const suppressCalendarClick = useRef(false);
+  const [ideaDropHint, setIdeaDropHint] = useState<{ id: string; place: "before" | "after" } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const clock = useMemo(() => new Date(), [today]);
   const flashNotice = (message: string) => {
@@ -2915,6 +3021,7 @@ export function Calendar({
     setDragTaskId(null);
     setDragOriginDate(null);
     setDropTargetDate(null);
+    setIdeaDropHint(null);
   };
   const openTask = (id: string | null) => {
     if (!id) return;
@@ -2935,6 +3042,17 @@ export function Calendar({
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
     const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
     setDropTargetDate(date ?? null);
+    // While an idea is dragged over its siblings, show where it will land.
+    if (calendarDragMoved.current && calendarDragCandidate.current?.originDate == null && dragTaskId) {
+      const card = target?.closest<HTMLElement>("[data-idea-card-id]");
+      const hintId = card?.dataset.ideaCardId;
+      if (hintId && hintId !== dragTaskId) {
+        const rect = card!.getBoundingClientRect();
+        setIdeaDropHint({ id: hintId, place: event.clientY <= rect.top + rect.height / 2 ? "before" : "after" });
+      } else {
+        setIdeaDropHint(null);
+      }
+    }
   };
   function shift(delta: number) {
     if (mode === "week") {
@@ -3030,7 +3148,23 @@ export function Calendar({
         formatMinutesAsTime(minutesFromOffset(event.clientY - rect.top + grid.scrollTop)),
       );
     } else if (date) schedule(taskId, date);
-    else if (target?.closest("[data-idea-drawer]")) unschedule(taskId);
+    else if (target?.closest("[data-idea-drawer]")) {
+      // An idea released onto a sibling idea reorders the inbox instead of unscheduling.
+      const cameFromDrawer = calendarDragCandidate.current?.originDate == null;
+      const card = target.closest<HTMLElement>("[data-idea-card-id]");
+      const targetIdeaId = card?.dataset.ideaCardId ?? null;
+      if (cameFromDrawer && targetIdeaId && targetIdeaId !== taskId) {
+        const rect = card!.getBoundingClientRect();
+        const place = event.clientY <= rect.top + rect.height / 2 ? "before" : "after";
+        const ordered = reorderDisplayed(ideas, taskId, targetIdeaId, place);
+        if (ordered) {
+          flashNotice(preferences.language === "zh-TW" ? "想法順序已更新" : "Idea order updated");
+          void onSave(withReassignedRanks(tasks, ordered.map((task) => task.id)));
+        }
+      } else {
+        unschedule(taskId);
+      }
+    }
     resetDrag();
   };
   const dateLabel = (date: string) =>
@@ -3324,6 +3458,7 @@ export function Calendar({
                     }
                   }}
                   tabIndex={0}
+                  data-idea-card-id={task.id ?? undefined}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -3335,7 +3470,7 @@ export function Calendar({
                     });
                   }}
                   style={taskProjectStyle(task)}
-                  className={`${activeTaskId === task.id ? "selected-task" : ""} ${dragTaskId === task.id ? "dragging" : ""}`}
+                  className={`${activeTaskId === task.id ? "selected-task" : ""} ${dragTaskId === task.id ? "dragging" : ""} ${ideaDropHint?.id === task.id ? (ideaDropHint.place === "before" ? "drop-before" : "drop-after") : ""}`}
                   key={task.id ?? task.title}
                 >
                   <button

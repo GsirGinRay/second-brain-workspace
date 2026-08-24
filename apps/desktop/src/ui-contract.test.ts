@@ -331,3 +331,34 @@ test("vault-changed refreshes local-only mode without a server", () => {
   assert.match(source, /lastScanRef/);
   assert.match(source, /unchanged && !updateStatus/);
 });
+
+test("every drag lands in one undo funnel with toolbar buttons and shortcuts", () => {
+  const source = app();
+  const scheduleSource = readFileSync(resolve(import.meta.dirname, "day-schedule-view.tsx"), "utf8");
+  assert.match(source, /applyPersistLocal/, "persistLocal wraps the single write funnel");
+  assert.match(source, /recordUndo\(undoRef\.current/);
+  assert.match(source, /function performUndo\(\)/);
+  assert.match(source, /event\.shiftKey\) performRedo\(\)/);
+  assert.match(source, /isEditableElement\(event\.target\)\) return;\s*event\.preventDefault\(\);\s*if \(event\.shiftKey\)/s);
+  assert.match(source, /<Undo2 aria-hidden="true" \/>/);
+  assert.match(source, /<Redo2 aria-hidden="true" \/>/);
+  assert.match(source, /onReorderTray=\{\(/);
+  assert.match(scheduleSource, /onReorderTray\?:/);
+  assert.match(scheduleSource, /data-tray-card-id/);
+  assert.match(scheduleSource, /fromTray: true/, "tray-origin drags reorder instead of clearing");
+});
+
+test("the Notion canvas drags with live feedback and its own undo", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "markdown-block-editor.tsx"), "utf8");
+  const styles = css();
+  const detailSource = detail();
+  assert.match(source, /markdown-drop-indicator/);
+  assert.match(source, /historyRef/);
+  assert.match(source, /ArrowUp/);
+  assert.match(source, /ArrowDown/);
+  assert.match(source, /"上移此區塊"/);
+  assert.match(source, /"下移此區塊"/);
+  assert.match(styles, /\.markdown-drop-indicator/);
+  assert.match(styles, /\.markdown-block-move/);
+  assert.ok(detailSource.includes("<MarkdownBlockEditor"));
+});
