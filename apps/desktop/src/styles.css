@@ -157,7 +157,7 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .board-actions { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap }.board-actions select,.board-actions button,.project-editor-grid input,.project-editor-grid select { border:1px solid #bfc1c3;background:#fff;color:var(--ink);border-radius:7px;padding:6px; }.board-actions select{min-width:0;flex:1}.board-actions button{width:30px}.board-actions button.action-with-icon{width:auto}.board-actions .danger-action,.danger-action{width:auto;color:#fff;border-color:#b42318;background:#b42318;font-weight:800}.danger-action:hover{background:#8f1c13;border-color:#8f1c13}
 
 .calendar-layout { display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:14px; }
-.calendar-layout.side-closed { grid-template-columns:1fr; }.calendar-layout.fullscreen { position:fixed;inset:0;z-index:40;background:var(--soft);padding:14px;grid-template-columns:minmax(0,1fr) 360px; }.calendar-layout.fullscreen.side-closed { grid-template-columns:1fr; }
+.calendar-layout.side-closed { grid-template-columns:minmax(0,1fr); }.calendar-layout.fullscreen { position:fixed;inset:0;z-index:40;background:var(--soft);padding:14px;grid-template-columns:minmax(0,1fr) 360px; }.calendar-layout.fullscreen.side-closed { grid-template-columns:minmax(0,1fr); }
 .calendar-card,.agenda,.project-card,.settings-card { border:1px solid var(--line);background:#fff;border-radius:15px;padding:16px; }
 .calendar-card { display:flex;flex-direction:column;min-height:0;max-height:calc(100vh - 132px); }
 .calendar-layout.fullscreen .calendar-card { max-height:calc(100vh - 28px); }
@@ -201,11 +201,64 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .quick-content-field{gap:4px;margin-top:18px}.quick-content-field .markdown-block-editor{padding-top:0}.quick-content-field .markdown-block{grid-template-columns:24px minmax(0,1fr) 24px}.quick-content-field .markdown-block-tools{position:relative;flex-direction:row;width:24px}.quick-content-field .markdown-block-add-inline{position:absolute;right:24px}.quick-content-field .markdown-block-add{margin:0 0 4px 24px}
 .mobile-nav { display:none; }
 
+/* ── Calendar and navigation fit the window ───────────────────────────────────
+   Six problems of one shape: a size is written down first and the container is
+   then expected to happen to fit it. Stated as overrides at the end of the file
+   because the rules they answer share 3.8k-character lines with dozens of others,
+   and editing those in place collides with every other branch. */
+
+/* Days per row follow the available width instead of being fixed at seven. auto-fit
+   packs in as many 160px columns as fit and wraps the rest, so a narrow window shows
+   the whole week with no horizontal scrollbar and no character-per-line wrapping. */
+.week-grid { grid-template-columns:repeat(auto-fit,minmax(160px,1fr));height:auto;max-height:min(62vh,620px);align-content:start;overflow-x:hidden;overflow-y:auto; }
+.week-day { min-height:210px;max-height:330px;height:auto; }
+
+/* A month view exists to be taken in at a glance, so it must not scroll. Six rows at a
+   fixed 126px floor add up to 756px and overflow the stage by a few pixels, which is
+   why the last week was cut off. The rows now share whatever height the stage has. */
+.calendar-stage { display:flex;flex-direction:column; }
+.month-grid { flex:1 1 auto;min-height:0;grid-auto-rows:minmax(64px,1fr); }
+.calendar-day { min-height:0;overflow:hidden; }
+
+/* Degradation order: give up the side-by-side split before giving up the week strip.
+   Seven 160px columns need 1200px of calendar; the day plan column costs another 354px
+   and the shell 284px, so side-by-side only holds a full week above ~1840px. Below that
+   the panel moves under the calendar, keeping all seven days on one row down to ~1480px
+   — only then does the grid wrap. Moving a panel does not change how it is understood;
+   wrapping the week changes the shape of "a week". */
+@media (max-width: 1840px) { .calendar-layout { grid-template-columns:minmax(0,1fr); } }
+
+/* The narrow breakpoint re-pins .calendar-day to 88px, which puts the six rows back over
+   the available height. The card's max-height also assumed a single-row topbar and no
+   bottom nav; on a phone the topbar wraps and the nav is fixed, so ~240px is unavailable.
+   .mobile-nav is fixed, takes no space in the document, and the workspace padding here is
+   a uniform 14px — so the last ~50px of every page scrolled underneath it. */
+@media (max-width: 760px) {
+  .calendar-card { max-height:calc(100vh - 240px); }
+  .calendar-day { min-height:0;padding:5px; }
+  .month-grid { grid-auto-rows:minmax(52px,1fr); }
+  .workspace { padding-bottom:78px; }
+  .mobile-nav button { flex-direction:column;gap:2px;padding:6px 1px;line-height:1.2;white-space:normal; }
+  .mobile-nav button .nav-icon { width:17px;height:17px; }
+}
+@media (max-width: 420px) { .mobile-nav button { font-size:10px; } }
+
+/* Below roughly 820px of viewport height the month cannot fit at a readable row size, and
+   capping the card then squeezes six rows through a ~150px slot with its own scrollbar
+   nested inside the page's. Stop capping instead: the calendar grows to its natural height
+   and the page does the one scroll. Nested scrolling is worse than one extra swipe. */
+@media (max-height: 860px) {
+  .calendar-card, .calendar-layout.fullscreen .calendar-card { max-height:none; }
+  .calendar-stage { overflow-y:visible;overflow-x:hidden; }
+  .month-grid { grid-auto-rows:minmax(72px,auto); }
+}
+
+
 @media (max-width: 1100px) {
   .command-summary{grid-template-columns:1fr 1fr}.focus-summary{grid-column:1/-1}.routine-items{overflow-x:auto}.routine-items article{min-width:800px}.today-columns{grid-template-columns:1fr}.timeline{display:grid;overflow:visible}.timeline article{min-width:0}.day-schedule,.day-schedule.has-tray{grid-template-columns:1fr;max-height:none}.day-schedule-resizer{display:none}
   .topbar { align-items:flex-start; }.top-actions { flex-direction:row;align-items:center; }
   .task-card { flex-wrap:wrap; }.important-button { margin-left:36px; }.task-card>.task-action-bar{margin-left:36px}
-  .planning-overview{grid-template-columns:repeat(2,minmax(0,1fr))}.calendar-layout { grid-template-columns:1fr; }.agenda { max-height:none; }.quick-grid { grid-template-columns:1fr 1fr; }.quick-grid label:first-child { grid-column:1/-1; }.idea-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .planning-overview{grid-template-columns:repeat(2,minmax(0,1fr))}.calendar-layout { grid-template-columns:minmax(0,1fr); }.agenda { max-height:none; }.quick-grid { grid-template-columns:1fr 1fr; }.quick-grid label:first-child { grid-column:1/-1; }.idea-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width: 760px) {
   .command-hero{align-items:stretch;flex-direction:column;padding:18px}.command-hero h2{font-size:22px}.template-settings-button{min-width:0}.inline-task-card{grid-template-columns:26px minmax(0,1fr)}.inline-task-actions{grid-column:2}.inline-fields{grid-template-columns:1fr}.today-panel{padding:12px}
@@ -233,6 +286,13 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 [data-theme="dark"] .topbar{background:#181a1df0}[data-theme="dark"] .command-hero{background:linear-gradient(135deg,#202327,#151719)}[data-theme="dark"] .progress{background:#34373b}[data-theme="dark"] .progress i{background:#e9eaec}[data-theme="dark"] .modal-backdrop{background:#000c}[data-theme="dark"] .status.waiting{background:#493916;color:#f2ce75}[data-theme="dark"] .status.doing{background:#172d55;color:#9ab9f4}[data-theme="dark"] input::placeholder{color:#777c83}
 
 @media (max-width: 768px){.routine-template-card{grid-template-columns:44px minmax(0,1fr)}.routine-template-action{grid-column:1/-1}.command-summary{grid-template-columns:1fr 1fr}}
+
+/* Below 760px the week view used to become a seven-day horizontal swipe. Keep the
+   auto-fit wrapping instead: the page already scrolls vertically, and one more
+   sideways gesture is the thing this whole batch exists to remove. */
+@media (max-width: 760px) {
+  .week-grid { grid-template-columns:repeat(auto-fit,minmax(150px,1fr));height:auto;max-height:none;overflow:visible; }
+}
 
 /* Compact density mode (Workstream D). Applied via <html data-density> from UiPreferences. */
 [data-density="compact"] .topbar { min-height: 68px; padding: 10px 20px; }

@@ -262,7 +262,13 @@ test("today and calendar share a full-day schedule surface", () => {
   assert.match(source, /<Maximize2\b/);
   assert.match(styles, /\.day-schedule\{display:grid/);
   assert.match(styles, /\.calendar-stage/);
-  assert.match(styles, /\.week-grid\{[^}]*height:min\(52vh,520px\)/);
+  // The week grid used to be seven fixed columns at a fixed height. It now fits as many
+  // day columns as the width allows and wraps the rest, so the contract is "bounded height
+  // with vertical overflow" rather than one exact height. The rule that carries this is an
+  // override near the end of the file, hence the optional space after the selector.
+  assert.match(styles, /\.week-grid\s*\{[^}]*grid-template-columns:repeat\(auto-fit,minmax\(160px,1fr\)\)/);
+  assert.match(styles, /\.week-grid\s*\{[^}]*max-height:min\(62vh,620px\)/);
+  assert.match(styles, /\.week-grid\s*\{[^}]*overflow-y:auto/);
 });
 
 test("theme is monochrome with red reserved for important and destructive actions", () => {
