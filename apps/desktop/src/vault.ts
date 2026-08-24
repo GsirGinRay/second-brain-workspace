@@ -351,37 +351,10 @@ export function applyDesiredSnapshot(
   const changed = new Set<string>();
   const desiredTaskIds = new Set(desired.tasks.flatMap((task) => task.id ? [task.id] : []));
 
-  for (const task of desired.tasks) {
-    if (!task.id) continue;
-    const location = locations.get(task.id);
-    if (!location) continue;
-    const source = currentSources.get(location.relativePath)!;
-    const currentLine = splitLines(source)[location.lineIndex]!;
-    const nextLine = patchTaskLineMinimal(currentLine, task);
-    if (nextLine !== currentLine) {
-      currentSources.set(location.relativePath, replaceLine(source, location.lineIndex, nextLine));
-      changed.add(location.relativePath);
-    }
-  }
-
-  const removedByPath = new Map<string, Array<{ id: string; lineIndex: number }>>();
-  for (const [id, location] of locations) {
-    if (desiredTaskIds.has(id)) continue;
-    removedByPath.set(location.relativePath, [
-      ...(removedByPath.get(location.relativePath) ?? []),
-      { id, lineIndex: location.lineIndex },
-    ]);
-  }
-  for (const [relativePath, removals] of removedByPath) {
-    let source = currentSources.get(relativePath)!;
-    for (const removal of removals.sort((left, right) => right.lineIndex - left.lineIndex)) {
-      source = removeLine(source, removal.lineIndex);
-      source = patchTaskMarkdownContent(source, removal.id, "");
-    }
-    currentSources.set(relativePath, source);
-    changed.add(relativePath);
-  }
-
+  // Project and collection documents may contain task lines inside their body.
+  // Their document-level rewrites below are built from the scanned snapshot, so
+  // they must run BEFORE task line edits: running them afterwards would revert
+  // freshly patched task lines and turn the whole batch into a no-op write.
   for (const project of desired.projects) {
     if (!project.id || !project.sourcePath || !byPath.has(project.sourcePath)) continue;
     const source = currentSources.get(project.sourcePath)!;
@@ -421,6 +394,52 @@ export function applyDesiredSnapshot(
       currentSources.set(collection.sourcePath, next);
       changed.add(collection.sourcePath);
     }
+  }
+
+  // Task lines are located by id in the CURRENT source at edit time: the
+  // document-level rewrites above can shift or rewrite lines, so a line index
+  // captured from the original scan is no longer trustworthy here.
+  const findTaskLineIndex = (relativePath: string, taskId: string): number => {
+    const source = currentSources.get(relativePath);
+    if (!source) return -1;
+    const lines = splitLines(source);
+    const inCodeFence = createCodeFenceTracker();
+    for (let index = 0; index < lines.length; index += 1) {
+      if (inCodeFence(lines[index]!)) continue;
+      const parsed = parseTaskLine(lines[index]!, relativePath, index);
+      if (parsed?.id === taskId) return index;
+    }
+    return -1;
+  };
+
+  for (const task of desired.tasks) {
+    if (!task.id || !locations.has(task.id)) continue;
+    const relativePath = locations.get(task.id)!.relativePath;
+    const source = currentSources.get(relativePath)!;
+    const lineIndex = findTaskLineIndex(relativePath, task.id);
+    if (lineIndex < 0) continue;
+    const currentLine = splitLines(source)[lineIndex]!;
+    const nextLine = patchTaskLineMinimal(currentLine, task);
+    if (nextLine !== currentLine) {
+      currentSources.set(relativePath, replaceLine(source, lineIndex, nextLine));
+      changed.add(relativePath);
+    }
+  }
+
+  const removedByPath = new Map<string, string[]>();
+  for (const [id, location] of locations) {
+    if (desiredTaskIds.has(id)) continue;
+    removedByPath.set(location.relativePath, [...(removedByPath.get(location.relativePath) ?? []), id]);
+  }
+  for (const [relativePath, ids] of removedByPath) {
+    let source = currentSources.get(relativePath)!;
+    for (const id of ids) {
+      const lineIndex = findTaskLineIndex(relativePath, id);
+      if (lineIndex >= 0) source = removeLine(source, lineIndex);
+      source = patchTaskMarkdownContent(source, id, "");
+    }
+    currentSources.set(relativePath, source);
+    changed.add(relativePath);
   }
 
   for (const task of desired.tasks) {

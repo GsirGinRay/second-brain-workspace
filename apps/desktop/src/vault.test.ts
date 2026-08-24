@@ -149,6 +149,33 @@ test("desired snapshot permanently removes a missing task line while preserving 
   assert.equal(base64ToText(changes[0]!.replacementBase64), "# Tasks\r\nkeep before\r\nkeep after\r\n");
 });
 
+test("scheduling a task that lives inside a project note survives the project body rewrite", () => {
+  // Regression: the project pass rewrote the document body from the scanned
+  // snapshot AFTER task lines were patched, reverting the schedule edit and
+  // producing a byte-identical no-op write.
+  const inner = formatTaskLine({
+    id: taskId, title: "Ship", status: "todo", dueDate: null, plannedDate: null,
+    priority: "normal", projectId, projectName: "Launch", rank: "a",
+    sourcePath: "project.md", sourceHeading: null, completedAt: null,
+  });
+  const source = `---\r\ntype: project\r\nstatus: active\r\npublisher_id: ${projectId}\r\n---\r\n# Launch\r\n\r\n${inner}\r\n`;
+  const files = [file("project.md", source)];
+  const scanned = scanStructuredVault(files);
+  const desired = {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.map((item) =>
+      item.id === taskId
+        ? { ...item, taskDate: "2026-08-20", startTime: "09:30", durationMinutes: 30, timeZone: "Asia/Taipei" }
+        : item),
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  const change = changes.find((item) => item.relativePath === "project.md");
+  assert.ok(change && change.operation !== "delete");
+  const patched = base64ToText(change.replacementBase64);
+  assert.match(patched, /⏳ 2026-08-20/);
+  assert.match(patched, /"startTime":"09:30"/);
+});
+
 test("project and collection creation use safe unique Markdown paths", () => {
   const project = buildProjectCreateChange("Launch: Q4", "Work", 1, ["Projects/Launch Q4.md"]);
   assert.equal(project.relativePath, "Projects/Launch Q4-2.md");
