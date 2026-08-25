@@ -314,6 +314,48 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .priority-badge.priority-compact{min-width:26px;justify-content:center;padding:0 4px;border-radius:5px;font-size:9px;line-height:1}
 .detail-backdrop{z-index:110;padding:24px}
 .detail-dialog{display:flex;flex-direction:column;width:min(960px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:hidden;border:1px solid var(--line);border-radius:20px;background:var(--paper);color:var(--ink);box-shadow:0 28px 90px #00000038;outline:0}
+
+/* Detail surface: side panel variant. Same markup and same children as the dialog — only
+   the shell moves. On a wide window the backdrop stops painting and stops taking pointer
+   events, so the list behind stays visible and clickable and the panel is genuinely
+   non-modal; Esc, the close button and a click outside remain the ways out. Below the
+   breakpoint a docked panel would cover the page anyway, so it falls back to the dialog's
+   own full-screen treatment, scrim included. */
+.detail-backdrop-panel { background:transparent;pointer-events:none;place-items:stretch;justify-items:end;padding:0; }
+[data-theme="dark"] .detail-backdrop-panel { background:transparent; }
+.detail-dialog-panel {
+  pointer-events:auto;
+  width:min(480px,100vw);
+  max-height:100vh;
+  height:100vh;
+  border-width:0 0 0 1px;
+  border-radius:0;
+  box-shadow:-18px 0 44px #00000026;
+}
+/* The form inside was laid out for a 960px dialog, and its breakpoint asks how wide the
+   window is — not how wide the panel is. Docked at ~480px in a wide window the media query
+   never fires, so the three columns stayed and the fields collided. Restated for the panel
+   directly. (A container query would express this better; stated by class here so the rule
+   is unambiguous.) */
+.detail-dialog-panel .detail-edit-form { padding:20px 20px 22px; }
+.detail-dialog-panel .detail-title-input { font-size:24px; }
+.detail-dialog-panel .detail-form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+/* Category is a single field again: one input carrying its own datalist. The group only
+   has to stop the input collapsing inside a narrow column; the arrow, the list and their
+   styling all belong to the browser, which is why they match the neighbouring selects. */
+.category-input-group { display:flex;min-width:0; }
+.category-input-group input { flex:1 1 auto;min-width:0; }
+/* The settings choice between the two surfaces. */
+.surface-choice { display:grid;gap:8px;margin-top:12px; }
+.surface-choice button { display:grid;gap:3px;text-align:left;border:1px solid var(--line);border-radius:11px;background:var(--paper);color:var(--ink);padding:11px 13px; }
+.surface-choice button small { color:var(--muted);font-size:11.5px;line-height:1.45; }
+.surface-choice button.active { border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink); }
+.surface-choice button.active small { color:var(--ink-2,var(--muted)); }
+@media (max-width: 900px) {
+  .detail-backdrop-panel { background:#00000099;pointer-events:auto; }
+  [data-theme="dark"] .detail-backdrop-panel { background:#000c; }
+  .detail-dialog-panel { width:100vw;border-left-width:0; }
+}
 .detail-dialog-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line);background:var(--paper)}
 .detail-dialog-header h2{margin:4px 0 0;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .detail-dialog-header .icon-button{flex:0 0 auto}

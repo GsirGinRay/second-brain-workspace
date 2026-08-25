@@ -25,7 +25,7 @@ function mount(node: React.ReactElement) {
   return { container, root };
 }
 
-test("CategoryInput provides datalist and quick-select options for existing categories", () => {
+test("CategoryInput offers existing categories through one field with a visible opener", () => {
   const existing = ["工作", "生活", "提示詞/寫作"];
   let chosen = "";
   const { container } = mount(
@@ -50,11 +50,12 @@ test("CategoryInput provides datalist and quick-select options for existing cate
     const expectedOrder = [...existing].sort((a, b) => a.localeCompare(b, "zh-Hant-TW"));
     assert.deepEqual(options, expectedOrder);
 
-    const select = container.querySelector("select.category-quick-select");
-    assert.ok(select, "quick select dropdown exists");
-    flushSync(() => {
-      select!.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event);
-    });
+    // One control, not two: the input's own datalist is the only way in, so the same value
+    // cannot be edited from two places and the arrow is the browser's, matching the selects
+    // beside it.
+    assert.equal(container.querySelector("select.category-quick-select"), null);
+    assert.equal(container.querySelector("button.category-picker-button"), null);
+    assert.equal(container.querySelectorAll("input").length, 1);
   } finally {
     container.remove();
   }

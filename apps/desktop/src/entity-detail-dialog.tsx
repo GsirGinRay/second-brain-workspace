@@ -15,7 +15,7 @@ import type {
 } from "@second-brain/brain-core";
 import { CategoryInput } from "./category-input";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
-import type { UiLanguage } from "./ui-preferences";
+import type { UiDetailSurface, UiLanguage } from "./ui-preferences";
 
 export type DetailTranslate = (
   key: string,
@@ -44,6 +44,7 @@ function DetailDialog({
   eyebrow,
   dirty,
   locale,
+  surface = "dialog",
   onClose,
   children,
 }: {
@@ -51,9 +52,18 @@ function DetailDialog({
   eyebrow: string;
   dirty: boolean;
   locale: UiLanguage;
+  /**
+   * The shell only changes where the detail sits, never what it contains — both surfaces
+   * render the same children, so a field added here appears in whichever one is chosen.
+   */
+  surface?: UiDetailSurface;
   onClose: () => void;
   children: ReactNode;
 }) {
+  // A docked panel leaves the list usable, so it must not behave like a modal: no dimmed
+  // backdrop swallowing clicks, and no focus trap holding Tab inside it. Below the panel
+  // breakpoint the stylesheet restores the scrim, because there the panel covers the page.
+  const panel = surface === "panel";
   const dialogRef = useRef<HTMLElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const requestClose = () => {
@@ -67,18 +77,36 @@ function DetailDialog({
     return () => previousFocusRef.current?.focus();
   }, []);
 
+  /**
+   * Clicking away closes the panel. The backdrop cannot carry this: it is deliberately
+   * transparent to pointer events so the list behind stays usable, so the check happens on
+   * the document instead. A click that lands on another card therefore reads as switching —
+   * this closes first, then that card opens itself with the new selection.
+   */
+  useEffect(() => {
+    if (!panel) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target || dialogRef.current?.contains(target)) return;
+      if (dirty && !confirmDiscard(locale)) return;
+      onClose();
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [panel, dirty, locale, onClose]);
+
   return (
     <div
-      className="modal-backdrop detail-backdrop"
+      className={panel ? "modal-backdrop detail-backdrop detail-backdrop-panel" : "modal-backdrop detail-backdrop"}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) requestClose();
       }}
     >
       <section
         ref={dialogRef}
-        className="detail-dialog"
+        className={panel ? "detail-dialog detail-dialog-panel" : "detail-dialog"}
         role="dialog"
-        aria-modal="true"
+        aria-modal={panel ? undefined : true}
         aria-label={title}
         tabIndex={-1}
         onKeyDown={(event) => {
@@ -87,7 +115,7 @@ function DetailDialog({
             requestClose();
             return;
           }
-          if (event.key !== "Tab") return;
+          if (event.key !== "Tab" || panel) return;
           const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)];
           if (focusable.length === 0) return;
           const first = focusable[0]!;
@@ -141,6 +169,7 @@ export function TaskDetailDialog({
   task,
   projects,
   locale,
+  surface,
   t,
   onClose,
   onSave,
@@ -149,6 +178,7 @@ export function TaskDetailDialog({
   task: BrainTaskSnapshot;
   projects: BrainProjectSnapshot[];
   locale: UiLanguage;
+  surface?: UiDetailSurface;
   t: DetailTranslate;
   onClose: () => void;
   onSave: (task: BrainTaskSnapshot) => Promise<boolean> | boolean;
@@ -182,7 +212,7 @@ export function TaskDetailDialog({
   useSaveShortcut(() => void save());
 
   return (
-    <DetailDialog title={task.title} eyebrow="TASK" dirty={dirty} locale={locale} onClose={onClose}>
+    <DetailDialog title={task.title} eyebrow="TASK" dirty={dirty} locale={locale} surface={surface} onClose={onClose}>
       <div className="detail-edit-form notion-editor">
         <input
           className="detail-title-input"
@@ -221,6 +251,7 @@ export function ProjectDetailDialog({
   doingTasks,
   existingAreas,
   locale,
+  surface,
   t,
   onClose,
   onSave,
@@ -235,6 +266,7 @@ export function ProjectDetailDialog({
   doingTasks: number;
   existingAreas: string[];
   locale: UiLanguage;
+  surface?: UiDetailSurface;
   t: DetailTranslate;
   onClose: () => void;
   onSave: (project: BrainProjectSnapshot) => Promise<boolean> | boolean;
@@ -264,7 +296,7 @@ export function ProjectDetailDialog({
   useSaveShortcut(() => void save());
 
   return (
-    <DetailDialog title={project.name} eyebrow="PROJECT" dirty={dirty} locale={locale} onClose={onClose}>
+    <DetailDialog title={project.name} eyebrow="PROJECT" dirty={dirty} locale={locale} surface={surface} onClose={onClose}>
       <div className="detail-edit-form notion-editor">
         <input className="detail-title-input" aria-label={t("entity.field.name")} value={draft.name} maxLength={200} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
         <div className="detail-form-grid">

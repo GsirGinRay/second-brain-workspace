@@ -176,8 +176,15 @@ const VIEW_TITLE_KEYS: Record<View, string> = {
   sync: "view.sync.title",
 };
 type Translate = (key: string, values?: Record<string, string | number>) => string;
-const UiPreferencesContext = createContext<{ preferences: UiPreferences; t: Translate }>({
+// The setter travels with the preferences so a settings surface can change one without a
+// prop threaded down through every view that happens to sit between it and the App.
+const UiPreferencesContext = createContext<{
+  preferences: UiPreferences;
+  setPreferences: (update: (value: UiPreferences) => UiPreferences) => void;
+  t: Translate;
+}>({
   preferences: DEFAULT_UI_PREFERENCES,
+  setPreferences: () => undefined,
   t: (key, values) => translate(DEFAULT_UI_PREFERENCES.language, key, values),
 });
 function useUiPreferences() {
@@ -1429,7 +1436,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     );
 
   return (
-    <UiPreferencesContext.Provider value={{ preferences, t }}>
+    <UiPreferencesContext.Provider value={{ preferences, setPreferences, t }}>
     <div data-theme={preferences.theme} className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
@@ -1613,6 +1620,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           task={selectedTask}
           projects={projects}
           locale={preferences.language}
+          surface={preferences.detailSurface}
           t={t}
           onClose={() => setSelectedTaskId(null)}
           onSave={async (next) => {
@@ -1635,6 +1643,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           doingTasks={tasks.filter((task) => task.projectId === selectedProjectDetail.id && task.status === "doing").length}
           existingAreas={[...new Set(projects.map((project) => project.area).filter((area): area is string => Boolean(area)))].sort()}
           locale={preferences.language}
+          surface={preferences.detailSurface}
           t={t}
           onClose={() => setSelectedProjectDetailId(null)}
           onSave={(next) => persistLocal(tasks, projects.map((project) => {
@@ -4223,9 +4232,32 @@ function SyncSettings({
   onShadow: () => void;
   onOpenArchitecture: () => void;
 }) {
-  const { preferences, t } = useUiPreferences();
+  const { preferences, setPreferences, t } = useUiPreferences();
+  const detailSurfaces = [
+    { id: "dialog" as const, label: t("settings.detailSurface.dialog"), hint: t("settings.detailSurface.dialogHint") },
+    { id: "panel" as const, label: t("settings.detailSurface.panel"), hint: t("settings.detailSurface.panelHint") },
+  ];
   return (
     <div className="settings-grid">
+      <section className="settings-card">
+        <h2>{t("settings.detailSurface")}</h2>
+        <p>{t("settings.detailSurface.hint")}</p>
+        <div className="surface-choice" role="radiogroup" aria-label={t("settings.detailSurface")}>
+          {detailSurfaces.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={preferences.detailSurface === option.id}
+              className={preferences.detailSurface === option.id ? "active" : ""}
+              onClick={() => setPreferences((value) => ({ ...value, detailSurface: option.id }))}
+            >
+              <strong>{option.label}</strong>
+              <small>{option.hint}</small>
+            </button>
+          ))}
+        </div>
+      </section>
       <section className="settings-card">
         <span className="step">★</span>
         <h2>建立知識架構</h2>

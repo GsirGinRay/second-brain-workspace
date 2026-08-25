@@ -1,11 +1,18 @@
 export type UiLanguage = "zh-TW" | "en";
 export type UiTheme = "light" | "dark";
 export type UiDensity = "comfortable" | "compact";
+/**
+ * Where task and project detail opens. "dialog" centres a wide sheet over a dimmed page;
+ * "panel" docks it to the right so the list stays visible and clickable. Below the panel
+ * breakpoint the two converge, because a docked panel occupies the full width anyway.
+ */
+export type UiDetailSurface = "dialog" | "panel";
 
 export interface UiPreferences {
   language: UiLanguage;
   theme: UiTheme;
   density: UiDensity;
+  detailSurface: UiDetailSurface;
 }
 
 export const UI_PREFERENCES_KEY = "second-brain.uiPreferences";
@@ -14,6 +21,7 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   language: "zh-TW",
   theme: "light",
   density: "comfortable",
+  detailSurface: "dialog",
 };
 
 export function normalizeUiPreferences(value: unknown): UiPreferences {
@@ -27,6 +35,7 @@ export function normalizeUiPreferences(value: unknown): UiPreferences {
     language: candidate.language,
     theme: candidate.theme,
     density: candidate.density === "compact" ? "compact" : "comfortable",
+    detailSurface: candidate.detailSurface === "panel" ? "panel" : "dialog",
   };
 }
 
@@ -37,6 +46,12 @@ const ENGLISH: Record<string, string> = {
   "app.theme": "Switch color theme",
   "app.theme.light": "Use light theme",
   "app.theme.dark": "Use dark theme",
+  "settings.detailSurface": "Task and project detail",
+  "settings.detailSurface.hint": "On a wide window, choose whether detail covers the page or docks beside it. Narrow windows always use the full width.",
+  "settings.detailSurface.dialog": "Centered dialog",
+  "settings.detailSurface.dialogHint": "A wide sheet over a dimmed page. More room to write.",
+  "settings.detailSurface.panel": "Side panel",
+  "settings.detailSurface.panelHint": "Docked to the right; the list stays visible and you can switch tasks without closing.",
   "app.sidebar": "Toggle sidebar",
   "app.online": "Online",
   "app.offline": "Offline mode",
@@ -278,6 +293,12 @@ const TRADITIONAL_CHINESE: Record<string, string> = {
   "app.theme": "切換色彩主題",
   "app.theme.light": "切換為淺色主題",
   "app.theme.dark": "切換為深色主題",
+  "settings.detailSurface": "任務與專案的詳細內容",
+  "settings.detailSurface.hint": "寬視窗時，決定詳細內容要蓋住畫面還是停在旁邊。窄視窗一律使用整個寬度。",
+  "settings.detailSurface.dialog": "置中視窗",
+  "settings.detailSurface.dialogHint": "較寬的視窗蓋在變暗的頁面上，書寫空間較大。",
+  "settings.detailSurface.panel": "側邊面板",
+  "settings.detailSurface.panelHint": "停靠在右側，清單保持可見，可直接點下一筆而不必先關閉。",
   "app.sidebar": "切換側面板",
   "app.online": "網路已連線",
   "app.offline": "離線模式",

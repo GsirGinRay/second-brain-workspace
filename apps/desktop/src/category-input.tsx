@@ -30,8 +30,15 @@ export function CategoryInput({
     locale === "zh-TW" ? "選擇現有分類…" : "Select existing…";
   const defaultPlaceholder = translate(locale, "app.uncategorized");
 
+  /**
+   * One control, not two. The input already carries every existing category through its
+   * datalist, so a second picker beside it offered the same values through a second entry
+   * point for the same field. The browser draws the list arrow itself, which is also the
+   * only way it matches the arrows the neighbouring selects draw — a hand-built one differs
+   * in weight and placement no matter how closely it is tuned.
+   */
   return (
-    <div className="category-input-group">
+    <div className="category-input-group" title={sortedCategories.length > 0 ? selectPlaceholder : undefined}>
       <input
         list={listId}
         value={value}
@@ -45,27 +52,6 @@ export function CategoryInput({
           <option key={cat} value={cat} />
         ))}
       </datalist>
-      {sortedCategories.length > 0 && (
-        <select
-          className="category-quick-select"
-          aria-label={ariaLabel ? `${ariaLabel} ${selectPlaceholder}` : selectPlaceholder}
-          value={sortedCategories.includes(value) ? value : ""}
-          onChange={(event) => {
-            if (event.target.value) {
-              onChange(event.target.value);
-            }
-          }}
-        >
-          <option value="" disabled>
-            {selectPlaceholder}
-          </option>
-          {sortedCategories.map((cat) => (
-            <option key={cat} value={cat}>
-              {cat}
-            </option>
-          ))}
-        </select>
-      )}
     </div>
   );
 }
