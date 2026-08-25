@@ -466,7 +466,7 @@ export function DaySchedule({
                 <article
                   key={task.id ?? task.title}
                   data-tray-card-id={task.id ?? undefined}
-                  className={`schedule-tray-card ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${trayHint?.id === task.id ? (trayHint.place === "before" ? "drop-before" : "drop-after") : ""}`}
+                  className={`schedule-tray-card ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""} ${trayHint?.id === task.id ? (trayHint.place === "before" ? "drop-before" : "drop-after") : ""}`}
                   tabIndex={0}
                   onPointerDown={(event) => {
                     if (event.button !== 0 || !task.id || (event.target as HTMLElement).closest("button,input,select,textarea,a")) return;
@@ -629,7 +629,7 @@ export function DaySchedule({
             return (
               <article
                 key={task.id}
-                className={`timed-block ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""}`}
+                className={`timed-block ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
                 style={{ top, height, left, width }}
                 tabIndex={0}
                 onPointerDown={(event) => beginTimedDrag(event, task)}

@@ -287,6 +287,14 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .inline-title-input,.timed-block-title,.board-inline-title,.agenda-inline-title-input{min-width:0;flex:1;border:0;background:transparent;padding:2px 0;text-align:left;font:inherit;font-weight:750;color:var(--ink);resize:none;overflow:hidden;white-space:pre-wrap;word-break:break-word}
 .timed-block-head{display:flex;align-items:center;gap:6px;min-width:0}
 .timed-block-actions{position:absolute;top:4px;right:6px;display:none;gap:4px}
+/* These buttons hard-code a white face, and every danger variant a pale pink one, so in
+   dark mode they read as bright blank tiles floating on a dark card. Restated through
+   tokens and explicit dark values. The danger rules are (0,2,0)/(0,2,1) modifiers, which
+   the :is() override list further down would otherwise outrank. */
+[data-theme="dark"] .timed-block-action { background:var(--paper);color:var(--ink);border-color:var(--line); }
+[data-theme="dark"] .timed-block-action.danger,
+[data-theme="dark"] .schedule-tray-actions button.danger,
+[data-theme="dark"] .week-task-actions button.danger { background:#2c1614;color:#f0918a;border-color:#7a3a33; }
 .timed-block:hover .timed-block-actions,.timed-block:focus-within .timed-block-actions{display:flex}
 .timed-block-action{display:grid;place-items:center;width:22px;height:22px;border:1px solid #ccc;border-radius:6px;background:#fff;padding:0}
 .timed-block-action svg{width:12px;height:12px}

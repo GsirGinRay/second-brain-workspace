@@ -38,7 +38,10 @@ export function moveTaskToLane(task: BrainTaskSnapshot, lane: BoardLane, today: 
     ...task,
     status: lane,
     taskDate: lane !== "done" && task.taskDate === null ? today : task.taskDate,
-    completedAt: lane === "done" ? today : null,
+    // Moving to done stamps today, but a task that is already done keeps the day it was
+    // actually finished. Without this, dropping a completed card back onto the done lane —
+    // which the board does not guard against — silently rewrites its completion date.
+    completedAt: lane === "done" ? (task.status === "done" ? task.completedAt ?? today : today) : null,
   };
 }
 

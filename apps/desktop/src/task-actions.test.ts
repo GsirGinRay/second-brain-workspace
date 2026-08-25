@@ -91,6 +91,17 @@ test("unscheduled todo tasks form an idea inbox without changing the public stat
   assert.deepEqual(moveTaskToLane(task("planned", "2026-08-12"), "idea", "2026-08-12"), { ...task("planned", "2026-08-12"), status: "todo", taskDate: null, completedAt: null });
 });
 
+test("moving an already completed task within done keeps the day it was finished", () => {
+  const finishedYesterday = { ...task("done", "2026-08-24"), status: "done" as const, completedAt: "2026-08-24" };
+  // The board drops a card onto whichever lane the pointer lands in without checking
+  // whether it is already there, so this call happens whenever a done card is nudged.
+  assert.equal(moveTaskToLane(finishedYesterday, "done", "2026-08-25").completedAt, "2026-08-24");
+  // A task arriving in done for the first time is stamped with today.
+  assert.equal(moveTaskToLane(task("fresh", "2026-08-24"), "done", "2026-08-25").completedAt, "2026-08-25");
+  // Leaving done clears the date so it cannot resurface later.
+  assert.equal(moveTaskToLane(finishedYesterday, "todo", "2026-08-25").completedAt, null);
+});
+
 test("calendar scheduling moves only the task date and next-week priorities exclude completed work", () => {
   const planned = scheduleTask(task("move", null), "2026-08-15");
   assert.equal(planned.taskDate, "2026-08-15");

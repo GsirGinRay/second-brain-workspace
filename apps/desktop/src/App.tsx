@@ -2091,7 +2091,9 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
   const completed = completedForDate(tasks, today);
   const scheduled = [
     ...groups.today.filter((task) => task.startTime),
-    ...(showCompleted ? completed.filter((task) => task.startTime) : []),
+    // Completed today but dated earlier: the start time belongs to that earlier day, so
+    // placing it on today's timeline would claim a slot it never occupied today.
+    ...(showCompleted ? completed.filter((task) => task.startTime && task.taskDate === today) : []),
   ].sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? ""));
   const trayTasks = [
     ...groups.overdue,
@@ -2187,7 +2189,9 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
 
 function InlineTaskCard({ task, today, onOpen, onPatch, onComplete, onDelete }: { task: BrainTaskSnapshot; today: string; onOpen: (taskId: string) => void; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
   const { t, preferences } = useUiPreferences();
-  const overdueDays = task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
+  // Overdue means "still owed and the date has passed". A finished task is neither, so a
+  // task completed today but dated yesterday was reading as 逾期 1 天 in the completed list.
+  const overdueDays = task.status !== "done" && task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
   return <article className={`inline-task-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={(event) => { event.stopPropagation(); onComplete(task); }}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong>{task.title}</strong></div><small>{task.projectName ?? t("app.unassigned")}{task.startTime ? ` · ${task.startTime}` : ""}</small>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<button className="danger-icon" aria-label="永久刪除" title="永久刪除" onClick={(event) => { event.stopPropagation(); onDelete(task); }}><Trash2 /></button></div></article>;
 }
 
