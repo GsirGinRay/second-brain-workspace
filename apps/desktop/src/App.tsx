@@ -3022,7 +3022,7 @@ function Board({
                       />
                       <strong className="board-inline-title">{task.status === "done" ? "✓ " : ""}{task.title}</strong>
                     </div>
-                    <small>{task.projectName ?? t("app.unassigned")}</small>
+                    {task.projectName && <small>{task.projectName}</small>}
                     <label className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
                       <CalendarDays aria-hidden="true" />
                       <TaskDateInput
@@ -3032,49 +3032,42 @@ function Board({
                         onCommit={(next) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, taskDate: next } : item))}
                       />
                     </label>
-                    <div className="board-actions">
-                      <select
-                        aria-label={`移動 ${task.title} 到其他狀態`}
-                        value={boardLane(task)}
-                        onChange={(event) =>
-                          moveToLane(task.id, event.target.value as BoardLane)
-                        }
-                      >
-                        {lanes.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        aria-label={t("board.moveUp")}
-                        title={t("board.moveUp")}
-                        onClick={() => moveWithinColumn(task.id, -1)}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        aria-label={t("board.moveDown")}
-                        title={t("board.moveDown")}
-                        onClick={() => moveWithinColumn(task.id, 1)}
-                      >
-                        ↓
-                      </button>
-                      <TaskActionBar
-                        task={task}
-                        important={task.priority === "highest"}
-                        onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, task.taskDate ?? today))}
-                        onComplete={() => moveToLane(task.id, task.status === "done" ? "todo" : "done")}
-                        onEdit={() => task.id && onOpenTask(task.id)}
-                        onDelete={onDelete}
-                      />
-                    </div>
                     {task.id && (
                       <div
                         className="board-card-inline-actions"
                         onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => event.stopPropagation()}
                       >
+                        <button
+                          type="button"
+                          className={`board-card-icon ${task.priority === "highest" ? "active" : ""}`}
+                          aria-label={t("task.action.important")}
+                          title={t("task.action.important")}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (task.id) void onSave(toggleMostImportant(tasks, task.id, today));
+                          }}
+                        >
+                          <Star aria-hidden="true" fill={task.priority === "highest" ? "currentColor" : "none"} />
+                        </button>
+                        <button
+                          type="button"
+                          className="board-card-icon"
+                          aria-label={t("board.moveUp")}
+                          title={t("board.moveUp")}
+                          onClick={() => moveWithinColumn(task.id, -1)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="board-card-icon"
+                          aria-label={t("board.moveDown")}
+                          title={t("board.moveDown")}
+                          onClick={() => moveWithinColumn(task.id, 1)}
+                        >
+                          ↓
+                        </button>
                         <button
                           type="button"
                           className="board-card-complete"

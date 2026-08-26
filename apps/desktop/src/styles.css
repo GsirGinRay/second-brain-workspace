@@ -310,6 +310,25 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .idea-context-menu button.danger{color:#a5261c}
 .idea-context-menu button.danger:hover,.idea-context-menu button.danger:focus-visible{background:#fde8e5;color:#a5261c}
 .collection-list-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:start;border:1px solid var(--line);border-radius:12px;background:#fff;padding:10px 12px}
+
+/* Board cards carry the lane, the title and the date - everything else (status,
+   priority, delete, reopen) already lives in the detail surface a click away, and
+   duplicating it on every card is what forced 245px lanes and 230px-tall cards.
+   Reordering has no other home, so it stays. It cannot be hover-only: pressing it
+   moves the card out from under the pointer, so the control the user is repeating
+   would vanish on its own first press. */
+/* Reorder and importance sit in the same row as complete and delete: three separate
+   button rows on one card was most of the height the slimming was meant to remove.
+   Colours come from tokens so the row survives the dark theme without a second rule. */
+.board-card-icon { display:inline-grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);font-size:14px;line-height:1; }
+.board-card-icon svg { width:15px;height:15px; }
+/* The five controls need 229px at the default spacing but a 320px window leaves the
+   card about 222px once the scrollbar is counted, so the row wrapped for the sake of
+   7px. Tightening the gap and the label padding buys 14px and keeps it one line. */
+.board-card-icon:hover,.board-card-icon:focus-visible { border-color:var(--ink);outline:none; }
+.board-card-icon.active { border-color:var(--accent-red);color:var(--accent-red); }
+.board-date-field { margin-top:6px; }
+.board-date-input { border-color:transparent;background:transparent;padding:3px 4px; }
 .collection-list-item.active{border-color:#222;box-shadow:0 0 0 2px #222}
 .collection-list-main{display:grid;gap:8px;border:0;background:transparent;padding:0;text-align:left;min-width:0}
 .collection-list-main small{color:var(--muted);line-height:1.45}
@@ -519,6 +538,15 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .board-card-complete:hover{border-color:var(--ink);background:#f1f1ef}
 .board-card-complete svg{width:14px;height:14px}
 .completed-task .board-card-complete{border-color:#16834c;color:#16834c;background:#f0faf3}
+/* Measured: five controls total 208px, so the default 6px gap and 10px label padding
+   need 232px while a 300px lane leaves 228px. Tightening both buys 14px and keeps the
+   row on one line. These must sit after the base rules above or they lose the cascade. */
+.board-card-inline-actions { gap:4px; }
+.board-card-complete { padding:0 7px; }
+/* The action row needs about 215px, and five layers of padding and border sit between
+   the lane and it, so a 245px lane leaves only ~190px and the row wraps. Raise the lane
+   floor to fit the row the card actually has rather than trimming the row to fit. */
+.board { grid-template-columns: repeat(auto-fit,minmax(300px,1fr)); }
 
 /* Quick-add modal inline project field. */
 .quick-project-field{display:grid;gap:5px;margin-top:13px;font-size:11px;font-weight:700;color:#555}
