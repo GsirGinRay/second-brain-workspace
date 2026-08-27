@@ -41,7 +41,11 @@ interface Rendered {
   saved: BrainTaskSnapshot[][];
 }
 
-function renderToday(tasks: BrainTaskSnapshot[], routineTemplate: RoutineTemplate): Rendered {
+function renderToday(
+  tasks: BrainTaskSnapshot[],
+  routineTemplate: RoutineTemplate,
+  overrides: { onDelete?: (task: BrainTaskSnapshot) => void } = {},
+): Rendered {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -54,7 +58,7 @@ function renderToday(tasks: BrainTaskSnapshot[], routineTemplate: RoutineTemplat
         showCompleted={false}
         onShowCompletedChange={() => undefined}
         onSave={(next) => saved.push(next.map((item) => ({ ...item })))}
-        onDelete={() => undefined}
+        onDelete={overrides.onDelete ?? (() => undefined)}
         onOpenTask={() => undefined}
         onQuickAdd={() => undefined}
         routineTemplate={routineTemplate}
@@ -240,6 +244,73 @@ test("dragging an unscheduled task by its title schedules it on the timeline", (
     const updated = rendered.saved[0]!.find((item) => item.id === open.id);
     assert.equal(updated?.startTime, "10:00");
     assert.equal(updated?.taskDate, today);
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("deleting a today task arms in place and deletes on the second click", () => {
+  const today = taipeiDateKey(new Date());
+  const open: BrainTaskSnapshot = {
+    schemaVersion: 6,
+    id: "delete-me",
+    title: "要刪掉的任務",
+    status: "todo",
+    taskDate: today,
+    priority: "normal",
+    projectId: null,
+    projectName: null,
+    rank: "00000001",
+    sourcePath: "10-收件匣/待辦收件匣.md",
+    sourceHeading: null,
+    completedAt: null,
+  };
+  const deleted: BrainTaskSnapshot[] = [];
+  const rendered = renderToday(
+    [open],
+    createDefaultRoutineTemplate("66666666-6666-4666-8666-666666666666"),
+    { onDelete: (task) => deleted.push(task) },
+  );
+  try {
+    const danger = rendered.container.querySelector<HTMLButtonElement>(".schedule-tray-actions .danger-confirm");
+    assert.ok(danger, "the tray card carries the armed two-step delete");
+    flushSync(() => clickEvent(danger!, "click"));
+    assert.equal(deleted.length, 0, "the first click only arms the button");
+    assert.ok(danger!.className.includes("armed"), "the armed state is visible on the button itself");
+    flushSync(() => clickEvent(danger!, "click"));
+    assert.deepEqual(deleted.map((task) => task.id), ["delete-me"], "the second click deletes exactly once");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("starring a today task promotes it through toggleMostImportant via onSave", () => {
+  const today = taipeiDateKey(new Date());
+  const open: BrainTaskSnapshot = {
+    schemaVersion: 6,
+    id: "star-me",
+    title: "今天最重要的事",
+    status: "todo",
+    taskDate: today,
+    startTime: null,
+    durationMinutes: null,
+    timeZone: null,
+    priority: "normal",
+    projectId: null,
+    projectName: null,
+    rank: "00000001",
+    sourcePath: "10-收件匣/待辦收件匣.md",
+    sourceHeading: null,
+    completedAt: null,
+  };
+  const rendered = renderToday([open], createDefaultRoutineTemplate("77777777-7777-4777-8777-777777777777"));
+  try {
+    const star = rendered.container.querySelector<HTMLButtonElement>(".schedule-tray-card .tray-star");
+    assert.ok(star, "the tray card exposes the importance star");
+    flushSync(() => clickEvent(star!, "click"));
+    assert.equal(rendered.saved.length, 1, "starring saves once");
+    const updated = rendered.saved[0]!.find((item) => item.id === "star-me");
+    assert.equal(updated?.priority, "highest", "the starred task becomes today's most important");
   } finally {
     rendered.container.remove();
   }

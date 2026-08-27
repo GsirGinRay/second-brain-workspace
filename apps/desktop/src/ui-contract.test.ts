@@ -122,7 +122,7 @@ test("idea inbox is calm by default and supports accessible quick deletion", () 
   const styles = css();
   assert.match(source, /ideasExpanded \? ideas : ideas\.slice\(0, 8\)/);
   assert.match(source, /className="idea-delete-button"/);
-  assert.match(source, /aria-label=\{\`永久刪除想法/);
+  assert.match(source, /armLabel=\{`永久刪除想法/);
   assert.match(source, /onContextMenu=/);
   assert.match(source, /role="menu"/);
   assert.match(styles, /\.idea-card-body/);
@@ -192,7 +192,10 @@ test("projects navigate to an id-filtered board and expose planning, filters and
   assert.match(source, /value="planning">\{t\("project\.status\.planning"\)\}/);
   assert.match(source, /second-brain\.projectView/);
   assert.match(source, /buildProjectDeleteChanges/);
-  assert.match(source, /保留 .*項未完成任務並解除專案連結/);
+  // Deletion is confirmed by the in-place armed button, not a detached
+  // window.confirm dialog standing between the user and the control.
+  assert.doesNotMatch(source, /window\.confirm\([^)]*解除專案連結/s);
+  assert.match(source, /onDelete=\{\(\) => void permanentlyDeleteProject\(selectedProjectDetail\)\}/);
 });
 
 test("desktop separates collections from outcome projects and supports promotion", () => {
@@ -361,4 +364,47 @@ test("the Notion canvas drags with live feedback and its own undo", () => {
   assert.match(styles, /\.markdown-drop-indicator/);
   assert.match(styles, /\.markdown-block-move/);
   assert.ok(detailSource.includes("<MarkdownBlockEditor"));
+});
+
+test("capture, detail and project surfaces accept tasks and projects inline", () => {
+  const source = app();
+  const styles = css();
+  // Quick add: Notion canvas + searchable picker that can create a project.
+  assert.match(source, /<MarkdownBlockEditor value=\{body\}/);
+  assert.match(source, /<ProjectPicker[\s\S]{0,400}onCreateProject=\{onCreateProject\}/);
+  assert.match(source, /onCreateProject=\{\(name\) => createProject\(name, null, null\)\}/);
+  // Stray clicks and Escape auto-save a titled draft instead of discarding it.
+  assert.match(source, /const closeGracefully = \(\) => \{[\s\S]{0,200}if \(!submit\(\)\) onClose\(\);/);
+  // Project dialog binds new tasks to the open project.
+  assert.match(source, /projectName: selectedProjectDetail\.name/);
+  assert.match(styles, /\.detail-task-composer/);
+});
+
+test("today's focus panel widens the tray and surfaces star, time and delete inline", () => {
+  const source = app();
+  const styles = css();
+  const schedule = readFileSync(resolve(import.meta.dirname, "day-schedule-view.tsx"), "utf8");
+  assert.match(source, /toggleMostImportant/);
+  assert.match(schedule, /onStar\?/);
+  assert.match(schedule, /onPickProject\?/);
+  assert.match(schedule, /schedule-tray-title-row/);
+  assert.match(schedule, /schedule-tray-inline|timed-block-head/);
+  // The tray lane is now the wide column; the timeline narrows accordingly,
+  // and a draggable splitter lives between the two so the user can resize.
+  assert.match(styles, /\.day-schedule\.has-tray\{grid-template-columns:var\(--tray-width,340px\) 6px minmax\(0,1fr\)\}/);
+  assert.match(styles, /\.day-schedule-resizer\{[^}]*cursor:col-resize/);
+  assert.match(styles, /\.danger-confirm\.armed[^}]*#b42318/);
+  assert.doesNotMatch(styles, /\.danger-confirm\.armed\{[^}]*(?:width:auto|padding:6px 12px)/);
+  assert.doesNotMatch(styles, /\.clear-check\{[^}]*width:\s*40px/);
+  assert.match(styles, /\.inline-task-card\{[^}]*26px minmax\(0,1fr\)/);
+});
+
+test("board lanes offer an inline add button bound to the active project filter", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /lane-add-button/);
+  assert.match(source, /t\("board\.lane\.add"\)/);
+  assert.match(source, /createInLane\(lane\.id/);
+  assert.match(source, /moveTaskToLane\(base, lane, today\)/);
+  assert.match(styles, /\.lane-composer input/);
 });

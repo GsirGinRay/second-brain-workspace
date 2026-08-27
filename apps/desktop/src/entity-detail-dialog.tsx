@@ -5,7 +5,6 @@ import {
   FolderKanban,
   RotateCcw,
   Save,
-  Trash2,
   X,
 } from "lucide-react";
 import type {
@@ -15,6 +14,8 @@ import type {
 } from "@second-brain/brain-core";
 import { CategoryInput } from "./category-input";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
+import { ProjectPicker, type CreatedProject } from "./project-picker";
+import { DangerConfirmButton } from "./danger-confirm";
 import type { UiLanguage } from "./ui-preferences";
 
 export type DetailTranslate = (
@@ -39,27 +40,25 @@ function confirmDiscard(locale: UiLanguage): boolean {
   );
 }
 
+/**
+ * The dialog shell only owns focus trapping and layout. Closing policy lives
+ * with each dialog so an outside click can auto-save instead of discarding.
+ */
 function DetailDialog({
   title,
   eyebrow,
-  dirty,
   locale,
-  onClose,
+  onRequestClose,
   children,
 }: {
   title: string;
   eyebrow: string;
-  dirty: boolean;
   locale: UiLanguage;
-  onClose: () => void;
+  onRequestClose: () => void;
   children: ReactNode;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
-  const requestClose = () => {
-    if (dirty && !confirmDiscard(locale)) return;
-    onClose();
-  };
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement as HTMLElement | null;
@@ -71,7 +70,7 @@ function DetailDialog({
     <div
       className="modal-backdrop detail-backdrop"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) requestClose();
+        if (event.target === event.currentTarget) onRequestClose();
       }}
     >
       <section
@@ -84,7 +83,7 @@ function DetailDialog({
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
-            requestClose();
+            onRequestClose();
             return;
           }
           if (event.key !== "Tab") return;
@@ -111,7 +110,7 @@ function DetailDialog({
             className="icon-button"
             aria-label={locale === "zh-TW" ? "關閉" : "Close"}
             title={locale === "zh-TW" ? "關閉" : "Close"}
-            onClick={requestClose}
+            onClick={onRequestClose}
           >
             <X aria-hidden="true" />
           </button>
@@ -145,6 +144,7 @@ export function TaskDetailDialog({
   onClose,
   onSave,
   onDelete,
+  onCreateProject,
 }: {
   task: BrainTaskSnapshot;
   projects: BrainProjectSnapshot[];
@@ -153,27 +153,40 @@ export function TaskDetailDialog({
   onClose: () => void;
   onSave: (task: BrainTaskSnapshot) => Promise<boolean> | boolean;
   onDelete: (task: BrainTaskSnapshot) => void;
+  onCreateProject?: (name: string) => Promise<CreatedProject | null>;
 }) {
   const [draft, setDraft] = useState(task);
   const [saving, setSaving] = useState(false);
   useEffect(() => setDraft(task), [task]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(task);
-  const chooseProject = (id: string) => {
-    const project = projects.find((item) => item.id === id);
+  const chooseProject = (project: BrainProjectSnapshot | null) => {
     setDraft((current) => ({
       ...current,
       projectId: project?.id ?? null,
       projectName: project?.name ?? null,
     }));
   };
-  const save = async () => {
-    if (!draft.title.trim() || saving) return;
+  const save = async (): Promise<boolean> => {
+    if (!draft.title.trim() || saving) return false;
     setSaving(true);
     try {
-      await onSave({ ...draft, title: draft.title.trim() });
+      return await onSave({ ...draft, title: draft.title.trim() });
     } finally {
       setSaving(false);
     }
+  };
+  // Clicking outside / Escape / the × saves work in progress automatically;
+  // only an untitled draft still asks before being thrown away.
+  const requestClose = async () => {
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    if (!draft.title.trim()) {
+      if (confirmDiscard(locale)) onClose();
+      return;
+    }
+    if (await save()) onClose();
   };
   const cancel = () => {
     if (dirty && !confirmDiscard(locale)) return;
@@ -182,7 +195,7 @@ export function TaskDetailDialog({
   useSaveShortcut(() => void save());
 
   return (
-    <DetailDialog title={task.title} eyebrow="TASK" dirty={dirty} locale={locale} onClose={onClose}>
+    <DetailDialog title={task.title} eyebrow="TASK" locale={locale} onRequestClose={() => void requestClose()}>
       <div className="detail-edit-form notion-editor">
         <input
           className="detail-title-input"
@@ -197,13 +210,28 @@ export function TaskDetailDialog({
           <label>{t("task.field.date")}<input type="date" value={draft.taskDate ?? ""} onChange={(event) => setDraft({ ...draft, taskDate: event.target.value || null })} /></label>
           <label>{t("task.field.startTime")}<input type="time" value={draft.startTime ?? ""} onChange={(event) => setDraft({ ...draft, startTime: event.target.value || null, durationMinutes: event.target.value ? (draft.durationMinutes ?? 30) : null, timeZone: "Asia/Taipei" })} /></label>
           <label>{t("task.field.duration")}<select disabled={!draft.startTime} value={draft.durationMinutes ?? 30} onChange={(event) => setDraft({ ...draft, durationMinutes: Number(event.target.value) })}>{[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} {locale === "zh-TW" ? "分" : "min"}</option>)}</select></label>
-          <label>{t("task.field.project")}<select value={draft.projectId ?? ""} onChange={(event) => chooseProject(event.target.value)}><option value="">{t("app.unassigned")}</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select></label>
+          <div className="detail-project-field">
+            <span className="detail-field-label">{t("task.field.project")}</span>
+            <ProjectPicker
+              projects={projects}
+              valueId={draft.projectId}
+              onSelect={chooseProject}
+              onCreateProject={onCreateProject}
+              locale={locale}
+              ariaLabel={t("task.field.project")}
+            />
+          </div>
         </div>
         <MarkdownBlockEditor value={draft.body ?? ""} onChange={(body) => setDraft((current) => ({ ...current, body }))} locale={locale} />
         <div className="detail-dialog-actions split-actions">
           <div>
             <button type="button" className="secondary-button action-with-icon" onClick={() => setDraft((current) => ({ ...current, status: current.status === "done" ? "todo" : "done", completedAt: current.status === "done" ? null : current.completedAt }))}><CheckCircle2 aria-hidden="true" />{t(draft.status === "done" ? "task.action.reopen" : "task.action.complete")}</button>
-            <button type="button" className="danger action-with-icon" onClick={() => onDelete(task)}><Trash2 aria-hidden="true" />{t("task.action.delete")}</button>
+            <DangerConfirmButton
+              className="action-with-icon danger"
+              armLabel={t("task.action.delete")}
+              confirmLabel={t("confirm.deleteAgain")}
+              onConfirm={() => onDelete(task)}
+            >{t("task.action.delete")}</DangerConfirmButton>
           </div>
           <div>
             <button type="button" className="secondary-button" onClick={cancel}>{t("app.cancel")}</button>
@@ -215,11 +243,103 @@ export function TaskDetailDialog({
   );
 }
 
+/** Inline composer + task list shown inside the project detail dialog. */
+function ProjectTaskSection({
+  projectKey,
+  tasks,
+  locale,
+  t,
+  onAddTask,
+  onToggleTask,
+  onOpenTask,
+  onDeleteTask,
+}: {
+  projectKey: string;
+  tasks: BrainTaskSnapshot[];
+  locale: UiLanguage;
+  t: DetailTranslate;
+  onAddTask: (title: string) => void;
+  onToggleTask: (task: BrainTaskSnapshot) => void;
+  onOpenTask: (taskId: string) => void;
+  onDeleteTask: (task: BrainTaskSnapshot) => void;
+}) {
+  // Uncontrolled like the timeline composer: read the DOM value on commit.
+  const inputRef = useRef<HTMLInputElement>(null);
+  const submit = (): boolean => {
+    const trimmed = inputRef.current?.value.trim() ?? "";
+    if (!trimmed) return false;
+    onAddTask(trimmed);
+    if (inputRef.current) inputRef.current.value = "";
+    return true;
+  };
+  return (
+    <section className="detail-task-section">
+      <header>
+        <h3>{t("project.tasks.title")}</h3>
+        <small>{tasks.length}</small>
+      </header>
+      <form
+        className="detail-task-composer"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
+        <input
+          ref={inputRef}
+          type="text"
+          placeholder={t("project.tasks.add")}
+          aria-label={t("project.tasks.add")}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              submit();
+            } else if (event.key === "Escape" && inputRef.current) {
+              inputRef.current.value = "";
+            }
+          }}
+          onBlur={() => submit()}
+        />
+      </form>
+      {tasks.length === 0 ? (
+        <p className="detail-task-empty">{locale === "zh-TW" ? "這個專案還沒有未完成任務。" : "No open tasks in this project yet."}</p>
+      ) : (
+        <ul className="detail-task-list">
+          {tasks.map((task) => (
+            <li key={task.id ?? `${projectKey}:${task.rank}`}>
+              <button
+                type="button"
+                className={`detail-task-check ${task.status === "done" ? "done" : ""}`}
+                aria-label={`${task.title} ${task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}`}
+                title={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                onClick={() => onToggleTask(task)}
+              >{task.status === "done" ? "✓" : ""}</button>
+              <button
+                type="button"
+                className="detail-task-title"
+                onClick={() => task.id && onOpenTask(task.id)}
+                title={t("task.hint.editTitle")}
+              >{task.title}</button>
+              <DangerConfirmButton
+                className="icon-button"
+                armLabel={t("task.action.delete")}
+                confirmLabel={t("confirm.deleteAgain")}
+                onConfirm={() => onDeleteTask(task)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function ProjectDetailDialog({
   project,
   openTasks,
   doingTasks,
   existingAreas,
+  projectTasks,
   locale,
   t,
   onClose,
@@ -229,11 +349,17 @@ export function ProjectDetailDialog({
   onReopen,
   onArchive,
   onDelete,
+  onAddProjectTask,
+  onToggleProjectTask,
+  onOpenProjectTask,
+  onDeleteProjectTask,
 }: {
   project: BrainProjectSnapshot;
   openTasks: number;
   doingTasks: number;
   existingAreas: string[];
+  /** Open tasks belonging to this project, rank-ordered by the caller. */
+  projectTasks: BrainTaskSnapshot[];
   locale: UiLanguage;
   t: DetailTranslate;
   onClose: () => void;
@@ -243,19 +369,34 @@ export function ProjectDetailDialog({
   onReopen: () => void;
   onArchive: () => void;
   onDelete: () => void;
+  onAddProjectTask: (title: string) => void;
+  onToggleProjectTask: (task: BrainTaskSnapshot) => void;
+  onOpenProjectTask: (taskId: string) => void;
+  onDeleteProjectTask: (task: BrainTaskSnapshot) => void;
 }) {
   const [draft, setDraft] = useState(project);
   const [saving, setSaving] = useState(false);
   useEffect(() => setDraft(project), [project]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(project);
-  const save = async () => {
-    if (!draft.name.trim() || saving) return;
+  const save = async (): Promise<boolean> => {
+    if (!draft.name.trim() || saving) return false;
     setSaving(true);
     try {
-      await onSave({ ...draft, name: draft.name.trim() });
+      return await onSave({ ...draft, name: draft.name.trim() });
     } finally {
       setSaving(false);
     }
+  };
+  const requestClose = async () => {
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    if (!draft.name.trim()) {
+      if (confirmDiscard(locale)) onClose();
+      return;
+    }
+    if (await save()) onClose();
   };
   const cancel = () => {
     if (dirty && !confirmDiscard(locale)) return;
@@ -264,7 +405,7 @@ export function ProjectDetailDialog({
   useSaveShortcut(() => void save());
 
   return (
-    <DetailDialog title={project.name} eyebrow="PROJECT" dirty={dirty} locale={locale} onClose={onClose}>
+    <DetailDialog title={project.name} eyebrow="PROJECT" locale={locale} onRequestClose={() => void requestClose()}>
       <div className="detail-edit-form notion-editor">
         <input className="detail-title-input" aria-label={t("entity.field.name")} value={draft.name} maxLength={200} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
         <div className="detail-form-grid">
@@ -277,13 +418,28 @@ export function ProjectDetailDialog({
           <label className="detail-checkbox-property"><input type="checkbox" checked={draft.focusToday} onChange={(event) => setDraft({ ...draft, focusToday: event.target.checked })} />{t("project.focusToday")}</label>
           <span className="detail-task-count">{t("task.count.open", { count: openTasks })} · {t("task.count.doing", { count: doingTasks })}</span>
         </div>
+        <ProjectTaskSection
+          projectKey={project.id ?? draft.name}
+          tasks={projectTasks}
+          locale={locale}
+          t={t}
+          onAddTask={onAddProjectTask}
+          onToggleTask={onToggleProjectTask}
+          onOpenTask={onOpenProjectTask}
+          onDeleteTask={onDeleteProjectTask}
+        />
         <MarkdownBlockEditor value={draft.body ?? ""} onChange={(body) => setDraft((current) => ({ ...current, body }))} locale={locale} />
         <div className="detail-dialog-actions split-actions">
           <div>
             <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onOpenBoard}><FolderKanban aria-hidden="true" />{t("project.action.open")}</button>
             {project.status === "done" || project.status === "archived" ? <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onReopen}><RotateCcw aria-hidden="true" />{t("project.action.reopen")}</button> : <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onComplete}><CheckCircle2 aria-hidden="true" />{t("project.action.complete")}</button>}
             {project.status !== "archived" && <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onArchive}><Archive aria-hidden="true" />{t("project.action.archive")}</button>}
-            <button type="button" className="danger action-with-icon" onClick={onDelete}><Trash2 aria-hidden="true" />{t("project.action.delete")}</button>
+            <DangerConfirmButton
+              className="action-with-icon danger"
+              armLabel={t("project.action.delete")}
+              confirmLabel={t("confirm.deleteAgain")}
+              onConfirm={onDelete}
+            >{t("project.action.delete")}</DangerConfirmButton>
           </div>
           <div>
             <button type="button" className="secondary-button" onClick={cancel}>{t("app.cancel")}</button>
@@ -294,3 +450,6 @@ export function ProjectDetailDialog({
     </DetailDialog>
   );
 }
+
+// Re-exported so callers can build project pickers next to this module.
+export type { CreatedProject };

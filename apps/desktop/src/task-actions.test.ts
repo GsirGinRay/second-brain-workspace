@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BrainTaskSnapshot } from "@second-brain/brain-core";
-import { applyTaskPriority, archiveTask, boardLane, completedForDate, filterCompletedTasks, isCompleteShortcut, isQuickAddShortcut, markMostImportant, moveTaskToLane, nextWeekPriorities, priorityDisplay, scheduleTask } from "./task-actions";
+import { applyTaskPriority, archiveTask, boardLane, completedForDate, filterCompletedTasks, isCompleteShortcut, isQuickAddShortcut, markMostImportant, moveTaskToLane, nextWeekPriorities, priorityDisplay, scheduleTask, toggleMostImportant } from "./task-actions";
 import { committedTitle } from "./inline-title";
 
 function task(id: string, taskDate: string | null, priority: BrainTaskSnapshot["priority"] = "normal"): BrainTaskSnapshot {
@@ -35,6 +35,15 @@ test("a date can have exactly one most important task", () => {
   assert.equal(result.find((item) => item.id === "old")?.priority, "high");
   assert.equal(result.find((item) => item.id === "other-day")?.priority, "highest");
   assert.equal(result.filter((item) => item.taskDate === "2026-08-12" && item.priority === "highest").length, 1);
+});
+
+test("the star toggles the day's most important task on and off", () => {
+  const tasks = [task("holder", "2026-08-12", "highest"), task("next", "2026-08-12")];
+  const starred = toggleMostImportant(tasks, "next", "2026-08-12");
+  assert.equal(starred.find((item) => item.id === "next")?.priority, "highest", "starring promotes to P1");
+  assert.equal(starred.find((item) => item.id === "holder")?.priority, "high", "the previous holder steps down");
+  const unstarred = toggleMostImportant(starred, "next", "2026-08-12");
+  assert.equal(unstarred.find((item) => item.id === "next")?.priority, "high", "un-starring demotes instead of requiring a menu");
 });
 
 test("choosing P2 changes only that task; choosing P1 demotes the previous top task", () => {
@@ -89,6 +98,14 @@ test("unscheduled todo tasks form an idea inbox without changing the public stat
   assert.equal(boardLane(task("scheduled", "2026-08-12")), "todo");
   assert.deepEqual(moveTaskToLane(idea, "todo", "2026-08-12"), { ...idea, status: "todo", taskDate: "2026-08-12", completedAt: null });
   assert.deepEqual(moveTaskToLane(task("planned", "2026-08-12"), "idea", "2026-08-12"), { ...task("planned", "2026-08-12"), status: "todo", taskDate: null, completedAt: null });
+});
+
+test("moving an already completed task within done preserves its completion date", () => {
+  const finishedYesterday = { ...task("done", "2026-08-24"), status: "done" as const, completedAt: "2026-08-24" };
+
+  assert.equal(moveTaskToLane(finishedYesterday, "done", "2026-08-25").completedAt, "2026-08-24");
+  assert.equal(moveTaskToLane(task("fresh", "2026-08-24"), "done", "2026-08-25").completedAt, "2026-08-25");
+  assert.equal(moveTaskToLane(finishedYesterday, "todo", "2026-08-25").completedAt, null);
 });
 
 test("calendar scheduling moves only the task date and next-week priorities exclude completed work", () => {

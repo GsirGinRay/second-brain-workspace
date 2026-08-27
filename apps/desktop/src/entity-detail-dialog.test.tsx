@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import React from "react";
+import React, { act } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
@@ -38,6 +38,29 @@ const task: BrainTaskSnapshot = {
   body: "- [ ] 核對內容\n\n## 說明",
 };
 
+function detailTask(overrides: Partial<BrainTaskSnapshot> = {}): BrainTaskSnapshot {
+  return { ...task, ...overrides };
+}
+
+function projectDetail(overrides: Partial<BrainProjectSnapshot> = {}): BrainProjectSnapshot {
+  return {
+    schemaVersion: 6,
+    id: "project-detail",
+    name: "專案詳情",
+    sourcePath: "projects/project-detail.md",
+    status: "active",
+    area: "工作",
+    priority: 2,
+    progress: 25,
+    focusToday: false,
+    startDate: null,
+    endDate: null,
+    completedAt: null,
+    body: "",
+    ...overrides,
+  };
+}
+
 test("task detail is a single live Markdown canvas and saves checked todos", () => {
   const saved: BrainTaskSnapshot[] = [];
   const container = document.createElement("div");
@@ -72,21 +95,7 @@ test("task detail is a single live Markdown canvas and saves checked todos", () 
 });
 
 test("project detail opens an empty live canvas and keeps the board action separate", () => {
-  const project: BrainProjectSnapshot = {
-    schemaVersion: 6,
-    id: "project-detail",
-    name: "專案詳情",
-    sourcePath: "projects/project-detail.md",
-    status: "active",
-    area: "工作",
-    priority: 2,
-    progress: 25,
-    focusToday: false,
-    startDate: null,
-    endDate: null,
-    completedAt: null,
-    body: "",
-  };
+  const project = projectDetail();
   let openedBoard = false;
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -98,6 +107,7 @@ test("project detail opens an empty live canvas and keeps the board action separ
         openTasks={2}
         doingTasks={1}
         existingAreas={["工作"]}
+        projectTasks={[]}
         locale="zh-TW"
         t={(key) => key}
         onClose={() => undefined}
@@ -107,6 +117,10 @@ test("project detail opens an empty live canvas and keeps the board action separ
         onReopen={() => undefined}
         onArchive={() => undefined}
         onDelete={() => undefined}
+        onAddProjectTask={() => undefined}
+        onToggleProjectTask={() => undefined}
+        onOpenProjectTask={() => undefined}
+        onDeleteProjectTask={() => undefined}
       />,
     ));
     assert.ok(container.querySelector(".markdown-block-editor"));
@@ -115,6 +129,122 @@ test("project detail opens an empty live canvas and keeps the board action separ
     assert.ok(openBoard);
     flushSync(() => openBoard!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
     assert.equal(openedBoard, true);
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("clicking outside auto-saves dirty task edits instead of discarding them", async () => {
+  const saved: BrainTaskSnapshot[] = [];
+  let closed = false;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <TaskDetailDialog
+        task={task}
+        projects={[]}
+        locale="zh-TW"
+        t={(key) => key}
+        onClose={() => { closed = true; }}
+        onSave={(next) => { saved.push(next); return true; }}
+        onDelete={() => undefined}
+      />,
+    ));
+    // Make the draft dirty through the status flip button (typing is not
+    // reproducible for controlled inputs in this DOM shim).
+    const toggle = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("task.action.complete"))!;
+    assert.ok(toggle, "a completion toggle exists in the form");
+    flushSync(() => toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    await act(async () => {
+      const backdrop = container.querySelector<HTMLElement>(".detail-backdrop")!;
+      // bubbles:true is required for the event to reach React's root-delegated
+      // listener; the handler's target===currentTarget check still passes.
+      backdrop.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }) as unknown as Event);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(saved.at(-1)?.status, "done", "the outside click saved the flipped status");
+    assert.equal(closed, true, "the dialog closes after a successful autosave");
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("the task detail delete button arms in place before deleting", () => {
+  let deleted = 0;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <TaskDetailDialog
+        task={detailTask()}
+        projects={[]}
+        locale="zh-TW"
+        t={(key) => key}
+        onClose={() => undefined}
+        onSave={() => true}
+        onDelete={() => { deleted += 1; }}
+      />,
+    ));
+    const danger = [...container.querySelectorAll<HTMLButtonElement>(".danger-confirm")].find((button) => button.textContent?.includes("task.action.delete"))!;
+    assert.ok(danger, "an armed two-step delete button is rendered");
+    flushSync(() => danger.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    assert.equal(deleted, 0, "the first click only arms");
+    assert.ok(danger.className.includes("armed"));
+    flushSync(() => danger.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    assert.equal(deleted, 1, "the second click deletes");
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("project detail lists its tasks and the composer adds one bound to the project", async () => {
+  const project = projectDetail();
+  const added: string[] = [];
+  const toggled: BrainTaskSnapshot[] = [];
+  const childTask = detailTask({ id: "child-1", title: "設計導覽列", projectId: "project-detail", projectName: "專案詳情", rank: "00000002" });
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <ProjectDetailDialog
+        project={project}
+        openTasks={1}
+        doingTasks={0}
+        existingAreas={[]}
+        projectTasks={[childTask]}
+        locale="zh-TW"
+        t={(key) => key}
+        onClose={() => undefined}
+        onSave={() => true}
+        onOpenBoard={() => undefined}
+        onComplete={() => undefined}
+        onReopen={() => undefined}
+        onArchive={() => undefined}
+        onDelete={() => undefined}
+        onAddProjectTask={(title) => added.push(title)}
+        onToggleProjectTask={(t) => toggled.push(t)}
+        onOpenProjectTask={() => undefined}
+        onDeleteProjectTask={() => undefined}
+      />,
+    ));
+    const section = container.querySelector(".detail-task-section");
+    assert.ok(section, "a dedicated project tasks section exists");
+    assert.ok(section!.textContent?.includes("設計導覽列"), "the project's open tasks are listed");
+    const composer = container.querySelector<HTMLInputElement>(".detail-task-composer input")!;
+    composer.value = "撰寫驗收清單";
+    // Native form submit is the one event path that reliably reaches React here.
+    flushSync(() => container.querySelector<HTMLFormElement>(".detail-task-composer")!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }) as unknown as Event));
+    assert.deepEqual(added, ["撰寫驗收清單"], "submitting the composer adds the task through the project callback");
+    assert.equal(composer.value, "", "the composer clears after committing");
+    assert.equal(toggled.length, 0);
   } finally {
     root.unmount();
     container.remove();

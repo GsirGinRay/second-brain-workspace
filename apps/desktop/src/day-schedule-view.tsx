@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Check, GripVertical, Trash2 } from "lucide-react";
-import type { BrainTaskSnapshot } from "@second-brain/brain-core";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Check, GripVertical, Star } from "lucide-react";
+import type { BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
 import {
   durationFromResize,
   formatMinutesAsTime,
@@ -14,6 +14,8 @@ import {
   timeFromSlotDrop,
 } from "./day-schedule";
 import { PriorityControl } from "./priority-control";
+import { ProjectPicker } from "./project-picker";
+import { DangerConfirmButton } from "./danger-confirm";
 import type { DropPosition } from "./task-reorder";
 import type { UiLanguage } from "./ui-preferences";
 
@@ -32,6 +34,10 @@ export interface DayScheduleLabels {
   reopen: string;
   delete: string;
   resize: string;
+  /** Star toggle label（今日最重要）. */
+  important?: string;
+  /** Confirm step of the armed delete button. */
+  deleteAgain?: string;
 }
 
 export interface TrayReorderDrop {
@@ -48,11 +54,14 @@ export function DaySchedule({
   showTray = true,
   now,
   labels,
+  projects,
   onSchedule,
   onClearTime,
   onCreateAt,
   onOpenTask,
   onPriority,
+  onStar,
+  onPickProject,
   onDelete,
   onComplete,
   onResize,
@@ -66,11 +75,17 @@ export function DaySchedule({
   showTray?: boolean;
   now?: Date;
   labels: DayScheduleLabels;
+  /** Enables inline project switching when provided with onPickProject. */
+  projects?: BrainProjectSnapshot[];
   onSchedule: (taskId: string, startTime: string) => void;
   onClearTime?: (taskId: string) => void;
   onCreateAt: (title: string, startTime: string) => void;
   onOpenTask?: (taskId: string) => void;
   onPriority?: (taskId: string, priority: BrainTaskSnapshot["priority"]) => void;
+  /** Star toggle for “today's most important”. */
+  onStar?: (taskId: string) => void;
+  /** Inline project re-association straight from the row. */
+  onPickProject?: (taskId: string, projectId: string | null) => void;
   onDelete?: (task: BrainTaskSnapshot) => void;
   onComplete?: (task: BrainTaskSnapshot) => void;
   onResize?: (taskId: string, durationMinutes: number) => void;
@@ -86,6 +101,19 @@ export function DaySchedule({
   const [previewTime, setPreviewTime] = useState<string | null>(null);
   // Live insertion hint while a tray card hovers over its siblings.
   const [trayHint, setTrayHint] = useState<{ id: string; place: DropPosition } | null>(null);
+  // User-resizable width of the unscheduled tray (the left column when shown).
+  // Persisted locally so the chosen split survives a restart.
+  const [trayWidth, setTrayWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 340;
+    const stored = Number.parseInt(window.localStorage?.getItem("second-brain.trayWidth") ?? "", 10);
+    return Number.isFinite(stored) && stored >= 220 && stored <= 560 ? stored : 340;
+  });
+  const resizerRef = useRef<HTMLDivElement | null>(null);
+  const resizeStart = useRef<{ startX: number; startWidth: number; pointerId: number } | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage?.setItem("second-brain.trayWidth", String(trayWidth));
+  }, [trayWidth]);
   const dragOrigin = useRef<{
     id: string;
     kind: DragKind;
@@ -450,8 +478,38 @@ export function DaySchedule({
     }
   };
 
+  // Drag the splitter between the tray and the timeline to set the tray width.
+  // The grid uses a CSS custom property, so the change is instant; the value
+  // is clamped to keep both columns usable and persisted for the next visit.
+  const beginTrayResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    resizeStart.current = { startX: event.clientX, startWidth: trayWidth, pointerId: event.pointerId };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const moveTrayResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = resizeStart.current;
+    if (!start) return;
+    const next = Math.max(220, Math.min(560, start.startWidth + (event.clientX - start.startX)));
+    setTrayWidth(next);
+  };
+  const endTrayResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (resizeStart.current) {
+      try { event.currentTarget.releasePointerCapture(resizeStart.current.pointerId); } catch { /* already released */ }
+    }
+    resizeStart.current = null;
+  };
+  const keyTrayResize = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowLeft") { event.preventDefault(); setTrayWidth((width) => Math.max(220, width - 16)); }
+    else if (event.key === "ArrowRight") { event.preventDefault(); setTrayWidth((width) => Math.min(560, width + 16)); }
+    else if (event.key === "Home") { event.preventDefault(); setTrayWidth(340); }
+  };
+
   return (
-    <div className={`day-schedule ${showTray ? "has-tray" : ""}`}>
+    <div
+      className={`day-schedule ${showTray ? "has-tray" : ""}`}
+      style={showTray ? ({ ["--tray-width" as string]: `${trayWidth}px` } as CSSProperties) : undefined}
+    >
       {showTray && (
         <aside className="day-schedule-tray" data-unscheduled-tray>
           <header>
@@ -466,7 +524,7 @@ export function DaySchedule({
                 <article
                   key={task.id ?? task.title}
                   data-tray-card-id={task.id ?? undefined}
-                  className={`schedule-tray-card ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${trayHint?.id === task.id ? (trayHint.place === "before" ? "drop-before" : "drop-after") : ""}`}
+                  className={`schedule-tray-card ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""} ${trayHint?.id === task.id ? (trayHint.place === "before" ? "drop-before" : "drop-after") : ""}`}
                   tabIndex={0}
                   onPointerDown={(event) => {
                     if (event.button !== 0 || !task.id || (event.target as HTMLElement).closest("button,input,select,textarea,a")) return;
@@ -516,21 +574,78 @@ export function DaySchedule({
                 >
                   <GripVertical aria-hidden="true" />
                   <div className="schedule-tray-body">
-                    {onPriority && task.id ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
-                    <strong className="inline-title-button">{task.title}</strong>
-                    {task.taskDate && task.taskDate < date ? <small>{task.taskDate}</small> : null}
-                  </div>
-                  {(onComplete || onDelete) && (
-                    <div className="schedule-tray-actions">
-                      {onComplete && <button type="button" aria-label={task.status === "done" ? labels.reopen : labels.complete} title={task.status === "done" ? labels.reopen : labels.complete} onClick={(event) => { event.stopPropagation(); onComplete(task); }}><Check aria-hidden="true" /></button>}
-                      {onDelete && <button type="button" className="danger" aria-label={labels.delete} title={labels.delete} onClick={(event) => { event.stopPropagation(); onDelete(task); }}><Trash2 aria-hidden="true" /></button>}
+                    <div className="schedule-tray-title-row">
+                      {onPriority && task.id ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
+                      <strong className="inline-title-button">{task.title}</strong>
+                      {onStar && task.id && (
+                        <button
+                          type="button"
+                          className={`tray-star ${task.priority === "highest" ? "active" : ""}`}
+                          aria-pressed={task.priority === "highest"}
+                          aria-label={labels.important ?? "重要"}
+                          title={labels.important ?? "重要"}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onStar(task.id!);
+                          }}
+                        >
+                          <Star aria-hidden="true" fill={task.priority === "highest" ? "currentColor" : "none"} />
+                        </button>
+                      )}
                     </div>
-                  )}
+                    {task.taskDate && task.taskDate < date ? <small className="tray-overdue-date">{task.taskDate}</small> : null}
+                    {(onComplete || onDelete) && (
+                      <div className="schedule-tray-meta">
+                        {task.startTime && <span className="tray-when">{task.startTime}</span>}
+                        <span className="schedule-tray-actions">
+                          {onComplete && <button type="button" aria-label={task.status === "done" ? labels.reopen : labels.complete} title={task.status === "done" ? labels.reopen : labels.complete} onClick={(event) => { event.stopPropagation(); onComplete(task); }}><Check aria-hidden="true" /></button>}
+                          {onDelete && (
+                            <DangerConfirmButton
+                              className="schedule-tray-delete"
+                              armLabel={labels.delete}
+                              confirmLabel={labels.deleteAgain ?? labels.delete}
+                              onConfirm={() => onDelete(task)}
+                            />
+                          )}
+                        </span>
+                      </div>
+                    )}
+                    {projects && onPickProject && task.id && (
+                      <div className="schedule-tray-project" onClick={(event) => event.stopPropagation()}>
+                        <ProjectPicker
+                          variant="compact"
+                          projects={projects}
+                          valueId={task.projectId}
+                          onSelect={(project) => onPickProject(task.id!, project?.id ?? null)}
+                          locale={locale}
+                          ariaLabel={`${task.title} 專案`}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </article>
               ))}
             </div>
           )}
         </aside>
+      )}
+      {showTray && (
+        <div
+          ref={resizerRef}
+          className="day-schedule-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={locale === "zh-TW" ? "調整待辦夾寬度" : "Resize unscheduled tray"}
+          aria-valuenow={trayWidth}
+          aria-valuemin={220}
+          aria-valuemax={560}
+          tabIndex={0}
+          onPointerDown={beginTrayResize}
+          onPointerMove={moveTrayResize}
+          onPointerUp={endTrayResize}
+          onPointerCancel={endTrayResize}
+          onKeyDown={keyTrayResize}
+        />
       )}
       <div className="day-schedule-main">
         {allDayTasks.length > 0 && (
@@ -629,7 +744,7 @@ export function DaySchedule({
             return (
               <article
                 key={task.id}
-                className={`timed-block ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""}`}
+                className={`timed-block ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
                 style={{ top, height, left, width }}
                 tabIndex={0}
                 onPointerDown={(event) => beginTimedDrag(event, task)}
@@ -654,13 +769,22 @@ export function DaySchedule({
                 <div className="timed-block-head">
                   {onPriority ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
                   <strong className="timed-block-title">{task.title}</strong>
-                </div>
-                <small>
-                  {dragId === task.id && previewTime ? previewTime : task.startTime}
-                  {task.durationMinutes ? ` · ${task.durationMinutes}m` : ""}
-                </small>
-                {(onComplete || onDelete) && (
-                  <div className="timed-block-actions">
+                  <span className="timed-block-inline-actions" onClick={(event) => event.stopPropagation()}>
+                    {onStar && (
+                      <button
+                        type="button"
+                        className={`timed-block-action tray-star ${task.priority === "highest" ? "active" : ""}`}
+                        aria-pressed={task.priority === "highest"}
+                        aria-label={labels.important ?? "重要"}
+                        title={labels.important ?? "重要"}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onStar(task.id!);
+                        }}
+                      >
+                        <Star aria-hidden="true" fill={task.priority === "highest" ? "currentColor" : "none"} />
+                      </button>
+                    )}
                     {onComplete && (
                       <button
                         type="button"
@@ -676,21 +800,19 @@ export function DaySchedule({
                       </button>
                     )}
                     {onDelete && (
-                      <button
-                        type="button"
+                      <DangerConfirmButton
                         className="timed-block-action danger"
-                        aria-label={labels.delete}
-                        title={labels.delete}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onDelete(task);
-                        }}
-                      >
-                        <Trash2 aria-hidden="true" />
-                      </button>
+                        armLabel={labels.delete}
+                        confirmLabel={labels.deleteAgain ?? labels.delete}
+                        onConfirm={() => onDelete(task)}
+                      />
                     )}
-                  </div>
-                )}
+                  </span>
+                </div>
+                <small>
+                  {dragId === task.id && previewTime ? previewTime : task.startTime}
+                  {task.durationMinutes ? ` · ${task.durationMinutes}m` : ""}
+                </small>
                 {onResize && (
                   <div
                     className="timed-block-resize"

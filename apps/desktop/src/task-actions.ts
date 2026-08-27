@@ -38,7 +38,7 @@ export function moveTaskToLane(task: BrainTaskSnapshot, lane: BoardLane, today: 
     ...task,
     status: lane,
     taskDate: lane !== "done" && task.taskDate === null ? today : task.taskDate,
-    completedAt: lane === "done" ? today : null,
+    completedAt: lane === "done" ? (task.status === "done" ? task.completedAt ?? today : today) : null,
   };
 }
 
@@ -86,6 +86,24 @@ export function markMostImportant(
     if (task.taskDate === date && task.priority === "highest") return { ...task, priority: "high" };
     return task;
   });
+}
+
+/**
+ * The star on a task row is a toggle: starring promotes the task to the day's
+ * single most-important (demoting whoever held it), and un-starring an already
+ * most-important task hands it back down instead of requiring a menu.
+ */
+export function toggleMostImportant(
+  tasks: BrainTaskSnapshot[],
+  taskId: string,
+  date: string,
+): BrainTaskSnapshot[] {
+  const target = tasks.find((task) => task.id === taskId);
+  if (!target) return tasks;
+  if (target.priority === "highest") {
+    return tasks.map((task) => (task.id === taskId ? { ...task, priority: "high" } : task));
+  }
+  return markMostImportant(tasks, taskId, date);
 }
 
 export function applyTaskPriority(

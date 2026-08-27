@@ -372,3 +372,53 @@ test("a duplicated task id is re-minted with a warning instead of aborting the s
     "the re-minted id is patched back into the second file",
   );
 });
+
+test("switching a task's project rewrites the wiki link and rescans to the new id", () => {
+  // Regression for the detail-dialog project picker: every switch round-trips
+  // through Markdown, so the [[link]] must survive and the next scan must
+  // resolve the new project by name — including back to “no project”.
+  const idA = "44444444-4444-4444-8444-444444444441";
+  const idB = "44444444-4444-4444-8444-444444444442";
+  const noteA = "---\r\ntype: project\r\nstatus: active\r\npublisher_id: " + idA + "\r\n---\r\n# 專案甲\r\n\r\n";
+  const noteB = "---\r\ntype: project\r\nstatus: active\r\npublisher_id: " + idB + "\r\n---\r\n# 專案乙\r\n\r\n";
+  let files = [
+    file("projects/a.md", noteA),
+    file("projects/b.md", noteB),
+    file(
+      "tasks.md",
+      formatTaskLine({
+        id: taskId, title: "自由切換", status: "todo", dueDate: null, plannedDate: null,
+        priority: "normal", projectId: null, projectName: null, rank: "a",
+        sourcePath: "tasks.md", sourceHeading: null, completedAt: null,
+      }) + "\r\n",
+    ),
+  ];
+  const taskFile = () => files.find((item) => item.relativePath === "tasks.md")!;
+  const scannedProjectId = () => scanStructuredVault(files).snapshot.tasks[0]?.projectId ?? null;
+
+  const switchTo = (projectName: string | null) => {
+    const scanned = scanStructuredVault(files);
+    assert.equal(scanned.snapshot.tasks.length, 1);
+    const desired = { ...scanned.snapshot, tasks: [{ ...scanned.snapshot.tasks[0]!, projectName }] };
+    for (const change of applyDesiredSnapshot(files, desired)) {
+      if (!change.replacementBase64) continue;
+      files = files.map((item) => item.relativePath === change.relativePath
+        ? { ...item, bytesBase64: change.replacementBase64 }
+        : item);
+    }
+  };
+
+  assert.equal(scannedProjectId(), null, "starts unassigned");
+
+  switchTo("專案甲");
+  assert.match(base64ToText(taskFile().bytesBase64), /\[\[專案甲\]\]/, "the wiki link is rewritten in place");
+  assert.equal(scannedProjectId(), idA, "rescan resolves the new project id");
+
+  switchTo("專案乙");
+  assert.match(base64ToText(taskFile().bytesBase64), /\[\[專案乙\]\]/);
+  assert.equal(scannedProjectId(), idB, "switching again resolves the other project");
+
+  switchTo(null);
+  assert.doesNotMatch(base64ToText(taskFile().bytesBase64), /\[\[/, "clearing the project drops the link");
+  assert.equal(scannedProjectId(), null, "rescan returns to unassigned");
+});

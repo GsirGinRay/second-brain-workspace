@@ -4,7 +4,7 @@ import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
-import type { BrainTaskSnapshot } from "@second-brain/brain-core";
+import type { BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
 import { PX_PER_HOUR } from "./day-schedule";
 import { DaySchedule } from "./day-schedule-view";
 
@@ -289,4 +289,123 @@ test("Alt+ArrowUp/Down reorders tray cards from the keyboard", () => {
   } finally {
     container.remove();
   }
+});
+
+const fullLabels = {
+  ...labels,
+  important: "今日最重要",
+  deleteAgain: "再按一次確認",
+};
+
+const projects: BrainProjectSnapshot[] = [
+  {
+    schemaVersion: 6,
+    id: "p1",
+    name: "官網改版",
+    sourcePath: null,
+    status: "active",
+    area: null,
+    priority: null,
+    progress: 0,
+    focusToday: false,
+    startDate: null,
+    endDate: null,
+    completedAt: null,
+  },
+];
+
+function renderTray(extra: Partial<React.ComponentProps<typeof DaySchedule>> = {}) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  flushSync(() => {
+    root.render(
+      <DaySchedule
+        date="2026-08-21"
+        timedTasks={[task("t1", "排程會議", "09:00")]}
+        trayTasks={[task("a", "待夾任務", "14:00")]}
+        showTray
+        labels={fullLabels}
+        locale="zh-TW"
+        projects={projects}
+        onSchedule={() => undefined}
+        onCreateAt={() => undefined}
+        {...extra}
+      />,
+    );
+  });
+  return { container, root };
+}
+
+function click(element: Element) {
+  flushSync(() => {
+    element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event);
+  });
+}
+
+test("tray cards expose an importance star that reports the task id", () => {
+  const starred: string[] = [];
+  const { container } = renderTray({ onStar: (taskId) => starred.push(taskId) });
+  const star = container.querySelector<HTMLButtonElement>(".schedule-tray-card .tray-star");
+  assert.ok(star, "the tray card carries a star control");
+  assert.equal(star!.className.includes("active"), false, "normal priority starts unstarred");
+  click(star!);
+  assert.deepEqual(starred, ["a"]);
+});
+
+test("the timed block keeps star, complete and armed delete inline in its head", () => {
+  const starred: string[] = [];
+  const deleted: string[] = [];
+  const { container } = renderTray({
+    onStar: (taskId) => starred.push(taskId),
+    onDelete: (t: BrainTaskSnapshot) => deleted.push(t.id ?? ""),
+  });
+  const head = container.querySelector<HTMLElement>(".timed-block-head");
+  assert.ok(head, "timed blocks use a single head row");
+  const actions = head!.querySelector<HTMLElement>(".timed-block-inline-actions");
+  assert.ok(actions, "actions sit inside the head instead of floating absolutely");
+  click(actions!.querySelector<HTMLButtonElement>(".tray-star")!);
+  assert.deepEqual(starred, ["t1"]);
+  const danger = actions!.querySelector<HTMLButtonElement>(".danger-confirm")!;
+  assert.ok(danger, "an armed two-step delete replaces window.confirm");
+  click(danger);
+  assert.equal(deleted.length, 0, "first click only arms");
+  assert.ok(danger.className.includes("armed"));
+  click(danger);
+  assert.deepEqual(deleted, ["t1"], "second click deletes");
+});
+
+test("tray meta shows the start time beside complete and armed delete", () => {
+  const completed: string[] = [];
+  const deleted: Array<BrainTaskSnapshot | undefined> = [];
+  const { container } = renderTray({
+    onComplete: (t) => completed.push(t.id ?? ""),
+    onDelete: (t) => deleted.push(t),
+  });
+  const card = container.querySelector<HTMLElement>("[data-tray-card-id]")!;
+  const when = card.querySelector<HTMLElement>(".tray-when");
+  assert.ok(when, "start time renders inside the meta row");
+  assert.equal(when!.textContent, "14:00");
+  const actions = card.querySelector<HTMLElement>(".schedule-tray-actions")!;
+  assert.ok(actions.querySelector('button:not(.danger-confirm)'), "complete stays an inline icon button");
+  const danger = actions.querySelector<HTMLButtonElement>(".danger-confirm")!;
+  click(danger);
+  assert.equal(deleted.length, 0, "delete waits for the confirming second click");
+  click(danger);
+  assert.equal(deleted.at(-1)?.id, "a");
+  assert.equal(completed.length, 0, "arming never completes the task");
+});
+
+test("the tray project picker switches a task between projects in place", () => {
+  const picks: Array<[string, string | null]> = [];
+  const { container } = renderTray({ onPickProject: (taskId, projectId) => picks.push([taskId, projectId]) });
+  const chip = container.querySelector<HTMLButtonElement>(".schedule-tray-project .project-picker-chip");
+  assert.ok(chip, "each tray card embeds a compact project picker");
+  assert.ok(chip!.textContent?.includes("無專案"), "unassigned tasks read 無專案");
+  click(chip!);
+  const options = [...container.querySelectorAll<HTMLButtonElement>(".project-picker-menu .project-picker-option")];
+  assert.ok(options.some((option) => option.textContent?.includes("官網改版")), "the menu lists real projects");
+  const target = options.find((option) => option.textContent?.includes("官網改版"))!;
+  click(target);
+  assert.deepEqual(picks, [["a", "p1"]]);
 });

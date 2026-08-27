@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   Archive,
   CalendarDays,
+  Check,
   CheckCircle2,
   Clock,
   Columns3,
@@ -92,6 +93,7 @@ import {
   nextWeekPriorities,
   priorityDisplay,
   scheduleTask,
+  toggleMostImportant,
   type BoardLane,
 } from "./task-actions";
 import { InlineTitle } from "./inline-title";
@@ -115,9 +117,12 @@ import {
 } from "./ui-preferences";
 import appLogo from "./assets/app-logo.png";
 import { MarkdownEditor } from "./markdown-editor";
+import { MarkdownBlockEditor } from "./markdown-block-editor";
 import { formatMinutesAsTime, minutesFromOffset, snapMinutes, timeFromSlotDrop } from "./day-schedule";
 import { DaySchedule } from "./day-schedule-view";
 import { ProjectDetailDialog, TaskDetailDialog } from "./entity-detail-dialog";
+import { ProjectPicker } from "./project-picker";
+import { DangerConfirmButton } from "./danger-confirm";
 import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
 import {
   applyRedo,
@@ -983,7 +988,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     priority: number | null,
     promotedTask?: BrainTaskSnapshot,
     body = "",
-  ): Promise<boolean> {
+  ): Promise<{ id: string; name: string } | null> {
     const id = crypto.randomUUID();
     if (!diagnostics?.selectedVault) {
       const project: BrainProjectSnapshot = { schemaVersion: 6, id, name: name.trim(), sourcePath: null, status: "planning", area, priority, progress: 0, focusToday: false, startDate: null, endDate: null, completedAt: null, body };
@@ -991,7 +996,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       const nextTasks = promotedTask ? tasks.map((task) => task.id === promotedTask.id ? { ...task, projectId: id, projectName: name.trim() } : task) : tasks;
       await persistLocal(nextTasks, nextProjects);
       setStatus(promotedTask ? "想法已升級為規劃中專案草稿" : "已建立規劃中專案草稿");
-      return true;
+      return { id, name: name.trim() };
     }
     const create = buildProjectCreateChange(name, area, priority, files.map((file) => file.relativePath), () => id, body);
     const nextTasks = promotedTask
@@ -1010,10 +1015,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       await native.applyMarkdownChanges([...taskChanges, create]);
       await reloadLocal();
       setStatus(promotedTask ? "想法已升級為規劃中專案" : "已建立規劃中專案");
-      return true;
+      return { id, name: name.trim() };
     } catch (cause) {
       setError(`建立專案失敗：${describeError(cause, "CREATE_PROJECT_FAILED")}`);
-      return false;
+      return null;
     } finally {
       setWorking(false);
     }
@@ -1043,10 +1048,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   }
 
   async function permanentlyDeleteProject(project: BrainProjectSnapshot): Promise<void> {
-    const openCount = tasks.filter((task) => task.projectId === project.id && task.status !== "done").length;
-    if (!project.id || !window.confirm(
-      `永久刪除「${project.name}」？\n\n將刪除專案 Markdown，保留 ${openCount} 項未完成任務並解除專案連結。刪除前會建立可驗證備份。\n來源：${project.sourcePath ?? "未知"}`,
-    )) return;
+    // Confirmation happens in place via the armed delete button that triggered
+    // this call; no extra system dialog stands in the way.
+    if (!project.id) return;
     setWorking(true);
     setError("");
     try {
@@ -1122,16 +1126,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   }
 
   async function permanentlyDeleteTask(task: BrainTaskSnapshot) {
-    const source = task.sourcePath ? `\n本機來源：${task.sourcePath}` : "";
-    const scope = client && task.id
-      ? "這會刪除雲端資料，並從本機 Markdown 移除整行"
-      : "目前是本機模式，這會從本機 Markdown 移除整行";
-    if (
-      !window.confirm(
-        `永久刪除「${task.title}」？\n\n${scope}，無法在 App 內復原。${source}`,
-      )
-    )
-      return;
+    // The armed delete button that invoked this already confirmed in place, so
+    // deletion starts immediately (Ctrl+Z still restores it locally).
     setWorking(true);
     setError("");
     const outcome = await deleteTaskLocalFirst({
@@ -1575,6 +1571,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           projects={projects}
           templates={templates}
           onClose={() => setQuickAddOpen(false)}
+          onCreateProject={(name) => createProject(name, null, null)}
           onSave={(next) => {
             setQuickAddOpen(false);
             void persistLocal(next);
@@ -1615,6 +1612,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           locale={preferences.language}
           t={t}
           onClose={() => setSelectedTaskId(null)}
+          onCreateProject={(name) => createProject(name, null, null)}
           onSave={async (next) => {
             const prepared = { ...next, completedAt: next.status === "done" ? (next.completedAt ?? taipeiDateKey()) : null };
             const changed = tasks.map((task) => task.id === prepared.id ? prepared : task);
@@ -1634,9 +1632,27 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           openTasks={tasks.filter((task) => task.projectId === selectedProjectDetail.id && task.status !== "done").length}
           doingTasks={tasks.filter((task) => task.projectId === selectedProjectDetail.id && task.status === "doing").length}
           existingAreas={[...new Set(projects.map((project) => project.area).filter((area): area is string => Boolean(area)))].sort()}
+          projectTasks={tasks
+            .filter((task) => task.projectId === selectedProjectDetail.id && task.status !== "done")
+            .sort((a, b) => a.rank.localeCompare(b.rank))}
           locale={preferences.language}
           t={t}
           onClose={() => setSelectedProjectDetailId(null)}
+          onAddProjectTask={(title) => {
+            const base = newTask(title, { taskDate: undefined });
+            const bound = {
+              ...base,
+              projectId: selectedProjectDetail.id,
+              projectName: selectedProjectDetail.name,
+              taskDate: null,
+            };
+            void persistLocal([...tasks, bound]);
+          }}
+          onToggleProjectTask={(task) => void persistLocal(tasks.map((item) => item.id === task.id
+            ? { ...item, status: item.status === "done" ? "todo" as const : "done" as const, completedAt: item.status === "done" ? null : taipeiDateKey() }
+            : item))}
+          onOpenProjectTask={(taskId) => setSelectedTaskId(taskId)}
+          onDeleteProjectTask={(task) => void permanentlyDeleteTask(task)}
           onSave={(next) => persistLocal(tasks, projects.map((project) => {
             if (project.id === next.id) return next;
             return next.focusToday && project.focusToday ? { ...project, focusToday: false } : project;
@@ -2072,9 +2088,12 @@ function TaskActionBar({
       {showEdit && <button className="task-action-button" aria-label={t("task.action.edit")} title={t("task.action.edit")} onClick={onEdit}>
         <Pencil aria-hidden="true" />
       </button>}
-      <button className="task-action-button danger" aria-label={t("task.action.delete")} title={t("task.action.delete")} onClick={() => onDelete(task)}>
-        <Trash2 aria-hidden="true" />
-      </button>
+      <DangerConfirmButton
+        className="task-action-button danger"
+        armLabel={t("task.action.delete")}
+        confirmLabel={t("confirm.deleteAgain")}
+        onConfirm={() => onDelete(task)}
+      />
     </div>
   );
 }
@@ -2091,7 +2110,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
   const completed = completedForDate(tasks, today);
   const scheduled = [
     ...groups.today.filter((task) => task.startTime),
-    ...(showCompleted ? completed.filter((task) => task.startTime) : []),
+    ...(showCompleted ? completed.filter((task) => task.startTime && task.taskDate === today) : []),
   ].sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? ""));
   const trayTasks = [
     ...groups.overdue,
@@ -2126,6 +2145,12 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     setDraggedItem(null);
   };
   const important = groups.today.find((task) => task.priority === "highest") ?? null;
+  const pickProject = (taskId: string, projectId: string | null) => {
+    const project = projects.find((item) => item.id === projectId) ?? null;
+    onSave(tasks.map((item) => item.id === taskId
+      ? { ...item, projectId: project?.id ?? null, projectName: project?.name ?? null }
+      : item));
+  };
   return <section className="command-center">
     <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
@@ -2156,13 +2181,18 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
           reopen: t("task.action.reopen"),
           delete: t("task.action.delete"),
           resize: t("today.resizeDuration"),
+          important: t("task.action.important"),
+          deleteAgain: t("confirm.deleteAgain"),
         }}
         locale={preferences.language}
+        projects={projects}
         onSchedule={(taskId, startTime) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, today, startTime) : item))}
         onClearTime={(taskId) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, item.taskDate ?? today, null) : item))}
         onCreateAt={(title, startTime) => onSave([...tasks, newTask(title, { taskDate: today, startTime, durationMinutes: 30 })])}
         onOpenTask={onOpenTask}
         onPriority={(taskId, priority) => onSave(applyTaskPriority(tasks, taskId, priority, today))}
+        onStar={(taskId) => onSave(toggleMostImportant(tasks, taskId, today))}
+        onPickProject={pickProject}
         onDelete={onDelete}
         onComplete={(task) => complete(task)}
         onResize={(taskId, durationMinutes) => onSave(tasks.map((item) => item.id === taskId ? { ...item, durationMinutes } : item))}
@@ -2181,14 +2211,15 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
         }}
       />
     </section>
-    {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} />)}</div></details>}
+    {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} projects={projects} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} onPickProject={pickProject} />)}</div></details>}
   </section>;
 }
 
-function InlineTaskCard({ task, today, onOpen, onPatch, onComplete, onDelete }: { task: BrainTaskSnapshot; today: string; onOpen: (taskId: string) => void; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void }) {
+function InlineTaskCard({ task, today, projects, onOpen, onPatch, onComplete, onDelete, onPickProject }: { task: BrainTaskSnapshot; today: string; projects?: BrainProjectSnapshot[]; onOpen: (taskId: string) => void; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void; onPickProject?: (taskId: string, projectId: string | null) => void }) {
   const { t, preferences } = useUiPreferences();
-  const overdueDays = task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
-  return <article className={`inline-task-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={(event) => { event.stopPropagation(); onComplete(task); }}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong>{task.title}</strong></div><small>{task.projectName ?? t("app.unassigned")}{task.startTime ? ` · ${task.startTime}` : ""}</small>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<button className="danger-icon" aria-label="永久刪除" title="永久刪除" onClick={(event) => { event.stopPropagation(); onDelete(task); }}><Trash2 /></button></div></article>;
+  const overdueDays = task.status !== "done" && task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
+  const important = task.priority === "highest";
+  return <article className={`inline-task-card ${important ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={(event) => { event.stopPropagation(); onComplete(task); }}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong>{task.title}</strong><button type="button" className={`row-star ${important ? "active" : ""}`} aria-pressed={important} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={(event) => { event.stopPropagation(); if (task.id) onPatch(task, { priority: important ? "high" : "highest", ...(important ? {} : { taskDate: today }) }); }}><Star aria-hidden="true" fill={important ? "currentColor" : "none"} /></button></div><div className="inline-task-meta"><span className="inline-project-inline">{projects && onPickProject && task.id ? <ProjectPicker variant="compact" projects={projects} valueId={task.projectId} onSelect={(project) => onPickProject(task.id!, project?.id ?? null)} locale={preferences.language} ariaLabel={`${task.title} 專案`} /> : (task.projectName ?? t("app.unassigned"))}{task.startTime ? ` · ${task.startTime}` : ""}</span></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<DangerConfirmButton armLabel="永久刪除" confirmLabel={t("confirm.deleteAgain")} onConfirm={() => onDelete(task)} /></div></article>;
 }
 
 function TaskDateInput({
@@ -2497,12 +2528,15 @@ function QuickAddModal({
   templates = [],
   onClose,
   onSave,
+  onCreateProject,
 }: {
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
   templates?: { name: string; body: string }[];
   onClose: () => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void;
+  /** Inline “new project” straight from the capture dialog. */
+  onCreateProject?: (name: string) => Promise<{ id: string; name: string } | null>;
 }) {
   const { t, preferences } = useUiPreferences();
   const [title, setTitle] = useState("");
@@ -2516,7 +2550,7 @@ function QuickAddModal({
   const titleRef = useRef<HTMLInputElement>(null);
   useEffect(() => titleRef.current?.focus(), []);
   const submit = () => {
-    if (!title.trim()) return;
+    if (!title.trim()) return false;
     const project = projects.find((item) => item.id === projectId);
     const task = newTask(title, {
       taskDate: ideaInbox ? null : taskDate || null,
@@ -2534,12 +2568,18 @@ function QuickAddModal({
         ? markMostImportant(next, task.id, taskDate || taipeiDateKey())
         : next,
     );
+    return true;
+  };
+  // Stray clicks and Escape never destroy a captured thought: with a title
+  // present the modal saves itself first (auto-save), otherwise it just closes.
+  const closeGracefully = () => {
+    if (!submit()) onClose();
   };
   return (
     <div
       className="modal-backdrop"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) closeGracefully();
       }}
     >
       <section
@@ -2550,6 +2590,8 @@ function QuickAddModal({
         onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === "Enter")
             submit();
+          if (event.key === "Escape" && !event.nativeEvent.isComposing)
+            closeGracefully();
         }}
       >
         <div className="modal-header">
@@ -2562,7 +2604,7 @@ function QuickAddModal({
           </button>
         </div>
         <label>
-          {t("quick.content")}
+          {t("quick.titleLabel")}
           <input
             ref={titleRef}
             value={title}
@@ -2576,10 +2618,20 @@ function QuickAddModal({
             }}
           />
         </label>
+        <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} />
         {templates.length > 0 && (
-          <label>{preferences.language === "zh-TW" ? "套用模板" : "Apply template"}<select value="" onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!title.trim()) setTitle(picked.name); } }}><option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>{templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
+          <div className="quick-template-row">
+            <span>{preferences.language === "zh-TW" ? "範本" : "Template"}</span>
+            <select
+              className="quick-template-select"
+              value=""
+              onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!title.trim()) setTitle(picked.name); } }}
+            >
+              <option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>
+              {templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
+            </select>
+          </div>
         )}
-        <MarkdownEditor value={body} onChange={setBody} locale={preferences.language} minRows={7} />
         <label className="idea-toggle">
           <input
             type="checkbox"
@@ -2595,23 +2647,17 @@ function QuickAddModal({
           </span>
         </label>
         <div className="quick-grid">
-          <label>
-            {t("task.field.project")}
-            <select
-              value={projectId}
-              onChange={(event) => setProjectId(event.target.value)}
-            >
-              <option value="">{t("app.unassigned")}</option>
-              {projects.map((project) => (
-                <option
-                  key={project.id ?? project.name}
-                  value={project.id ?? ""}
-                >
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="quick-project-field">
+            <span className="quick-field-label">{t("task.field.project")}</span>
+            <ProjectPicker
+              projects={projects}
+              valueId={projectId || null}
+              onSelect={(project) => setProjectId(project?.id ?? "")}
+              onCreateProject={onCreateProject}
+              locale={preferences.language}
+              ariaLabel={t("task.field.project")}
+            />
+          </div>
           <label>
             {t("task.field.date")}
             <input
@@ -2726,6 +2772,7 @@ function Board({
   const { t, preferences } = useUiPreferences();
   const [drag, setDrag] = useState<string | null>(null);
   const boardDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
+  const [composingLane, setComposingLane] = useState<BoardLane | null>(null);
   const today = taipeiDateKey();
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const lanes: Array<{ id: BoardLane; label: string; hint: string }> = [
@@ -2745,6 +2792,21 @@ function Board({
           task.id === id ? moveTaskToLane(task, lane, today) : task,
         ),
       );
+  };
+  // The per-lane “＋” creates a task directly in that lane, honouring the lane's
+  // semantics (idea inbox keeps no date) and the active project filter.
+  const createInLane = (lane: BoardLane, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    const base = newTask(trimmed, { taskDate: undefined });
+    const placed = moveTaskToLane(base, lane, today);
+    const bound = selectedProjectId && !placed.projectId
+      ? (() => {
+          const project = projects.find((item) => item.id === selectedProjectId);
+          return { ...placed, projectId: project?.id ?? null, projectName: project?.name ?? null };
+        })()
+      : placed;
+    void onSave([...tasks, bound]);
   };
   const finishBoardPointer = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
     if (!taskId) return;
@@ -2819,8 +2881,45 @@ function Board({
                     <strong>{lane.label}</strong>
                     <em>{lane.hint}</em>
                   </div>
+                  {lane.id !== "done" && (
+                    <button
+                      type="button"
+                      className="lane-add-button"
+                      aria-label={`${t("board.lane.add")} · ${lane.label}`}
+                      title={t("board.lane.add")}
+                      onClick={() => setComposingLane((current) => current === lane.id ? null : lane.id)}
+                    >
+                      <Plus aria-hidden="true" />
+                    </button>
+                  )}
                   <small>{laneTasks.length}</small>
                 </header>
+                {composingLane === lane.id && (
+                  <form
+                    className="lane-composer"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const input = event.currentTarget.querySelector("input");
+                      createInLane(lane.id, input?.value ?? "");
+                      if (input) input.value = "";
+                      setComposingLane(null);
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      aria-label={t("board.lane.placeholder")}
+                      placeholder={t("board.lane.placeholder")}
+                      onBlur={(event) => {
+                        // Blur with text still commits — stray clicks never eat a task.
+                        createInLane(lane.id, event.target.value);
+                        setComposingLane(null);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") setComposingLane(null);
+                      }}
+                    />
+                  </form>
+                )}
                 {laneTasks.length === 0 && (
                   <div className="lane-empty">{t("board.dropHere")}</div>
                 )}
@@ -2919,6 +3018,32 @@ function Board({
                         onDelete={onDelete}
                       />
                     </div>
+                    {task.id && (
+                      <div
+                        className="board-card-inline-actions"
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          className="board-card-complete"
+                          aria-label={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                          title={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            moveToLane(task.id, task.status === "done" ? "todo" : "done");
+                          }}
+                        >
+                          <Check aria-hidden="true" />
+                          <span>{task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}</span>
+                        </button>
+                        <DangerConfirmButton
+                          armLabel={t("task.action.delete")}
+                          confirmLabel={t("confirm.deleteAgain")}
+                          onConfirm={() => onDelete(task)}
+                        />
+                      </div>
+                    )}
                   </article>
                 ))}
               </section>
@@ -3413,7 +3538,7 @@ export function Calendar({
                         <small>
                           {entry.task.projectName ?? "無專案"}
                         </small>
-                        <div className="week-task-actions"><button type="button" aria-label={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} title={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} onClick={(event) => { event.stopPropagation(); complete(entry.task.id); }}><CheckCircle2 aria-hidden="true" /></button><button type="button" className="danger" aria-label={t("task.action.delete")} title={t("task.action.delete")} onClick={(event) => { event.stopPropagation(); remove(entry.task); }}><Trash2 aria-hidden="true" /></button></div>
+                        <div className="week-task-actions"><button type="button" aria-label={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} title={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} onClick={(event) => { event.stopPropagation(); complete(entry.task.id); }}><CheckCircle2 aria-hidden="true" /></button><DangerConfirmButton className="danger" armLabel={t("task.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={() => remove(entry.task)} /></div>
                       </article>
                     ))}
                   </div>
@@ -3521,19 +3646,12 @@ export function Calendar({
                       {t("task.action.promote")}
                     </button>
                   </div>
-                  <button
-                    type="button"
+                  <DangerConfirmButton
                     className="idea-delete-button"
-                    aria-label={`永久刪除想法「${task.title}」`}
-                    title="永久刪除"
-                    draggable={false}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void remove(task);
-                    }}
-                  >
-                    <Trash2 aria-hidden="true" />
-                  </button>
+                    armLabel={`永久刪除想法「${task.title}」`}
+                    confirmLabel={t("confirm.deleteAgain")}
+                    onConfirm={() => remove(task)}
+                  />
                 </article>
               ))
             )}
@@ -4054,7 +4172,6 @@ function CollectionEditor({
   useEffect(() => {
     setValue((current) => ({ ...current, importance: collection.importance }));
   }, [collection.importance]);
-  const [mode, setMode] = useState<"write" | "preview">("preview");
   const isPrompt = (value.category ?? "").trim().toLowerCase().startsWith("提示詞");
   const variables = useMemo(() => extractPromptVariables(value.body), [value.body]);
   const [fillValues, setFillValues] = useState<Record<string, string>>({});
@@ -4074,7 +4191,6 @@ function CollectionEditor({
   };
   const save = () => {
     onSave({ ...value, name: value.name.trim() });
-    setMode("preview");
   };
   const saveRef = useRef(save);
   useEffect(() => { saveRef.current = save; });
@@ -4103,7 +4219,7 @@ function CollectionEditor({
       </label>
       <label>{t("entity.field.importance")}<select value={value.importance ?? ""} onChange={(event) => setValue({ ...value, importance: event.target.value ? Number(event.target.value) : null })}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
     </div>
-    <MarkdownEditor value={value.body} onChange={(body) => setValue({ ...value, body })} mode={mode} onModeChange={setMode} iconToggle locale={locale} />
+    <MarkdownBlockEditor value={value.body} onChange={(body) => setValue({ ...value, body })} locale={locale} />
     <div className="project-actions">
       {isPrompt && variables.length > 0 && (
         <button className="secondary-button action-with-icon" onClick={openFill}>◆ {t("collection.fillCopy")}</button>
@@ -4179,7 +4295,7 @@ function CreateEntityModal({
         {kind === "collection" && templates.length > 0 && (
           <label>{preferences.language === "zh-TW" ? "套用模板" : "Apply template"}<select value="" onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!name.trim()) setName(picked.name); } }}><option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>{templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
         )}
-        {kind === "collection" && <MarkdownEditor value={body} onChange={setBody} locale={preferences.language} minRows={8} />}
+        {kind === "collection" && <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} />}
         <div className="modal-actions"><button className="secondary-button" onClick={onClose}>{t("app.cancel")}</button><button className="primary" disabled={!name.trim() || submitting} onClick={() => void submit()}>{t(submitting ? "app.creating" : "app.create")}</button></div>
       </section>
     </div>

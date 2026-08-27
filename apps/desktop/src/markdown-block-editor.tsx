@@ -9,6 +9,20 @@ interface MarkdownBlock {
 
 const TASK_LINE = /^(\s*[-*+]\s+)\[([ xX])\](\s*.*)$/;
 
+/**
+ * Line-start list/quote prefixes recognised while typing. The marker includes
+ * its trailing space so continuations reproduce it verbatim; ordered numbers
+ * are copied literally because rendering normalises them anyway.
+ */
+const LIST_PREFIX = /^(\s*)([-*+][ \t]+\[[ xX]\][ \t]?|[-*+][ \t]+|>[ \t]?|[0-9]+[.、][ \t]*)(.*)$/;
+
+/**
+ * Typing `- [ ] ` (or `[ ] `) followed by a space at the start of a block
+ * converts it into a live checklist immediately — the one trigger whose empty
+ * shell is itself meaningful UI.
+ */
+const TODO_INPUT_RULE = /^(\s*)([-*+][ \t]+)?\[[ xX]\][ \t]$/;
+
 /** Structural edits are undoable inside the editor; textareas keep native undo. */
 const EDITOR_HISTORY_LIMIT = 50;
 
@@ -43,12 +57,53 @@ function createBlocks(value: string): MarkdownBlock[] {
 }
 
 function serializeBlocks(blocks: MarkdownBlock[]): string {
-  return blocks.map((block) => block.source.trimEnd()).filter((source) => source.trim()).join("\n\n");
+  // No per-source trimming: a block that legitimately ends with spaces must
+  // keep serializing identically, otherwise the value-sync effect mistakes our
+  // own output for an external edit and resets the editing state mid-stroke.
+  return blocks.map((block) => block.source).filter((source) => source.trim()).join("\n\n");
 }
 
 function isTaskBlock(source: string): boolean {
   const lines = source.split("\n");
   return lines.length > 0 && lines.every((line) => TASK_LINE.test(line));
+}
+
+export type BlockKind =
+  | "task"
+  | "heading"
+  | "bullet"
+  | "ordered"
+  | "quote"
+  | "divider"
+  | "code"
+  | "paragraph";
+
+export interface DerivedBlock {
+  kind: BlockKind;
+  level?: 1 | 2 | 3 | 4 | 5 | 6;
+}
+
+/**
+ * Detects the Notion-style flavour of a block from its raw Markdown source so
+ * the editor can restyle the textarea live (e.g. `# Hello` becomes a big
+ * heading the moment the user types the space) and pick the right non-edit
+ * renderer. The markers stay in the source — Markdown is still the source of
+ * truth — they just drive the visual treatment.
+ */
+export function deriveBlockKind(source: string): DerivedBlock {
+  const lines = source.split("\n");
+  const first = lines[0] ?? "";
+  if (isTaskBlock(source)) return { kind: "task" };
+  if (lines.length === 1 && /^---+$/.test(first.trim())) return { kind: "divider" };
+  if (lines.length === 1) {
+    const heading = first.match(/^(\s*)(#{1,6})\s+(.*)$/);
+    if (heading) return { kind: "heading", level: heading[2]!.length as 1 | 2 | 3 | 4 | 5 | 6 };
+    if (/^\s*```/.test(first)) return { kind: "code" };
+  }
+  if (lines.every((line) => /^\s*>/.test(line))) return { kind: "quote" };
+  if (lines.every((line) => /^\s*[-*+]\s+/.test(line))) return { kind: "bullet" };
+  if (lines.every((line) => /^\s*\d+[.)、]\s+/.test(line))) return { kind: "ordered" };
+  return { kind: "paragraph" };
 }
 
 function moveItem(items: MarkdownBlock[], from: number, to: number): MarkdownBlock[] {
@@ -57,6 +112,19 @@ function moveItem(items: MarkdownBlock[], from: number, to: number): MarkdownBlo
   if (!moved) return items;
   next.splice(to, 0, moved);
   return next;
+}
+
+export interface ParsedListPrefix {
+  indent: string;
+  marker: string;
+  content: string;
+}
+
+/** Splits a line into indentation, list marker (with trailing space) and content. */
+export function parseListPrefix(line: string): ParsedListPrefix | null {
+  const match = line.match(LIST_PREFIX);
+  if (!match) return null;
+  return { indent: match[1] ?? "", marker: match[2] ?? "", content: match[3] ?? "" };
 }
 
 export function MarkdownBlockEditor({
@@ -154,6 +222,151 @@ export function MarkdownBlockEditor({
     commit(moveItem(blocks, from, to));
   };
 
+  /** Leaves edit mode, dropping the block when it ended up empty. */
+  const finishEditing = (id: string) => {
+    const block = blocks.find((item) => item.id === id);
+    if (block && !block.source.trim() && blocks.length > 1) {
+      pushHistory();
+      commit(blocks.filter((item) => item.id !== id));
+    }
+    setEditingId(null);
+  };
+
+  const addBlock = (afterIndex?: number, source = "") => {
+    pushHistory();
+    const block = { id: newBlockId(), source };
+    const next = [...blocks];
+    next.splice(afterIndex === undefined ? blocks.length : afterIndex + 1, 0, block);
+    commit(next);
+    setEditingId(block.id);
+  };
+
+  /**
+   * Notion-style typing helpers inside a block textarea.
+   * Returns true when the event was consumed.
+   */
+  const handleTextKeydown = (
+    event: ReactKeyboardEvent<HTMLTextAreaElement>,
+    block: MarkdownBlock,
+  ): boolean => {
+    const textarea = event.currentTarget;
+    // Chinese/Japanese IME confirmations arrive as Enter with isComposing set;
+    // they must never be read as structural edits.
+    if (event.nativeEvent.isComposing || (event.nativeEvent as { keyCode?: number }).keyCode === 229) return false;
+
+    // Inline wrapping shortcuts.
+    if ((event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "b" || event.key.toLowerCase() === "i")) {
+      event.preventDefault();
+      const prefix = event.key.toLowerCase() === "b" ? "**" : "*";
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const selected = block.source.slice(start, end);
+      const placeholder = selected || (prefix === "**" ? (zh ? "粗體文字" : "bold text") : (zh ? "斜體文字" : "italic text"));
+      pushHistory();
+      updateBlock(block.id, block.source.slice(0, start) + prefix + placeholder + prefix + block.source.slice(end));
+      requestAnimationFrame(() => {
+        textarea.focus();
+        textarea.setSelectionRange(start + prefix.length, start + prefix.length + placeholder.length);
+      });
+      return true;
+    }
+
+    if (event.ctrlKey || event.metaKey || event.altKey) return false;
+
+    // `- [ ] ` + space becomes a live checklist straight away.
+    if (event.key === " ") {
+      const caret = textarea.selectionStart;
+      const lineStart = block.source.lastIndexOf("\n", caret - 1) + 1;
+      const prospective = block.source.slice(lineStart, caret) + " ";
+      if (TODO_INPUT_RULE.test(prospective) && caret === block.source.length) {
+        const normalized = `${prospective.trimEnd()} `;
+        event.preventDefault();
+        pushHistory();
+        updateBlock(block.id, block.source.slice(0, lineStart) + normalized.replace(/^[-*+][ \t]+/, "- "));
+        setEditingId(null);
+        return true;
+      }
+      return false;
+    }
+
+    if (event.key !== "Enter" || event.shiftKey) return false;
+
+    const caret = textarea.selectionStart;
+    const lineStart = block.source.lastIndexOf("\n", caret - 1) + 1;
+    const lineEndIndex = block.source.indexOf("\n", caret);
+    const lineEnd = lineEndIndex === -1 ? block.source.length : lineEndIndex;
+    const line = block.source.slice(lineStart, lineEnd);
+    const relCaret = caret - lineStart;
+
+    // ``` + Enter opens a fenced code block.
+    if (line.trim() === "```") {
+      event.preventDefault();
+      pushHistory();
+      updateBlock(block.id, `${block.source.slice(0, lineStart)}\`\`\`\n\n\`\`\``);
+      setEditingId(null);
+      return true;
+    }
+
+    // --- on its own line + Enter becomes a divider.
+    if (/^\s*---\s*$/.test(line)) {
+      event.preventDefault();
+      pushHistory();
+      updateBlock(block.id, `${block.source.slice(0, lineStart)}---`);
+      setEditingId(null);
+      return true;
+    }
+
+    const parsed = parseListPrefix(line);
+    if (parsed) {
+      event.preventDefault();
+      if (parsed.content.trim() === "") {
+        // Second Enter on an empty item drops the marker: back to plain text.
+        pushHistory();
+        const stripped = block.source.slice(0, lineStart) + parsed.indent + block.source.slice(lineEnd);
+        updateBlock(block.id, stripped);
+        requestAnimationFrame(() => {
+          textarea.focus();
+          textarea.setSelectionRange(lineStart + parsed.indent.length, lineStart + parsed.indent.length);
+        });
+      } else {
+        // Enter continues the list with the same marker.
+        pushHistory();
+        const before = line.slice(0, relCaret);
+        const after = line.slice(relCaret);
+        const insertion = `\n${parsed.indent}${parsed.marker}`;
+        updateBlock(
+          block.id,
+          block.source.slice(0, lineStart) + before + insertion + after + block.source.slice(lineEnd),
+        );
+        const anchor = lineStart + before.length + insertion.length;
+        requestAnimationFrame(() => {
+          textarea.focus();
+          textarea.setSelectionRange(anchor, anchor);
+        });
+      }
+      return true;
+    }
+
+    if (line.trim() === "") {
+      // Empty paragraph: Enter closes the block without spawning empties.
+      event.preventDefault();
+      finishEditing(block.id);
+      return true;
+    }
+
+    // Plain text: Enter commits the block (revealing its live preview) and
+    // opens a fresh block right below for continued writing.
+    event.preventDefault();
+    pushHistory();
+    const head = block.source.slice(0, lineStart + relCaret);
+    const tail = block.source.slice(lineStart + relCaret);
+    const created = { id: newBlockId(), source: tail };
+    const next = blocks.flatMap((item) => item.id === block.id ? [{ ...item, source: head }, created] : [item]);
+    commit(next);
+    setEditingId(created.id);
+    return true;
+  };
+
   /**
    * Which insertion gap the pointer is over (0 = above the first block,
    * blocks.length = below the last one). Primary targeting comes from whatever
@@ -233,12 +446,17 @@ export function MarkdownBlockEditor({
   return (
     <section className="markdown-block-editor" aria-label={zh ? "Markdown 內容" : "Markdown content"} onKeyDown={handleHistoryShortcut}>
       <div className="markdown-block-list" ref={listRef}>
-        {blocks.map((block, index) => (
+        {blocks.map((block, index) => {
+          const { kind, level } = deriveBlockKind(block.source);
+          const isEditing = editingId === block.id;
+          const kindClass = `kind-${kind}${level ? `-h${level}` : ""}`;
+          return (
           <React.Fragment key={block.id}>
             {renderIndicator(index)}
             <article
               data-markdown-block-id={block.id}
-              className={`markdown-block ${draggingId === block.id ? "dragging" : ""}`}
+              data-block-kind={kind}
+              className={`markdown-block ${kindClass} ${isEditing ? "editing" : ""} ${draggingId === block.id ? "dragging" : ""}`}
             >
               <div className="markdown-block-tools">
                 <button
@@ -266,6 +484,15 @@ export function MarkdownBlockEditor({
                 >
                   <GripVertical aria-hidden="true" />
                 </button>
+                <button
+                  type="button"
+                  className="markdown-block-add-inline"
+                  aria-label={zh ? "在下方新增區塊" : "Add a block below"}
+                  title={zh ? "新增區塊" : "Add block"}
+                  onClick={() => addBlock(index)}
+                >
+                  <Plus aria-hidden="true" />
+                </button>
                 <span className="markdown-block-move">
                   <button
                     type="button"
@@ -288,22 +515,29 @@ export function MarkdownBlockEditor({
                 </span>
               </div>
               <div className="markdown-block-content">
-                {editingId === block.id ? (
+                {isEditing ? (
                   <textarea
                     autoFocus
                     value={block.source}
-                    rows={Math.max(2, block.source.split("\n").length)}
+                    rows={1}
+                    className={`markdown-block-input ${kindClass}`}
                     aria-label={zh ? "編輯 Markdown 區塊" : "Edit Markdown block"}
                     onChange={(event) => updateBlock(block.id, event.target.value)}
-                    onBlur={() => setEditingId(null)}
+                    onBlur={() => finishEditing(block.id)}
+                    ref={(element) => {
+                      if (!element) return;
+                      element.style.height = "auto";
+                      element.style.height = `${element.scrollHeight}px`;
+                    }}
                     onKeyDown={(event) => {
+                      if (handleTextKeydown(event, block)) return;
                       if (event.key === "Escape" || (event.ctrlKey && event.key === "Enter")) {
                         event.preventDefault();
                         event.currentTarget.blur();
                       }
                     }}
                   />
-                ) : isTaskBlock(block.source) ? (
+                ) : kind === "task" ? (
                   <div className="markdown-task-block">
                     {block.source.split("\n").map((line, lineIndex) => {
                       const match = line.match(TASK_LINE)!;
@@ -319,6 +553,16 @@ export function MarkdownBlockEditor({
                       );
                     })}
                   </div>
+                ) : kind === "divider" ? (
+                  <div
+                    className="markdown-block-divider"
+                    role="separator"
+                    tabIndex={0}
+                    onClick={() => setEditingId(block.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setEditingId(block.id); }
+                    }}
+                  />
                 ) : (
                   <div
                     className="markdown-block-preview"
@@ -349,23 +593,21 @@ export function MarkdownBlockEditor({
               </button>
             </article>
           </React.Fragment>
-        ))}
+          );
+        })}
         {renderIndicator(blocks.length)}
       </div>
       {blocks.length === 0 && (
         <p className="markdown-block-empty">
-          {zh ? "尚無詳細內容。用下方按鈕新增段落或待辦清單，像 Notion 一樣自由編排。" : "No detail yet. Add a paragraph or checklist below and arrange it freely."}
+          {zh
+            ? "尚無詳細內容。直接輸入文字，按 Enter 建立下一個區塊；行首打「- [ ] 」變待辦清單、「# 」變標題、「---」變分隔線，像 Notion 一樣自由編排。"
+            : "No detail yet. Type freely and press Enter for the next block; start a line with “- [ ] ” for a checklist, “# ” for a heading, “---” for a divider."}
         </p>
       )}
       <button
         type="button"
         className="markdown-block-add"
-        onClick={() => {
-          pushHistory();
-          const block = { id: newBlockId(), source: zh ? "新的段落" : "New paragraph" };
-          commit([...blocks, block]);
-          setEditingId(block.id);
-        }}
+        onClick={() => addBlock()}
       >
         <Plus aria-hidden="true" />
         {zh ? "新增區塊" : "Add block"}
