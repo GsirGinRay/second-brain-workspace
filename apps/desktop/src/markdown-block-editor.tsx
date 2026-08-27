@@ -1,10 +1,17 @@
-import React, { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ChevronDown, ChevronUp, GripVertical, Plus, Trash2 } from "lucide-react";
+import React, { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Code2, Copy, GripVertical, Palette, Plus, Repeat2, Trash2 } from "lucide-react";
 import { MarkdownPreview, type MarkdownEditorLocale } from "./markdown-editor";
 
 interface MarkdownBlock {
   id: string;
   source: string;
+}
+
+interface MarqueeBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
 type BlockColor = "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red";
@@ -43,6 +50,26 @@ const LIST_PREFIX = /^(\s*)([-*+][ \t]+\[[ xX]\][ \t]?|[-*+][ \t]+|>[ \t]?|[0-9]
 
 /** Structural edits are undoable inside the editor; textareas keep native undo. */
 const EDITOR_HISTORY_LIMIT = 50;
+
+/** Keeps the floating block menu inside the viewport and flips it above tight rows. */
+export function blockMenuPlacement(
+  rect: Pick<DOMRect, "left" | "top" | "bottom">,
+  viewportWidth: number,
+  viewportHeight: number,
+): CSSProperties {
+  const menuWidth = Math.min(300, viewportWidth - 24);
+  const spaceBelow = viewportHeight - rect.bottom - 12;
+  const spaceAbove = rect.top - 12;
+  const opensUp = spaceBelow < 320 && spaceAbove > spaceBelow;
+  return {
+    left: Math.max(12, Math.min(rect.left, viewportWidth - menuWidth - 12)),
+    width: menuWidth,
+    maxHeight: Math.min(520, Math.max(180, opensUp ? spaceAbove : spaceBelow)),
+    ...(opensUp
+      ? { bottom: viewportHeight - rect.top + 4, top: "auto" }
+      : { top: rect.bottom + 4, bottom: "auto" }),
+  };
+}
 
 function newBlockId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `markdown-block-${Date.now()}-${Math.random()}`;
@@ -137,6 +164,16 @@ function moveItem(items: MarkdownBlock[], from: number, to: number): MarkdownBlo
   return next;
 }
 
+function moveBlockSelection(items: MarkdownBlock[], selectedIds: readonly string[], targetIndex: number): MarkdownBlock[] {
+  const selected = new Set(selectedIds);
+  const moving = items.filter((item) => selected.has(item.id));
+  if (moving.length === 0) return items;
+  const remaining = items.filter((item) => !selected.has(item.id));
+  const insertionIndex = items.slice(0, targetIndex).filter((item) => !selected.has(item.id)).length;
+  const next = [...remaining.slice(0, insertionIndex), ...moving, ...remaining.slice(insertionIndex)];
+  return next.every((item, index) => item.id === items[index]?.id) ? items : next;
+}
+
 export interface ParsedListPrefix {
   indent: string;
   marker: string;
@@ -151,7 +188,7 @@ export function parseListPrefix(line: string): ParsedListPrefix | null {
 }
 
 type SlashAction =
-  | { kind: "turn"; value: "text" | "h1" | "h2" | "h3" | "todo" | "bullet" | "number" | "quote" | "divider" }
+  | { kind: "turn"; value: "text" | "h1" | "h2" | "h3" | "h4" | "todo" | "bullet" | "number" | "quote" | "code" | "divider" }
   | { kind: "color" | "background"; value: BlockColor };
 
 interface SlashCommand {
@@ -164,6 +201,8 @@ interface SlashCommand {
 
 function stripBlockPrefix(content: string): string {
   return content
+    .replace(/^\s*(```|~~~)\s*\n?/, "")
+    .replace(/\n?\s*(```|~~~)\s*$/, "")
     .replace(/^\s*#{1,6}\s+/, "")
     .replace(/^\s*[-*+]\s+\[[ xX]\]\s*/, "")
     .replace(/^\s*[-*+]\s+/, "")
@@ -217,14 +256,21 @@ export function MarkdownBlockEditor({
   const [blocks, setBlocks] = useState<MarkdownBlock[]>(() => createBlocks(value));
   const [editingId, setEditingId] = useState<string | null>(() => value.trim() ? null : blocks[0]?.id ?? null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([]);
+  const [marqueeBox, setMarqueeBox] = useState<MarqueeBox | null>(null);
   const [activeCommand, setActiveCommand] = useState(0);
   const [blockMenuId, setBlockMenuId] = useState<string | null>(null);
+  const [blockMenuPanel, setBlockMenuPanel] = useState<"root" | "turn" | "color">("root");
+  const [blockMenuStyle, setBlockMenuStyle] = useState<CSSProperties>({});
   const [dismissedSlash, setDismissedSlash] = useState<string | null>(null);
   // Index of the insertion gap currently highlighted while dragging (0 = before the
   // first block, blocks.length = after the last one).
   const [dropIndex, setDropIndex] = useState<number | null>(null);
-  const dragRef = useRef<{ id: string; startY: number; moved: boolean } | null>(null);
+  const dragRef = useRef<{ id: string; ids: string[]; startY: number; moved: boolean } | null>(null);
+  const marqueeOriginRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const suppressHandleClickRef = useRef(false);
+  const suppressCanvasClickUntilRef = useRef(0);
+  const editorRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const historyRef = useRef<{ past: string[]; future: string[] }>({ past: [], future: [] });
 
@@ -236,14 +282,17 @@ export function MarkdownBlockEditor({
     { id: "h1", label: zh ? "標題 1" : "Heading 1", hint: zh ? "大型標題" : "Large heading", keywords: "h1 heading title 標題", action: { kind: "turn", value: "h1" } },
     { id: "h2", label: zh ? "標題 2" : "Heading 2", hint: zh ? "中型標題" : "Medium heading", keywords: "h2 heading subtitle 標題", action: { kind: "turn", value: "h2" } },
     { id: "h3", label: zh ? "標題 3" : "Heading 3", hint: zh ? "小型標題" : "Small heading", keywords: "h3 heading 標題", action: { kind: "turn", value: "h3" } },
+    { id: "h4", label: zh ? "標題 4" : "Heading 4", hint: zh ? "最小標題" : "Smallest heading", keywords: "h4 heading 標題", action: { kind: "turn", value: "h4" } },
     { id: "todo", label: zh ? "待辦清單" : "To-do list", hint: zh ? "可勾選的工作項目" : "Track a task with a checkbox", keywords: "todo checkbox task 待辦 核取", action: { kind: "turn", value: "todo" } },
     { id: "bullet", label: zh ? "項目符號清單" : "Bulleted list", hint: zh ? "建立簡單清單" : "Create a simple list", keywords: "bullet list 清單 項目", action: { kind: "turn", value: "bullet" } },
     { id: "number", label: zh ? "編號清單" : "Numbered list", hint: zh ? "依序排列項目" : "Create an ordered list", keywords: "number ordered list 編號 清單", action: { kind: "turn", value: "number" } },
     { id: "quote", label: zh ? "引言" : "Quote", hint: zh ? "醒目引用文字" : "Capture a quote", keywords: "quote 引言 引用", action: { kind: "turn", value: "quote" } },
+    { id: "code", label: zh ? "程式碼" : "Code", hint: zh ? "等寬程式碼區塊" : "Monospaced code block", keywords: "code fence 程式碼", action: { kind: "turn", value: "code" } },
     { id: "divider", label: zh ? "分隔線" : "Divider", hint: zh ? "分隔內容區段" : "Visually divide blocks", keywords: "divider rule line 分隔線", action: { kind: "turn", value: "divider" } },
     ...colorNames.map(([value, name, keywords]) => ({ id: `color-${value}`, label: zh ? `${name}文字` : `${name} text`, hint: zh ? "設定整個區塊的文字顏色" : "Color this block's text", keywords: `${keywords} color text 顏色 文字`, action: { kind: "color" as const, value } })),
     ...colorNames.map(([value, name, keywords]) => ({ id: `background-${value}`, label: zh ? `${name}底色` : `${name} background`, hint: zh ? "設定整個區塊的背景色" : "Highlight this block", keywords: `${keywords} background highlight 底色 背景`, action: { kind: "background" as const, value } })),
   ];
+  const blockCommands = slashCommands.filter((command) => command.action.kind === "turn");
 
   const filteredCommands = (query: string) => slashCommands.filter((command) => {
     const haystack = `${command.label} ${command.keywords}`.toLowerCase();
@@ -258,6 +307,14 @@ export function MarkdownBlockEditor({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
+
+  useEffect(() => {
+    const available = new Set(blocks.map((block) => block.id));
+    setSelectedBlockIds((selected) => {
+      const next = selected.filter((id) => available.has(id));
+      return next.length === selected.length ? selected : next;
+    });
+  }, [blocks]);
 
   const commit = (next: MarkdownBlock[]) => {
     setBlocks(next);
@@ -293,6 +350,11 @@ export function MarkdownBlockEditor({
   // Ctrl+Z / Ctrl+Shift+Z inside the canvas restores the previous arrangement.
   // Inside a textarea the browser's native text undo applies instead.
   const handleHistoryShortcut = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape" && selectedBlockIds.length > 0) {
+      event.preventDefault();
+      setSelectedBlockIds([]);
+      return;
+    }
     if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
     if ((event.target as HTMLElement).closest("input, textarea")) return;
     event.preventDefault();
@@ -328,10 +390,12 @@ export function MarkdownBlockEditor({
       : command.action.value === "h1" ? `# ${plain}`
       : command.action.value === "h2" ? `## ${plain}`
       : command.action.value === "h3" ? `### ${plain}`
+      : command.action.value === "h4" ? `#### ${plain}`
       : command.action.value === "todo" ? `- [ ] ${plain}`
       : command.action.value === "bullet" ? `- ${plain}`
       : command.action.value === "number" ? `1. ${plain}`
       : command.action.value === "quote" ? `> ${plain}`
+      : command.action.value === "code" ? `\`\`\`\n${plain}\n\`\`\``
       : "---";
     updateBlockContent(block, next);
     setActiveCommand(0);
@@ -386,6 +450,7 @@ export function MarkdownBlockEditor({
     next.splice(index + 1, 0, copy);
     commit(next);
     setBlockMenuId(null);
+    setBlockMenuPanel("root");
   };
 
   /** Leaves edit mode, dropping the block when it ended up empty. */
@@ -583,10 +648,64 @@ export function MarkdownBlockEditor({
     return items.length;
   };
 
+  const updateMarqueeSelection = (clientX: number, clientY: number) => {
+    const origin = marqueeOriginRef.current;
+    const editor = editorRef.current;
+    if (!origin || !editor) return;
+    const left = Math.min(origin.x, clientX);
+    const top = Math.min(origin.y, clientY);
+    const right = Math.max(origin.x, clientX);
+    const bottom = Math.max(origin.y, clientY);
+    setMarqueeBox({ left, top, width: right - left, height: bottom - top });
+    const selected = [...editor.querySelectorAll<HTMLElement>("[data-markdown-block-id]")].flatMap((block) => {
+      const rect = block.getBoundingClientRect();
+      const intersects = rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom;
+      return intersects && block.dataset.markdownBlockId ? [block.dataset.markdownBlockId] : [];
+    });
+    setSelectedBlockIds(selected);
+  };
+
+  const beginMarqueeSelection = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!event.shiftKey || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setBlockMenuId(null);
+    setSelectedBlockIds([]);
+    marqueeOriginRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    setMarqueeBox({ left: event.clientX, top: event.clientY, width: 0, height: 0 });
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
+  };
+
+  const moveMarqueeSelection = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!marqueeOriginRef.current) return;
+    event.preventDefault();
+    updateMarqueeSelection(event.clientX, event.clientY);
+  };
+
+  const endMarqueeSelection = (event: ReactPointerEvent<HTMLElement>) => {
+    const origin = marqueeOriginRef.current;
+    if (!origin) return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateMarqueeSelection(event.clientX, event.clientY);
+    marqueeOriginRef.current = null;
+    setMarqueeBox(null);
+    suppressCanvasClickUntilRef.current = performance.now() + 300;
+    try { event.currentTarget.releasePointerCapture(origin.pointerId); } catch { /* already released */ }
+  };
+
+  const cancelMarqueeSelection = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!marqueeOriginRef.current) return;
+    marqueeOriginRef.current = null;
+    setMarqueeBox(null);
+    suppressCanvasClickUntilRef.current = performance.now() + 300;
+    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+  };
+
   const beginDrag = (event: ReactPointerEvent<HTMLButtonElement>, id: string) => {
     if (event.button !== 0) return;
     event.stopPropagation();
-    dragRef.current = { id, startY: event.clientY, moved: false };
+    dragRef.current = { id, ids: selectedBlockIds.includes(id) ? selectedBlockIds : [id], startY: event.clientY, moved: false };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const moveDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -606,13 +725,11 @@ export function MarkdownBlockEditor({
     setDraggingId(null);
     setDropIndex(null);
     if (!drag?.moved || target == null) return;
-    const from = blocks.findIndex((block) => block.id === drag.id);
-    if (from < 0) return;
-    let to = target;
-    if (from < to) to -= 1; // removing the dragged block shifts later indices left
-    if (to === from) return;
+    const next = moveBlockSelection(blocks, drag.ids, target);
+    if (next === blocks) return;
     pushHistory();
-    commit(moveItem(blocks, from, to));
+    commit(next);
+    setSelectedBlockIds([]);
   };
   const cancelDrag = () => {
     dragRef.current = null;
@@ -626,7 +743,22 @@ export function MarkdownBlockEditor({
     ) : null;
 
   return (
-    <section className="markdown-block-editor" aria-label={zh ? "Markdown 內容" : "Markdown content"} onKeyDown={handleHistoryShortcut}>
+    <section
+      ref={editorRef}
+      className={`markdown-block-editor ${marqueeBox ? "marquee-selecting" : ""}`}
+      aria-label={zh ? "Markdown 內容" : "Markdown content"}
+      onKeyDown={handleHistoryShortcut}
+      onPointerDownCapture={beginMarqueeSelection}
+      onPointerMove={moveMarqueeSelection}
+      onPointerUp={endMarqueeSelection}
+      onPointerCancel={cancelMarqueeSelection}
+      onClickCapture={(event) => {
+        if (performance.now() < suppressCanvasClickUntilRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+    >
       <div className="markdown-block-list" ref={listRef}>
         {blocks.map((block, index) => {
           const styled = parseStyledBlock(block.source);
@@ -636,6 +768,13 @@ export function MarkdownBlockEditor({
           const isEditing = editingId === block.id || !styled.content.trim();
           const singleTaskMatch = styled.content.includes("\n") ? null : styled.content.match(TASK_LINE);
           const kindClass = `kind-${kind}${level ? `-h${level}` : ""}`;
+          const currentTurnValue = kind === "heading" ? `h${level}`
+            : kind === "task" ? "todo"
+            : kind === "ordered" ? "number"
+            : kind === "paragraph" ? "text"
+            : kind;
+          const currentBlockLabel = blockCommands.find((command) => command.action.kind === "turn" && command.action.value === currentTurnValue)?.label
+            ?? (zh ? "文字" : "Text");
           const slash = isEditing ? trailingSlash(styled.content) : null;
           const commandOptions = slash ? filteredCommands(slash.query) : [];
           const showSlashMenu = slash && dismissedSlash !== `${block.id}:${styled.content}` && commandOptions.length > 0;
@@ -647,7 +786,7 @@ export function MarkdownBlockEditor({
               data-block-kind={kind}
               data-block-color={styled.style.color}
               data-block-background={styled.style.background}
-              className={`markdown-block ${kindClass} ${isEditing ? "editing" : ""} ${draggingId === block.id ? "dragging" : ""}`}
+              className={`markdown-block ${kindClass} ${isEditing ? "editing" : ""} ${selectedBlockIds.includes(block.id) ? "selected" : ""} ${draggingId === block.id || (draggingId && selectedBlockIds.includes(block.id)) ? "dragging" : ""}`}
             >
               <div className="markdown-block-tools">
                 <button
@@ -672,12 +811,19 @@ export function MarkdownBlockEditor({
                   onLostPointerCapture={() => {
                     if (dragRef.current?.id === block.id) cancelDrag();
                   }}
-                  onClick={() => {
+                  onClick={(event) => {
                     if (suppressHandleClickRef.current) {
                       suppressHandleClickRef.current = false;
                       return;
                     }
-                    setBlockMenuId((current) => current === block.id ? null : block.id);
+                    setBlockMenuPanel("root");
+                    if (blockMenuId === block.id) {
+                      setBlockMenuId(null);
+                      return;
+                    }
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setBlockMenuStyle(blockMenuPlacement(rect, window.innerWidth, window.innerHeight));
+                    setBlockMenuId(block.id);
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowUp") {
@@ -862,20 +1008,64 @@ export function MarkdownBlockEditor({
                 <Trash2 aria-hidden="true" />
               </button>
               {blockMenuId === block.id && (
-                <div className="markdown-block-menu" role="menu">
-                  <strong>{zh ? "轉換成" : "Turn into"}</strong>
-                  <div className="markdown-block-menu-types">
-                    {slashCommands.slice(0, 9).map((command) => <button type="button" role="menuitem" key={command.id} onClick={() => { runSlashCommand(block, command); setBlockMenuId(null); }}>{command.label}</button>)}
-                  </div>
-                  <strong>{zh ? "文字顏色" : "Text color"}</strong>
-                  <div className="markdown-color-grid">
-                    {colorNames.map(([color, name]) => <button type="button" role="menuitem" data-color={color} aria-label={zh ? `${name}文字` : `${name} text`} title={name} key={`text-${color}`} onClick={() => applyBlockStyle(block, { ...styled.style, color })} />)}
-                  </div>
-                  <strong>{zh ? "底色" : "Background"}</strong>
-                  <div className="markdown-color-grid background-grid">
-                    {colorNames.map(([background, name]) => <button type="button" role="menuitem" data-color={background} aria-label={zh ? `${name}底色` : `${name} background`} title={name} key={`background-${background}`} onClick={() => applyBlockStyle(block, { ...styled.style, background })} />)}
-                  </div>
-                  <div className="markdown-block-menu-actions"><button type="button" onClick={() => duplicateBlock(block.id)}>{zh ? "建立複本" : "Duplicate"}</button><button type="button" className="danger" onClick={() => removeBlock(block.id)}>{zh ? "刪除" : "Delete"}</button></div>
+                <div
+                  className="markdown-block-menu"
+                  style={blockMenuStyle}
+                  role="menu"
+                  aria-label={zh ? "區塊操作" : "Block actions"}
+                  onKeyDown={(event) => {
+                    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+                      event.preventDefault();
+                      duplicateBlock(block.id);
+                    } else if (event.key === "Delete") {
+                      event.preventDefault();
+                      removeBlock(block.id);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      if (blockMenuPanel === "root") setBlockMenuId(null);
+                      else setBlockMenuPanel("root");
+                    }
+                  }}
+                >
+                  {blockMenuPanel === "root" && <>
+                    <button type="button" role="menuitem" className="markdown-block-menu-row" onClick={() => setBlockMenuPanel("turn")}>
+                      <Repeat2 aria-hidden="true" /><span><strong>{zh ? "轉換成" : "Turn into"}</strong><small>{currentBlockLabel}</small></span><ChevronRight aria-hidden="true" />
+                    </button>
+                    <button type="button" role="menuitem" className="markdown-block-menu-row" onClick={() => setBlockMenuPanel("color")}>
+                      <Palette aria-hidden="true" /><span><strong>{zh ? "顏色" : "Color"}</strong><small>{zh ? "文字與背景" : "Text and background"}</small></span><ChevronRight aria-hidden="true" />
+                    </button>
+                    <div className="markdown-block-menu-separator" />
+                    <button type="button" role="menuitem" className="markdown-block-menu-row" onClick={() => duplicateBlock(block.id)}>
+                      <Copy aria-hidden="true" /><span><strong>{zh ? "建立複本" : "Duplicate"}</strong><small>Ctrl+D</small></span>
+                    </button>
+                    <button type="button" role="menuitem" className="markdown-block-menu-row danger" onClick={() => removeBlock(block.id)}>
+                      <Trash2 aria-hidden="true" /><span><strong>{zh ? "刪除" : "Delete"}</strong><small>Del</small></span>
+                    </button>
+                  </>}
+                  {blockMenuPanel === "turn" && <>
+                    <button type="button" className="markdown-block-menu-back" onClick={() => setBlockMenuPanel("root")}><ChevronLeft aria-hidden="true" />{zh ? "轉換成" : "Turn into"}</button>
+                    <div className="markdown-block-menu-list">
+                      {blockCommands.map((command) => {
+                        if (command.action.kind !== "turn") return null;
+                        const active = command.action.value === currentTurnValue;
+                        return <button type="button" role="menuitemradio" aria-checked={active} className="markdown-block-menu-row" key={command.id} onClick={() => { runSlashCommand(block, command); setBlockMenuId(null); }}>
+                          {command.action.value === "code" ? <Code2 aria-hidden="true" /> : <span className="markdown-block-type-icon" aria-hidden="true">{command.action.value.startsWith("h") ? command.action.value.toUpperCase() : command.label.slice(0, 1)}</span>}
+                          <span><strong>{command.label}</strong><small>{command.hint}</small></span>{active && <Check aria-hidden="true" />}
+                        </button>;
+                      })}
+                    </div>
+                  </>}
+                  {blockMenuPanel === "color" && <>
+                    <button type="button" className="markdown-block-menu-back" onClick={() => setBlockMenuPanel("root")}><ChevronLeft aria-hidden="true" />{zh ? "顏色" : "Color"}</button>
+                    <strong>{zh ? "文字顏色" : "Text color"}</strong>
+                    <div className="markdown-color-grid">
+                      {colorNames.map(([color, name]) => <button type="button" role="menuitemradio" aria-checked={styled.style.color === color} className={styled.style.color === color ? "active" : ""} data-color={color} aria-label={zh ? `${name}文字` : `${name} text`} title={name} key={`text-${color}`} onClick={() => applyBlockStyle(block, { ...styled.style, color })} />)}
+                    </div>
+                    <strong>{zh ? "底色" : "Background"}</strong>
+                    <div className="markdown-color-grid background-grid">
+                      {colorNames.map(([background, name]) => <button type="button" role="menuitemradio" aria-checked={styled.style.background === background} className={styled.style.background === background ? "active" : ""} data-color={background} aria-label={zh ? `${name}底色` : `${name} background`} title={name} key={`background-${background}`} onClick={() => applyBlockStyle(block, { ...styled.style, background })} />)}
+                    </div>
+                  </>}
                 </div>
               )}
             </article>
@@ -884,6 +1074,14 @@ export function MarkdownBlockEditor({
         })}
         {renderIndicator(blocks.length)}
       </div>
+      {marqueeBox && (
+        <div
+          className="markdown-block-selection-marquee"
+          data-markdown-selection-marquee
+          style={{ left: marqueeBox.left, top: marqueeBox.top, width: marqueeBox.width, height: marqueeBox.height }}
+          aria-hidden="true"
+        />
+      )}
       {blocks.some((block) => parseStyledBlock(block.source).content.trim()) && <button type="button" className="markdown-block-add" onClick={() => addBlock()}><Plus aria-hidden="true" />{zh ? "新增區塊" : "Add block"}</button>}
     </section>
   );

@@ -259,6 +259,51 @@ test("releasing a tray card onto a sibling reorders the tray instead of clearing
   }
 });
 
+test("tasks selected by a marquee that starts outside the unscheduled tray still drag as one batch", () => {
+  stubPointer();
+  const batches: Array<[string[], string]> = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[]}
+          trayTasks={[task("a", "第一件事", ""), task("b", "第二件事", "")]}
+          showTray
+          labels={labels}
+          onSchedule={() => undefined}
+          onScheduleBatch={(ids, time) => batches.push([ids, time])}
+          onCreateAt={() => undefined}
+        />,
+      );
+    });
+    const cards = container.querySelectorAll<HTMLElement>("[data-tray-card-id]");
+    const handles = container.querySelectorAll<HTMLElement>(".schedule-tray-drag-handle");
+    const slot = container.querySelector<HTMLElement>("[data-schedule-minutes='540']");
+    assert.equal(cards[0]?.dataset.globalSelectId, "a", "tray cards participate in the app-wide marquee");
+    assert.equal(cards[1]?.dataset.globalSelectId, "b");
+    cards.forEach((card) => card.classList.add("global-shift-selected"));
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => slot;
+    try {
+      flushSync(() => {
+        handles[0]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 8, clientX: 30, clientY: 20 }) as unknown as Event);
+        handles[0]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 8, clientX: 300, clientY: 200 }) as unknown as Event);
+        handles[0]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 8, clientX: 300, clientY: 200 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+    assert.deepEqual(batches, [[ ["a", "b"], "09:00" ]]);
+  } finally {
+    container.remove();
+  }
+});
+
 test("Alt+ArrowUp/Down reorders tray cards from the keyboard", () => {
   const drops: Array<{ draggedId: string; targetId: string; place: string }> = [];
   const container = document.createElement("div");

@@ -78,6 +78,7 @@ import {
   type NativeAdapter,
 } from "./ipc";
 import { SyncEngine, type SyncResult } from "./sync-engine";
+import { GlobalShiftMarquee, getGlobalSelectedIds } from "./global-shift-marquee";
 import { deleteTaskLocalFirst } from "./task-deletion";
 import {
   applyTaskPriority,
@@ -93,6 +94,7 @@ import {
   nextWeekPriorities,
   priorityDisplay,
   scheduleTask,
+  scheduleTaskBatch,
   toggleMostImportant,
   type BoardLane,
 } from "./task-actions";
@@ -1451,6 +1453,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   return (
     <UiPreferencesContext.Provider value={{ preferences, setPreferences, t }}>
     <div data-theme={preferences.theme} className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+      <GlobalShiftMarquee />
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-logo" src={appLogo} alt="" aria-hidden="true" />
@@ -2154,6 +2157,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
   const [templateOpen, setTemplateOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
+  const draggedItems = useRef<string[]>([]);
   const [dragHandleId, setDragHandleId] = useState<string | null>(null);
   const clock = useMemo(() => new Date(), [today]);
   const patchTask = (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => {
@@ -2170,14 +2174,15 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
   const updateItem = (id: string, patch: Partial<RoutineTemplateItem>) => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.map((item) => item.id === id ? { ...item, ...patch } : patch.priority === "highest" && item.priority === "highest" ? { ...item, priority: "high" as const } : item) });
   const dropItem = (targetId: string) => {
     if (!draggedItem || draggedItem === targetId) return;
-    const items = [...routineTemplate.items];
-    const from = items.findIndex((item) => item.id === draggedItem);
-    const to = items.findIndex((item) => item.id === targetId);
-    const [moved] = items.splice(from, 1);
-    if (!moved) return;
-    items.splice(to, 0, moved);
+    const selectedIds = new Set(draggedItems.current.length ? draggedItems.current : [draggedItem]);
+    if (selectedIds.has(targetId)) return;
+    const moved = routineTemplate.items.filter((item) => selectedIds.has(item.id));
+    const remaining = routineTemplate.items.filter((item) => !selectedIds.has(item.id));
+    const to = remaining.findIndex((item) => item.id === targetId);
+    const items = [...remaining.slice(0, to), ...moved, ...remaining.slice(to)];
     onRoutineTemplateChange({ ...routineTemplate, items: items.map((item, index) => ({ ...item, rank: rankForIndex(index) })) });
     setDraggedItem(null);
+    draggedItems.current = [];
   };
   const important = groups.today.find((task) => task.priority === "highest") ?? null;
   const pickProject = (taskId: string, projectId: string | null) => {
@@ -2190,7 +2195,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
     <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article></div>
-    {templateOpen && <section className="routine-editor"><header><div><span className="eyebrow">DAILY ROUTINE</span><input aria-label="模板名稱" value={routineTemplate.name} onChange={(event) => onRoutineTemplateChange({ ...routineTemplate, name: event.target.value })} /></div><button onClick={() => setTemplateOpen(false)} aria-label="關閉模板"><X /></button></header><div className="routine-items">{routineTemplate.items.map((item) => <article key={item.id} draggable={dragHandleId === item.id} onDragStart={() => setDraggedItem(item.id)} onDragEnd={() => setDragHandleId(null)} onMouseUp={() => setDragHandleId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropItem(item.id)}><GripVertical onMouseDown={() => setDragHandleId(item.id)} /><input type="checkbox" aria-label={`${item.title}啟用`} checked={item.enabled} onChange={(event) => updateItem(item.id, { enabled: event.target.checked })} /><input aria-label="例行任務名稱" value={item.title} onChange={(event) => updateItem(item.id, { title: event.target.value })} /><select aria-label="例行任務專案" value={item.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); updateItem(item.id, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><select aria-label="例行任務優先度" value={item.priority} onChange={(event) => updateItem(item.id, { priority: event.target.value as RoutineTemplateItem["priority"] })}>{(["highest","high","medium","normal","low"] as const).map((value) => <option key={value} value={value}>{priorityDisplay(value).code}</option>)}</select><input aria-label="開始時間" type="time" value={item.startTime ?? ""} onChange={(event) => updateItem(item.id, { startTime: event.target.value || null, durationMinutes: event.target.value ? item.durationMinutes ?? 30 : null })} /><select aria-label="持續時間" disabled={!item.startTime} value={item.durationMinutes ?? 30} onChange={(event) => updateItem(item.id, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select><button className="danger-icon" aria-label={`刪除${item.title}`} onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.filter((value) => value.id !== item.id) })}><Trash2 /></button></article>)}</div><button className="secondary" onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: [...routineTemplate.items, { id: crypto.randomUUID(), title: "新的例行任務", enabled: true, projectId: null, projectName: null, priority: "normal", startTime: null, durationMinutes: null, rank: rankForIndex(routineTemplate.items.length) }] })}><Plus />新增模板項目</button></section>}
+    {templateOpen && <section className="routine-editor"><header><div><span className="eyebrow">DAILY ROUTINE</span><input aria-label="模板名稱" value={routineTemplate.name} onChange={(event) => onRoutineTemplateChange({ ...routineTemplate, name: event.target.value })} /></div><button onClick={() => setTemplateOpen(false)} aria-label="關閉模板"><X /></button></header><div className="routine-items">{routineTemplate.items.map((item) => <article key={item.id} data-global-select-id={item.id} data-global-select-kind="routine" draggable={dragHandleId === item.id} onDragStart={() => { setDraggedItem(item.id); draggedItems.current = getGlobalSelectedIds(item.id, "routine"); }} onDragEnd={() => { setDragHandleId(null); draggedItems.current = []; }} onMouseUp={() => setDragHandleId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropItem(item.id)}><GripVertical onMouseDown={() => setDragHandleId(item.id)} /><input type="checkbox" aria-label={`${item.title}啟用`} checked={item.enabled} onChange={(event) => updateItem(item.id, { enabled: event.target.checked })} /><input aria-label="例行任務名稱" value={item.title} onChange={(event) => updateItem(item.id, { title: event.target.value })} /><select aria-label="例行任務專案" value={item.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); updateItem(item.id, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><select aria-label="例行任務優先度" value={item.priority} onChange={(event) => updateItem(item.id, { priority: event.target.value as RoutineTemplateItem["priority"] })}>{(["highest","high","medium","normal","low"] as const).map((value) => <option key={value} value={value}>{priorityDisplay(value).code}</option>)}</select><input aria-label="開始時間" type="time" value={item.startTime ?? ""} onChange={(event) => updateItem(item.id, { startTime: event.target.value || null, durationMinutes: event.target.value ? item.durationMinutes ?? 30 : null })} /><select aria-label="持續時間" disabled={!item.startTime} value={item.durationMinutes ?? 30} onChange={(event) => updateItem(item.id, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select><button className="danger-icon" aria-label={`刪除${item.title}`} onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.filter((value) => value.id !== item.id) })}><Trash2 /></button></article>)}</div><button className="secondary" onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: [...routineTemplate.items, { id: crypto.randomUUID(), title: "新的例行任務", enabled: true, projectId: null, projectName: null, priority: "normal", startTime: null, durationMinutes: null, rank: rankForIndex(routineTemplate.items.length) }] })}><Plus />新增模板項目</button></section>}
     <section className="timeline-section">
       <header>
         <div>
@@ -2222,7 +2227,9 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
         locale={preferences.language}
         projects={projects}
         onSchedule={(taskId, startTime) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, today, startTime) : item))}
+        onScheduleBatch={(taskIds, startTime) => onSave(scheduleTaskBatch(tasks, taskIds, today, startTime))}
         onClearTime={(taskId) => onSave(tasks.map((item) => item.id === taskId ? scheduleTask(item, item.taskDate ?? today, null) : item))}
+        onClearTimeBatch={(taskIds) => onSave(tasks.map((item) => item.id && taskIds.includes(item.id) ? scheduleTask(item, item.taskDate ?? today, null) : item))}
         onCreateAt={(title, startTime) => onSave([...tasks, newTask(title, { taskDate: today, startTime, durationMinutes: 30 })])}
         onOpenTask={onOpenTask}
         onPriority={(taskId, priority) => onSave(applyTaskPriority(tasks, taskId, priority, today))}
@@ -2810,7 +2817,7 @@ function Board({
 }) {
   const { t, preferences } = useUiPreferences();
   const [drag, setDrag] = useState<string | null>(null);
-  const boardDrag = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
+  const boardDrag = useRef<{ id: string; ids: string[]; x: number; y: number; moved: boolean } | null>(null);
   const [composingLane, setComposingLane] = useState<BoardLane | null>(null);
   const today = taipeiDateKey();
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
@@ -2831,6 +2838,10 @@ function Board({
           task.id === id ? moveTaskToLane(task, lane, today) : task,
         ),
       );
+  };
+  const moveSelectionToLane = (ids: readonly string[], lane: BoardLane) => {
+    const selected = new Set(ids);
+    void onSave(tasks.map((task) => task.id && selected.has(task.id) ? moveTaskToLane(task, lane, today) : task));
   };
   // The per-lane “＋” creates a task directly in that lane, honouring the lane's
   // semantics (idea inbox keeps no date) and the active project filter.
@@ -2855,7 +2866,7 @@ function Board({
     if (!origin?.moved) return;
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
     const lane = target?.closest<HTMLElement>("[data-board-lane]")?.dataset.boardLane as BoardLane | undefined;
-    if (lane) moveToLane(taskId, lane);
+    if (lane) moveSelectionToLane(origin.ids, lane);
   };
   const moveWithinColumn = (id: string | null, delta: -1 | 1) => {
     if (!id) return;
@@ -2878,7 +2889,7 @@ function Board({
     );
   };
   return (
-    <section>
+    <section data-global-marquee-scope="board">
       <div className="board-toolbar">
         <div>
           <h2>{selectedProject ? t("board.filteredTitle", { name: selectedProject.name }) : t("board.title")}</h2>
@@ -2966,7 +2977,7 @@ function Board({
                   <article
                     onPointerDown={(event) => {
                       if (event.button !== 0 || !task.id || !(event.target as HTMLElement).closest("[data-drag-handle]")) return;
-                      boardDrag.current = { id: task.id, x: event.clientX, y: event.clientY, moved: false };
+                      boardDrag.current = { id: task.id, ids: getGlobalSelectedIds(task.id), x: event.clientX, y: event.clientY, moved: false };
                       setDrag(task.id);
                       event.currentTarget.setPointerCapture(event.pointerId);
                     }}
@@ -2994,6 +3005,7 @@ function Board({
                       if (next) moveToLane(task.id, next.id);
                     }}
                     style={taskProjectStyle(task)}
+                    data-global-select-id={task.id ?? undefined}
                     className={`board-card ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
                     key={task.id ?? task.title}
                     tabIndex={0}
@@ -3131,7 +3143,7 @@ export function Calendar({
   } | null>(null);
   const calendarDragMoved = useRef(false);
   const calendarDragOrigin = useRef<{ x: number; y: number } | null>(null);
-  const calendarDragCandidate = useRef<{ id: string; originDate: string | null } | null>(null);
+  const calendarDragCandidate = useRef<{ id: string; ids: string[]; originDate: string | null } | null>(null);
   const suppressCalendarClick = useRef(false);
   const [ideaDropHint, setIdeaDropHint] = useState<{ id: string; place: "before" | "after" } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -3172,7 +3184,7 @@ export function Calendar({
   const beginDrag = (id: string | null, originDate: string | null, x: number, y: number) => {
     calendarDragMoved.current = false;
     calendarDragOrigin.current = { x, y };
-    calendarDragCandidate.current = id ? { id, originDate } : null;
+    calendarDragCandidate.current = id ? { id, ids: getGlobalSelectedIds(id), originDate } : null;
     setDragTaskId(null);
     setDragOriginDate(null);
     setDropTargetDate(null);
@@ -3253,6 +3265,10 @@ export function Calendar({
       tasks.map((task) => (task.id === id ? scheduleTask(task, date, startTime) : task)),
     );
   };
+  const scheduleSelection = (ids: readonly string[], date: string, startTime?: string | null) => {
+    const selectedIds = new Set(ids);
+    void onSave(tasks.map((task) => task.id && selectedIds.has(task.id) ? scheduleTask(task, date, startTime) : task));
+  };
   const unschedule = (id: string | null) => {
     if (!id) return;
     const target = tasks.find((task) => task.id === id);
@@ -3264,6 +3280,12 @@ export function Calendar({
           : task,
       ),
     );
+  };
+  const unscheduleSelection = (ids: readonly string[]) => {
+    const selectedIds = new Set(ids);
+    void onSave(tasks.map((task) => task.id && selectedIds.has(task.id)
+      ? { ...task, status: "todo", taskDate: null, completedAt: null, startTime: null, durationMinutes: null }
+      : task));
   };
   const complete = (id: string | null) =>
     onSave(
@@ -3278,6 +3300,7 @@ export function Calendar({
   const remove = onDelete;
   const finishPointerDrag = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
     if (!taskId) return;
+    const draggedIds = calendarDragCandidate.current?.ids ?? [taskId];
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
     const releasedOnSelf = Boolean(target && event.currentTarget.contains(target));
     const didMove = calendarDragMoved.current || !releasedOnSelf;
@@ -3292,7 +3315,7 @@ export function Calendar({
     const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate
       ?? grid?.dataset.scheduleDate;
     if (target?.closest("[data-schedule-all-day], [data-unscheduled-tray]")) {
-      schedule(taskId, date ?? selected, null);
+      scheduleSelection(draggedIds, date ?? selected, null);
     } else if (slot) {
       const rect = slot.getBoundingClientRect();
       const time = rect.height > 0
@@ -3303,15 +3326,15 @@ export function Calendar({
             rect.height,
           )
         : formatMinutesAsTime(snapMinutes(Number(slot.dataset.scheduleMinutes)));
-      schedule(taskId, date ?? selected, time);
+      scheduleSelection(draggedIds, date ?? selected, time);
     } else if (grid) {
       const rect = grid.getBoundingClientRect();
-      schedule(
-        taskId,
+      scheduleSelection(
+        draggedIds,
         date ?? selected,
         formatMinutesAsTime(minutesFromOffset(event.clientY - rect.top + grid.scrollTop)),
       );
-    } else if (date) schedule(taskId, date);
+    } else if (date) scheduleSelection(draggedIds, date);
     else if (target?.closest("[data-idea-drawer]")) {
       // An idea released onto a sibling idea reorders the inbox instead of unscheduling.
       const cameFromDrawer = calendarDragCandidate.current?.originDate == null;
@@ -3326,7 +3349,7 @@ export function Calendar({
           void onSave(withReassignedRanks(tasks, ordered.map((task) => task.id)));
         }
       } else {
-        unschedule(taskId);
+        unscheduleSelection(draggedIds);
       }
     }
     resetDrag();
@@ -3341,6 +3364,7 @@ export function Calendar({
   return (
     <div
       className={`calendar-layout ${sideOpen ? "" : "side-closed"} ${fullscreen ? "fullscreen" : ""}`}
+      data-global-marquee-scope="calendar"
     >
       <section className="calendar-card">
         <header className="calendar-toolbar">
@@ -3432,7 +3456,9 @@ export function Calendar({
             }}
             locale={preferences.language}
             onSchedule={(taskId, startTime) => schedule(taskId, selected, startTime)}
+            onScheduleBatch={(taskIds, startTime) => void onSave(scheduleTaskBatch(tasks, taskIds, selected, startTime))}
             onClearTime={(taskId) => schedule(taskId, selected, null)}
+            onClearTimeBatch={(taskIds) => void onSave(tasks.map((item) => item.id && taskIds.includes(item.id) ? scheduleTask(item, selected, null) : item))}
             onCreateAt={(title, startTime) => void onSave([...tasks, newTask(title, { taskDate: selected, startTime, durationMinutes: 30 })])}
             onOpenTask={openTask}
             onPriority={(taskId, priority) => void onSave(applyTaskPriority(tasks, taskId, priority, selected))}
@@ -3467,6 +3493,7 @@ export function Calendar({
                     <div className="calendar-task-list">
                       {dayEntries.slice(0, 4).map((entry) => (
                         <span
+                          data-global-select-id={entry.task.id ?? undefined}
                           onPointerDown={(event) => {
                             if (event.button === 0 && entry.task.id && !(event.target as HTMLElement).closest("button,input")) {
                               beginDrag(entry.task.id, entry.date, event.clientX, event.clientY);
@@ -3545,6 +3572,7 @@ export function Calendar({
                   <div className="week-task-list">
                     {dayEntries.map((entry) => (
                       <article
+                        data-global-select-id={entry.task.id ?? undefined}
                         onPointerDown={(event) => {
                           if (event.button === 0 && entry.task.id && !(event.target as HTMLElement).closest("button,input,select")) {
                             beginDrag(entry.task.id, entry.date, event.clientX, event.clientY);
@@ -3614,6 +3642,7 @@ export function Calendar({
             ) : (
               visibleIdeas.map((task) => (
                 <article
+                  data-global-select-id={task.id ?? undefined}
                   onClick={() => openTask(task.id)}
                   onKeyDown={(event) => {
                     if ((event.key === "Enter" || event.key === " ") && task.id) {
@@ -3797,6 +3826,7 @@ export function Calendar({
           ) : (
             selectedTasks.map(({ task, date }) => (
               <article
+                data-global-select-id={task.id ?? undefined}
                 style={taskProjectStyle(task)}
                 className={`${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
                 key={`${task.id}:${date}`}

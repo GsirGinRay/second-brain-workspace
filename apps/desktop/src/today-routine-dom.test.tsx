@@ -283,6 +283,154 @@ test("deleting a today task arms in place and deletes on the second click", () =
   }
 });
 
+test("Shift marquee-selected today tasks drag from any selected handle and save as one batch", () => {
+  const today = taipeiDateKey(new Date());
+  const openTasks: BrainTaskSnapshot[] = [
+    {
+      schemaVersion: 6,
+      id: "batch-first",
+      title: "第一項",
+      status: "todo",
+      taskDate: today,
+      durationMinutes: 30,
+      priority: "normal",
+      projectId: null,
+      projectName: null,
+      rank: "00000001",
+      sourcePath: "tasks.md",
+      sourceHeading: null,
+      completedAt: null,
+    },
+    {
+      schemaVersion: 6,
+      id: "batch-second",
+      title: "第二項",
+      status: "todo",
+      taskDate: today,
+      durationMinutes: 45,
+      priority: "normal",
+      projectId: null,
+      projectName: null,
+      rank: "00000002",
+      sourcePath: "tasks.md",
+      sourceHeading: null,
+      completedAt: null,
+    },
+    {
+      schemaVersion: 6,
+      id: "batch-third",
+      title: "第三項",
+      status: "todo",
+      taskDate: today,
+      durationMinutes: 15,
+      priority: "normal",
+      projectId: null,
+      projectName: null,
+      rank: "00000003",
+      sourcePath: "tasks.md",
+      sourceHeading: null,
+      completedAt: null,
+    },
+    {
+      schemaVersion: 6,
+      id: "batch-timed",
+      title: "時間軸任務",
+      status: "todo",
+      taskDate: today,
+      startTime: "14:00",
+      durationMinutes: 30,
+      timeZone: "Asia/Taipei",
+      priority: "normal",
+      projectId: null,
+      projectName: null,
+      rank: "00000004",
+      sourcePath: "tasks.md",
+      sourceHeading: null,
+      completedAt: null,
+    },
+  ];
+  const rendered = renderToday(openTasks, createDefaultRoutineTemplate("77777777-7777-4777-8777-777777777777"));
+  try {
+    const cards = rendered.container.querySelectorAll<HTMLElement>(".schedule-tray-card");
+    const handles = rendered.container.querySelectorAll<HTMLElement>(".schedule-tray-drag-handle");
+    const slot = rendered.container.querySelector<HTMLElement>('[data-schedule-minutes="600"]');
+    assert.equal(cards.length, 3);
+    assert.equal(handles.length, 3);
+    assert.ok(slot);
+    const timedBlock = rendered.container.querySelector<HTMLElement>(".timed-block:not(.drag-ghost)");
+    const scheduleRoot = rendered.container.querySelector<HTMLElement>(".day-schedule");
+    assert.ok(timedBlock);
+    assert.ok(scheduleRoot);
+    const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+    if (typeof proto.setPointerCapture !== "function") {
+      Object.defineProperty(proto, "setPointerCapture", { value: () => undefined, configurable: true, writable: true });
+    }
+    if (typeof proto.releasePointerCapture !== "function") {
+      Object.defineProperty(proto, "releasePointerCapture", { value: () => undefined, configurable: true, writable: true });
+    }
+    const list = rendered.container.querySelector<HTMLElement>(".schedule-tray-list");
+    assert.ok(list);
+    cards.forEach((card, index) => {
+      const top = 20 + index * 60;
+      card.getBoundingClientRect = () => ({
+        x: 20,
+        y: top,
+        left: 20,
+        top,
+        right: 220,
+        bottom: top + 44,
+        width: 200,
+        height: 44,
+        toJSON: () => ({}),
+      });
+    });
+    timedBlock!.getBoundingClientRect = () => ({
+      x: 260,
+      y: 20,
+      left: 260,
+      top: 20,
+      right: 480,
+      bottom: 100,
+      width: 220,
+      height: 80,
+      toJSON: () => ({}),
+    });
+    flushSync(() => {
+      scheduleRoot!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 7, clientX: 10, clientY: 10, shiftKey: true }) as unknown as Event);
+    });
+    flushSync(() => {
+      scheduleRoot!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 7, clientX: 500, clientY: 190, shiftKey: true }) as unknown as Event);
+    });
+    assert.ok(rendered.container.querySelector("[data-selection-marquee]"), "a translucent selection rectangle is visible while dragging");
+    flushSync(() => {
+      scheduleRoot!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 7, clientX: 500, clientY: 190, shiftKey: true }) as unknown as Event);
+    });
+    assert.equal(rendered.container.querySelector("[data-selection-marquee]"), null, "the blue rectangle disappears after release");
+    assert.equal(rendered.container.querySelectorAll('.schedule-tray-card[aria-selected="true"]').length, 3, "every task touched by the blue rectangle stays selected");
+    assert.ok(timedBlock!.classList.contains("selected"), "the same blue rectangle also selects a timeline task");
+
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => slot;
+    try {
+      flushSync(() => {
+        handles[2]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 8, clientX: 4, clientY: 4 }) as unknown as Event);
+        handles[2]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 8, clientX: 4, clientY: 4 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+
+    assert.equal(rendered.saved.length, 1, "the whole drag reaches persistence once, so it creates one Undo entry");
+    assert.equal(rendered.saved[0]!.find((task) => task.id === "batch-first")?.startTime, "10:00");
+    assert.equal(rendered.saved[0]!.find((task) => task.id === "batch-second")?.startTime, "10:30");
+    assert.equal(rendered.saved[0]!.find((task) => task.id === "batch-third")?.startTime, "11:15");
+    assert.equal(rendered.saved[0]!.find((task) => task.id === "batch-timed")?.startTime, "11:30");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
 test("starring a today task promotes it through toggleMostImportant via onSave", () => {
   const today = taipeiDateKey(new Date());
   const open: BrainTaskSnapshot = {

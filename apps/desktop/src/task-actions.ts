@@ -1,4 +1,5 @@
 import type { BrainTaskSnapshot } from "@second-brain/brain-core";
+import { formatMinutesAsTime, MINUTES_PER_DAY, parseTimeToMinutes } from "./day-schedule";
 
 const PRIORITY_DISPLAY: Record<BrainTaskSnapshot["priority"], { code: string; label: string }> = {
   highest: { code: "P1", label: "最重要" },
@@ -55,6 +56,37 @@ export function scheduleTask(
     durationMinutes: startTime ? (task.durationMinutes ?? 30) : null,
     timeZone: startTime ? "Asia/Taipei" : task.timeZone,
   };
+}
+
+/** Schedules an ordered selection as one contiguous block on the same day. */
+export function scheduleTaskBatch(
+  tasks: BrainTaskSnapshot[],
+  orderedTaskIds: readonly string[],
+  taskDate: string,
+  startTime: string,
+): BrainTaskSnapshot[] {
+  const requestedStart = parseTimeToMinutes(startTime);
+  if (requestedStart == null || orderedTaskIds.length === 0) return tasks;
+
+  const taskById = new Map(tasks.flatMap((task) => task.id ? [[task.id, task] as const] : []));
+  const selectedTasks = orderedTaskIds.flatMap((id) => {
+    const selected = taskById.get(id);
+    return selected ? [selected] : [];
+  });
+  if (selectedTasks.length === 0) return tasks;
+
+  const totalDuration = selectedTasks.reduce((total, task) => total + (task.durationMinutes ?? 30), 0);
+  let cursor = Math.min(requestedStart, Math.max(0, MINUTES_PER_DAY - totalDuration));
+  const startById = new Map<string, string>();
+  for (const task of selectedTasks) {
+    startById.set(task.id!, formatMinutesAsTime(cursor));
+    cursor += task.durationMinutes ?? 30;
+  }
+
+  return tasks.map((task) => {
+    const nextStart = task.id ? startById.get(task.id) : undefined;
+    return nextStart ? scheduleTask(task, taskDate, nextStart) : task;
+  });
 }
 
 function addDays(dateKey: string, amount: number): string {

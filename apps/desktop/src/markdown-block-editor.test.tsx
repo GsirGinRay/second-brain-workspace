@@ -4,7 +4,7 @@ import React, { act } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
-import { deriveBlockKind, MarkdownBlockEditor, parseStyledBlock } from "./markdown-block-editor";
+import { blockMenuPlacement, deriveBlockKind, MarkdownBlockEditor, parseStyledBlock } from "./markdown-block-editor";
 
 const window = new Window({ url: "http://localhost/" });
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -24,6 +24,17 @@ test("Markdown markers identify their visual block type immediately", () => {
   assert.deepEqual(deriveBlockKind("> "), { kind: "quote" });
   assert.deepEqual(deriveBlockKind("---"), { kind: "divider" });
   assert.deepEqual(deriveBlockKind("```"), { kind: "code" });
+});
+
+test("the block menu stays inside a narrow side panel viewport and flips above the row", () => {
+  assert.deepEqual(
+    blockMenuPlacement({ left: 390, top: 680, bottom: 704 }, 420, 720),
+    { left: 108, width: 300, maxHeight: 520, bottom: 44, top: "auto" },
+  );
+  assert.deepEqual(
+    blockMenuPlacement({ left: 8, top: 20, bottom: 44 }, 260, 720),
+    { left: 12, width: 236, maxHeight: 520, top: 48, bottom: "auto" },
+  );
 });
 
 test("structural Markdown markers stay in storage but disappear from the live field", () => {
@@ -105,6 +116,70 @@ test("dragging a Markdown block reorders the serialized Markdown", async () => {
       null,
       "the insertion line disappears once the drop lands",
     );
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("Shift marquee selects multiple Markdown blocks and one handle moves them with one undo", async () => {
+  const rendered = renderEditor("第一段\n\n第二段\n\n第三段\n\n第四段");
+  try {
+    const section = rendered.container.querySelector<HTMLElement>(".markdown-block-editor");
+    const blocks = rendered.container.querySelectorAll<HTMLElement>("[data-markdown-block-id]");
+    const handles = rendered.container.querySelectorAll<HTMLElement>("[data-markdown-drag-handle]");
+    assert.ok(section);
+    assert.equal(blocks.length, 4);
+    const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+    if (typeof proto.setPointerCapture !== "function") Object.defineProperty(proto, "setPointerCapture", { value: () => undefined, configurable: true, writable: true });
+    if (typeof proto.releasePointerCapture !== "function") Object.defineProperty(proto, "releasePointerCapture", { value: () => undefined, configurable: true, writable: true });
+    blocks.forEach((block, index) => {
+      const top = 20 + index * 50;
+      block.getBoundingClientRect = () => ({
+        x: 20,
+        y: top,
+        left: 20,
+        top,
+        right: 220,
+        bottom: top + 40,
+        width: 200,
+        height: 40,
+        toJSON: () => ({}),
+      });
+    });
+
+    await act(async () => {
+      section!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 11, clientX: 10, clientY: 65, shiftKey: true }) as unknown as Event);
+      section!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 11, clientX: 230, clientY: 165, shiftKey: true }) as unknown as Event);
+    });
+    assert.ok(rendered.container.querySelector("[data-markdown-selection-marquee]"), "the translucent blue box is visible while selecting");
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 2, "only the two intersected blocks have translucent blue backgrounds");
+    await act(async () => {
+      section!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 11, clientX: 230, clientY: 165, shiftKey: true }) as unknown as Event);
+    });
+    assert.equal(rendered.container.querySelector("[data-markdown-selection-marquee]"), null);
+
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => blocks[3] ?? null;
+    try {
+      await act(async () => {
+        handles[1]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 12, clientX: 8, clientY: 80 }) as unknown as Event);
+        handles[1]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 12, clientX: 8, clientY: 205 }) as unknown as Event);
+      });
+      assert.equal(rendered.container.querySelectorAll(".markdown-block.dragging").length, 2, "both selected blocks lift together");
+      await act(async () => {
+        handles[1]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 12, clientX: 8, clientY: 205 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+
+    assert.equal(rendered.changes.length, 1, "the batch reorder serializes once");
+    assert.equal(rendered.changes.at(-1), "第一段\n\n第四段\n\n第二段\n\n第三段");
+    flushSync(() => {
+      section!.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "z", ctrlKey: true }) as unknown as Event);
+    });
+    assert.equal(rendered.changes.at(-1), "第一段\n\n第二段\n\n第三段\n\n第四段", "one undo restores the whole group move");
   } finally {
     rendered.container.remove();
   }
@@ -242,6 +317,55 @@ test("block background colors persist in an ignored Markdown comment", () => {
       style: { color: "default", background: "blue" },
     });
     assert.equal(rendered.container.querySelector(".markdown-block")?.getAttribute("data-block-background"), "blue");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("the six-dot menu exposes nested Notion-style block actions", () => {
+  const rendered = renderEditor("原始內容");
+  const click = (element: Element) => flushSync(() => element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+  const menuButton = (label: string) => Array.from(rendered.container.querySelectorAll<HTMLButtonElement>(".markdown-block-menu button"))
+    .find((button) => button.textContent?.includes(label));
+  try {
+    const grip = rendered.container.querySelector<HTMLElement>("[data-markdown-drag-handle]");
+    assert.ok(grip);
+    click(grip!);
+    assert.ok(menuButton("轉換成"), "block conversion is a top-level action");
+    assert.ok(menuButton("顏色"), "color is a top-level action");
+    assert.ok(menuButton("建立複本"), "duplicate is a top-level action");
+
+    click(menuButton("轉換成")!);
+    const heading4 = menuButton("標題 4");
+    assert.ok(heading4, "Heading 4 is available as a Markdown-native block type");
+    click(heading4!);
+    assert.equal(rendered.changes.at(-1), "#### 原始內容");
+
+    click(grip!);
+    click(menuButton("顏色")!);
+    const blueBackground = rendered.container.querySelector<HTMLButtonElement>('[aria-label="藍色底色"]');
+    assert.ok(blueBackground);
+    click(blueBackground!);
+    assert.deepEqual(parseStyledBlock(rendered.changes.at(-1) ?? ""), {
+      content: "#### 原始內容",
+      style: { color: "default", background: "blue" },
+    });
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("duplicating from the six-dot menu inserts a full styled copy below", () => {
+  const rendered = renderEditor("可複製區塊\n<!-- sbw:block-style color=red background=yellow -->");
+  try {
+    const grip = rendered.container.querySelector<HTMLElement>("[data-markdown-drag-handle]");
+    flushSync(() => grip!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    const duplicate = Array.from(rendered.container.querySelectorAll<HTMLButtonElement>(".markdown-block-menu button"))
+      .find((button) => button.textContent?.includes("建立複本"));
+    assert.ok(duplicate);
+    flushSync(() => duplicate!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    assert.equal(rendered.container.querySelectorAll("[data-markdown-block-id]").length, 2);
+    assert.equal(rendered.changes.at(-1), "可複製區塊\n<!-- sbw:block-style color=red background=yellow -->\n\n可複製區塊\n<!-- sbw:block-style color=red background=yellow -->");
   } finally {
     rendered.container.remove();
   }

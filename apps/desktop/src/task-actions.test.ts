@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BrainTaskSnapshot } from "@second-brain/brain-core";
-import { applyTaskPriority, archiveTask, boardLane, completedForDate, filterCompletedTasks, isCompleteShortcut, isQuickAddShortcut, markMostImportant, moveTaskToLane, nextWeekPriorities, priorityDisplay, scheduleTask, toggleMostImportant } from "./task-actions";
+import { applyTaskPriority, archiveTask, boardLane, completedForDate, filterCompletedTasks, isCompleteShortcut, isQuickAddShortcut, markMostImportant, moveTaskToLane, nextWeekPriorities, priorityDisplay, scheduleTask, scheduleTaskBatch, toggleMostImportant } from "./task-actions";
 import { committedTitle } from "./inline-title";
 
 function task(id: string, taskDate: string | null, priority: BrainTaskSnapshot["priority"] = "normal"): BrainTaskSnapshot {
@@ -124,4 +124,31 @@ test("calendar scheduling moves only the task date and next-week priorities excl
     { ...task("done", "2026-08-15", "highest"), status: "done" as const },
   ], "2026-08-12");
   assert.deepEqual(next.map((item) => item.id), ["p1", "p2"]);
+});
+
+test("batch scheduling lays selected tasks out consecutively in board order", () => {
+  const tasks = [
+    { ...task("first", null), durationMinutes: 45 },
+    { ...task("second", null), durationMinutes: 30 },
+    task("untouched", null),
+  ];
+
+  const scheduled = scheduleTaskBatch(tasks, ["second", "first"], "2026-08-27", "10:00");
+
+  assert.equal(scheduled.find((item) => item.id === "second")?.startTime, "10:00");
+  assert.equal(scheduled.find((item) => item.id === "first")?.startTime, "10:30");
+  assert.equal(scheduled.find((item) => item.id === "untouched")?.startTime, undefined);
+  assert.equal(scheduled.find((item) => item.id === "first")?.taskDate, "2026-08-27");
+});
+
+test("batch scheduling shifts a late drop earlier so the whole selection fits", () => {
+  const tasks = [
+    { ...task("first", null), durationMinutes: 60 },
+    { ...task("second", null), durationMinutes: 30 },
+  ];
+
+  const scheduled = scheduleTaskBatch(tasks, ["first", "second"], "2026-08-27", "23:30");
+
+  assert.equal(scheduled.find((item) => item.id === "first")?.startTime, "22:30");
+  assert.equal(scheduled.find((item) => item.id === "second")?.startTime, "23:30");
 });

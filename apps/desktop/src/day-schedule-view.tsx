@@ -18,10 +18,18 @@ import { ProjectPicker } from "./project-picker";
 import { DangerConfirmButton } from "./danger-confirm";
 import type { DropPosition } from "./task-reorder";
 import type { UiLanguage } from "./ui-preferences";
+import { clearGlobalSelection, getGlobalSelectedIds } from "./global-shift-marquee";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
 type DragKind = "timed" | "loose" | "resize";
+
+interface MarqueeBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
 
 export interface DayScheduleLabels {
   unscheduled: string;
@@ -56,7 +64,9 @@ export function DaySchedule({
   labels,
   projects,
   onSchedule,
+  onScheduleBatch,
   onClearTime,
+  onClearTimeBatch,
   onCreateAt,
   onOpenTask,
   onPriority,
@@ -78,7 +88,11 @@ export function DaySchedule({
   /** Enables inline project switching when provided with onPickProject. */
   projects?: BrainProjectSnapshot[];
   onSchedule: (taskId: string, startTime: string) => void;
+  /** Persists an ordered tray selection as one scheduling/undo transaction. */
+  onScheduleBatch?: (taskIds: string[], startTime: string) => void;
   onClearTime?: (taskId: string) => void;
+  /** Clears the time from a selected group as one persistence/undo transaction. */
+  onClearTimeBatch?: (taskIds: string[]) => void;
   onCreateAt: (title: string, startTime: string) => void;
   onOpenTask?: (taskId: string) => void;
   onPriority?: (taskId: string, priority: BrainTaskSnapshot["priority"]) => void;
@@ -93,9 +107,14 @@ export function DaySchedule({
   onReorderTray?: (drop: TrayReorderDrop) => void;
   locale?: UiLanguage;
 }) {
+  const scheduleRootRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [composer, setComposer] = useState<{ time: string } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const selectionAnchorId = useRef<string | null>(null);
+  const [marqueeBox, setMarqueeBox] = useState<MarqueeBox | null>(null);
+  const marqueeOrigin = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const [previewTop, setPreviewTop] = useState<number | null>(null);
   const [previewHeight, setPreviewHeight] = useState<number | null>(null);
   const [previewTime, setPreviewTime] = useState<string | null>(null);
@@ -124,6 +143,7 @@ export function DaySchedule({
     startScrollTop: number;
     startClientX: number;
     startClientY: number;
+    taskIds: string[];
   } | null>(null);
   const autoScrollRef = useRef<number | null>(null);
   const moved = useRef(false);
@@ -145,6 +165,100 @@ export function DaySchedule({
   );
   const nowMinutes = now ? taipeiMinutesOfDay(now) : null;
   const isToday = Boolean(now);
+  const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+
+  useEffect(() => {
+    const availableIds = new Set([...trayTasks, ...timedTasks, ...allDayTasks].flatMap((task) => task.id ? [task.id] : []));
+    if (selectionAnchorId.current && !availableIds.has(selectionAnchorId.current)) {
+      selectionAnchorId.current = null;
+    }
+    setSelectedTaskIds((selected) => {
+      const next = selected.filter((id) => availableIds.has(id));
+      return next.length === selected.length && next.every((id, index) => id === selected[index]) ? selected : next;
+    });
+  }, [trayTasks]);
+
+  const extendTaskSelection = (taskId: string) => {
+    const anchorId = selectionAnchorId.current;
+    const anchorIndex = anchorId ? trayTasks.findIndex((task) => task.id === anchorId) : -1;
+    const targetIndex = trayTasks.findIndex((task) => task.id === taskId);
+    if (anchorIndex < 0 || targetIndex < 0) {
+      selectionAnchorId.current = taskId;
+      setSelectedTaskIds([taskId]);
+      return;
+    }
+
+    const start = Math.min(anchorIndex, targetIndex);
+    const end = Math.max(anchorIndex, targetIndex);
+    const rangeIds = trayTasks.slice(start, end + 1).flatMap((task) => task.id ? [task.id] : []);
+    setSelectedTaskIds((selected) => [...new Set([...selected, ...rangeIds])]);
+  };
+
+  const clearTaskSelection = () => {
+    selectionAnchorId.current = null;
+    setSelectedTaskIds([]);
+    clearGlobalSelection();
+  };
+
+  const taskIdsForDrag = (taskId: string) => selectedTaskIdSet.has(taskId)
+    ? selectedTaskIds
+    : getGlobalSelectedIds(taskId);
+
+  const updateMarqueeSelection = (clientX: number, clientY: number) => {
+    const origin = marqueeOrigin.current;
+    const scheduleRoot = scheduleRootRef.current;
+    if (!origin || !scheduleRoot) return;
+
+    const left = Math.min(origin.x, clientX);
+    const top = Math.min(origin.y, clientY);
+    const right = Math.max(origin.x, clientX);
+    const bottom = Math.max(origin.y, clientY);
+    setMarqueeBox({ left, top, width: right - left, height: bottom - top });
+
+    const selectedIds = [...scheduleRoot.querySelectorAll<HTMLElement>("[data-selectable-task-id]")].flatMap((card) => {
+      const rect = card.getBoundingClientRect();
+      const intersects = rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom;
+      return intersects && card.dataset.selectableTaskId ? [card.dataset.selectableTaskId] : [];
+    });
+    setSelectedTaskIds(selectedIds);
+  };
+
+  const beginMarqueeSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!event.shiftKey || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectionAnchorId.current = null;
+    marqueeOrigin.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    setSelectedTaskIds([]);
+    setMarqueeBox({ left: event.clientX, top: event.clientY, width: 0, height: 0 });
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
+  };
+
+  const moveMarqueeSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!marqueeOrigin.current) return;
+    event.preventDefault();
+    updateMarqueeSelection(event.clientX, event.clientY);
+  };
+
+  const endMarqueeSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = marqueeOrigin.current;
+    if (!origin) return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateMarqueeSelection(event.clientX, event.clientY);
+    marqueeOrigin.current = null;
+    setMarqueeBox(null);
+    suppressClickUntil.current = performance.now() + 300;
+    try { event.currentTarget.releasePointerCapture(origin.pointerId); } catch { /* already released */ }
+  };
+
+  const cancelMarqueeSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!marqueeOrigin.current) return;
+    marqueeOrigin.current = null;
+    setMarqueeBox(null);
+    suppressClickUntil.current = performance.now() + 300;
+    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+  };
 
   useEffect(() => {
     const grid = gridRef.current;
@@ -310,7 +424,9 @@ export function DaySchedule({
       if (showTray && grid) {
         const rect = grid.getBoundingClientRect();
         if (clientX < rect.left) {
-          onClearTime?.(taskId);
+          if (origin.taskIds.length > 1 && onClearTimeBatch) onClearTimeBatch(origin.taskIds);
+          else onClearTime?.(taskId);
+          clearTaskSelection();
           return;
         }
       }
@@ -324,22 +440,28 @@ export function DaySchedule({
         const targetMinutes = snapMinutes(currentMinutes - origin.grabOffsetMinutes);
         const maxStart = 24 * 60 - Math.min(60, origin.duration);
         const clampedMinutes = Math.max(0, Math.min(maxStart, targetMinutes));
-        onSchedule(taskId, formatMinutesAsTime(clampedMinutes));
+        const time = formatMinutesAsTime(clampedMinutes);
+        if (origin.taskIds.length > 1 && onScheduleBatch) onScheduleBatch(origin.taskIds, time);
+        else onSchedule(taskId, time);
       } else {
         const deltaHours = (clientY - origin.startClientY) / PX_PER_HOUR;
-        onSchedule(
-          taskId,
-          formatMinutesAsTime(minutesFromOffset((origin.startMinutes / 60 + deltaHours) * PX_PER_HOUR)),
-        );
+        const time = formatMinutesAsTime(minutesFromOffset((origin.startMinutes / 60 + deltaHours) * PX_PER_HOUR));
+        if (origin.taskIds.length > 1 && onScheduleBatch) onScheduleBatch(origin.taskIds, time);
+        else onSchedule(taskId, time);
       }
+      clearTaskSelection();
       return;
     }
+    const scheduleLooseAt = (time: string) => {
+      if (origin.taskIds.length > 1 && onScheduleBatch) onScheduleBatch(origin.taskIds, time);
+      else onSchedule(taskId, time);
+      clearTaskSelection();
+    };
     const slot = target?.closest<HTMLElement>("[data-schedule-minutes]");
     if (slot) {
       const rect = slot.getBoundingClientRect();
       if (rect.height > 0) {
-        onSchedule(
-          taskId,
+        scheduleLooseAt(
           timeFromSlotDrop(
             Number(slot.dataset.scheduleMinutes),
             clientY,
@@ -349,7 +471,7 @@ export function DaySchedule({
         );
         return;
       }
-      onSchedule(taskId, formatMinutesAsTime(snapMinutes(Number(slot.dataset.scheduleMinutes))));
+      scheduleLooseAt(formatMinutesAsTime(snapMinutes(Number(slot.dataset.scheduleMinutes))));
       return;
     }
     if (grid) {
@@ -357,11 +479,11 @@ export function DaySchedule({
       const canvasY = clientY - gridRect.top + grid.scrollTop;
       const targetMinutes = snapMinutes((canvasY / PX_PER_HOUR) * 60);
       const clampedMinutes = Math.max(0, Math.min(24 * 60 - 15, targetMinutes));
-      onSchedule(taskId, formatMinutesAsTime(clampedMinutes));
+      scheduleLooseAt(formatMinutesAsTime(clampedMinutes));
       return;
     }
     const time = timeAtPoint(clientY, target);
-    if (time) onSchedule(taskId, time);
+    if (time) scheduleLooseAt(time);
   };
 
   const beginTimedDrag = (event: ReactPointerEvent<HTMLElement>, task: BrainTaskSnapshot) => {
@@ -374,7 +496,11 @@ export function DaySchedule({
     const gridRect = grid?.getBoundingClientRect();
     const canvasY = grid && gridRect ? (event.clientY - gridRect.top + grid.scrollTop) : (startMinutes / 60) * PX_PER_HOUR;
     const clickMinutes = (canvasY / PX_PER_HOUR) * 60;
-    const duration = task.durationMinutes ?? 30;
+    const taskIds = taskIdsForDrag(task.id);
+    const selectedTasks = [...trayTasks, ...allDayTasks, ...timedTasks].filter((item) => item.id && taskIds.includes(item.id));
+    const duration = taskIds.length > 1
+      ? selectedTasks.reduce((total, item) => total + (item.durationMinutes ?? 30), 0)
+      : task.durationMinutes ?? 30;
     const grabOffsetMinutes = Math.max(0, Math.min(duration, clickMinutes - startMinutes));
     dragOrigin.current = {
       id: task.id,
@@ -386,6 +512,7 @@ export function DaySchedule({
       startScrollTop: grid?.scrollTop ?? 0,
       startClientX: event.clientX,
       startClientY: event.clientY,
+      taskIds,
     };
     setPreviewTime(task.startTime);
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -408,6 +535,7 @@ export function DaySchedule({
       startScrollTop: grid?.scrollTop ?? 0,
       startClientX: event.clientX,
       startClientY: event.clientY,
+      taskIds: [task.id],
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -484,16 +612,21 @@ export function DaySchedule({
     event.stopPropagation();
     moved.current = false;
     const grid = gridRef.current;
+    const taskIds = taskIdsForDrag(task.id);
+    const duration = [...trayTasks, ...allDayTasks, ...timedTasks]
+      .filter((item) => item.id && taskIds.includes(item.id))
+      .reduce((total, item) => total + (item.durationMinutes ?? 30), 0);
     dragOrigin.current = {
       id: task.id,
       kind: "loose",
       fromTray: true,
       startMinutes: 0,
-      duration: task.durationMinutes ?? 30,
+      duration: duration || task.durationMinutes || 30,
       grabOffsetMinutes: 0,
       startScrollTop: grid?.scrollTop ?? 0,
       startClientX: event.clientX,
       startClientY: event.clientY,
+      taskIds,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -527,34 +660,68 @@ export function DaySchedule({
 
   return (
     <div
-      className={`day-schedule ${showTray ? "has-tray" : ""}`}
+      ref={scheduleRootRef}
+      className={`day-schedule ${showTray ? "has-tray" : ""} ${marqueeBox ? "marquee-selecting" : ""}`}
       style={showTray ? ({ ["--tray-width" as string]: `${trayWidth}px` } as CSSProperties) : undefined}
+      onPointerDownCapture={beginMarqueeSelection}
+      onPointerMove={moveMarqueeSelection}
+      onPointerUp={endMarqueeSelection}
+      onPointerCancel={cancelMarqueeSelection}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && selectedTaskIds.length > 0) {
+          event.preventDefault();
+          clearTaskSelection();
+        }
+      }}
     >
       {showTray && (
         <aside className="day-schedule-tray" data-unscheduled-tray>
           <header>
             <h3>{labels.unscheduled}</h3>
-            <small>{labels.dropToSchedule}</small>
           </header>
           {trayTasks.length === 0 ? (
             <p className="schedule-empty">{labels.empty}</p>
           ) : (
-            <div className="schedule-tray-list">
+            <div
+              className="schedule-tray-list"
+              role="listbox"
+              aria-multiselectable="true"
+            >
               {trayTasks.map((task) => (
                 <article
                   key={task.id ?? task.title}
                   data-tray-card-id={task.id ?? undefined}
-                  className={`schedule-tray-card ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""} ${trayHint?.id === task.id ? (trayHint.place === "before" ? "drop-before" : "drop-after") : ""}`}
+                  data-selectable-task-id={task.id ?? undefined}
+                  data-global-select-id={task.id ?? undefined}
+                  role="option"
+                  aria-selected={task.id ? selectedTaskIdSet.has(task.id) : false}
+                  aria-keyshortcuts="Shift+Enter Escape"
+                  className={`schedule-tray-card ${task.id && selectedTaskIdSet.has(task.id) ? "selected" : ""} ${dragId && task.id && selectedTaskIdSet.has(task.id) ? "batch-dragging" : ""} ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""} ${trayHint?.id === task.id ? (trayHint.place === "before" ? "drop-before" : "drop-after") : ""}`}
                   tabIndex={0}
-                  onClick={() => {
+                  onClick={(event) => {
                     if (performance.now() < suppressClickUntil.current) {
                       return;
                     }
+                    if (event.shiftKey && task.id) {
+                      extendTaskSelection(task.id);
+                      return;
+                    }
+                    clearTaskSelection();
                     if (task.id) onOpenTask?.(task.id);
                   }}
                   onKeyDown={(event) => {
+                    if (event.key === "Escape" && selectedTaskIds.length > 0) {
+                      event.preventDefault();
+                      clearTaskSelection();
+                      return;
+                    }
                     if ((event.key === "Enter" || event.key === " ") && task.id) {
                       event.preventDefault();
+                      if (event.shiftKey) {
+                        extendTaskSelection(task.id);
+                        return;
+                      }
+                      clearTaskSelection();
                       onOpenTask?.(task.id);
                       return;
                     }
@@ -664,11 +831,14 @@ export function DaySchedule({
               <button
                 type="button"
                 key={task.id ?? task.title}
-                className={`all-day-chip ${dragId === task.id ? "dragging" : ""}`}
+                data-selectable-task-id={task.id ?? undefined}
+                data-global-select-id={task.id ?? undefined}
+                className={`all-day-chip ${task.id && selectedTaskIdSet.has(task.id) ? "selected" : ""} ${dragId === task.id ? "dragging" : ""}`}
                 onPointerDown={(event) => {
                   if (event.button !== 0 || !task.id) return;
                   moved.current = false;
                   const grid = gridRef.current;
+                  const taskIds = taskIdsForDrag(task.id);
                   dragOrigin.current = {
                     id: task.id,
                     kind: "loose",
@@ -679,6 +849,7 @@ export function DaySchedule({
                     startScrollTop: grid?.scrollTop ?? 0,
                     startClientX: event.clientX,
                     startClientY: event.clientY,
+                    taskIds,
                   };
                   event.currentTarget.setPointerCapture(event.pointerId);
                 }}
@@ -690,6 +861,7 @@ export function DaySchedule({
                 }}
                 onClick={() => {
                   if (performance.now() < suppressClickUntil.current) return;
+                  clearTaskSelection();
                   if (task.id) onOpenTask?.(task.id);
                 }}
               >
@@ -704,6 +876,7 @@ export function DaySchedule({
           data-schedule-date={date}
           ref={gridRef}
           onClick={(event) => {
+            if (performance.now() < suppressClickUntil.current) return;
             if ((event.target as HTMLElement).closest(".timed-block, .day-schedule-composer, button, input")) return;
             const time = timeAtPoint(event.clientY, event.target as HTMLElement);
             if (time) setComposer({ time });
@@ -739,7 +912,12 @@ export function DaySchedule({
               }}
             >
               <div className="timed-block-head">
-                <strong>{previewTime ?? formatMinutesAsTime(Math.round((previewTop / PX_PER_HOUR) * 60))}</strong>
+                <strong>
+                  {previewTime ?? formatMinutesAsTime(Math.round((previewTop / PX_PER_HOUR) * 60))}
+                  {dragOrigin.current.taskIds.length > 1
+                    ? (locale === "zh-TW" ? ` · ${dragOrigin.current.taskIds.length} 項` : ` · ${dragOrigin.current.taskIds.length} tasks`)
+                    : ""}
+                </strong>
               </div>
             </div>
           )}
@@ -754,7 +932,9 @@ export function DaySchedule({
             return (
               <article
                 key={task.id}
-                className={`timed-block ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
+                data-selectable-task-id={task.id}
+                data-global-select-id={task.id}
+                className={`timed-block ${selectedTaskIdSet.has(task.id) ? "selected" : ""} ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
                 style={{ top, height, left, width }}
                 tabIndex={0}
                 onPointerDown={(event) => beginTimedDrag(event, task)}
@@ -767,6 +947,7 @@ export function DaySchedule({
                 onClick={(event) => {
                   event.stopPropagation();
                   if (performance.now() < suppressClickUntil.current) return;
+                  clearTaskSelection();
                   onOpenTask?.(task.id!);
                 }}
                 onKeyDown={(event) => {
@@ -871,6 +1052,14 @@ export function DaySchedule({
           </div>
         </div>
       </div>
+      {marqueeBox && (
+        <div
+          className="schedule-selection-marquee"
+          data-selection-marquee
+          style={{ left: marqueeBox.left, top: marqueeBox.top, width: marqueeBox.width, height: marqueeBox.height }}
+          aria-hidden="true"
+        />
+      )}
     </div>
   );
 }
