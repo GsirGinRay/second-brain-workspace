@@ -177,8 +177,10 @@ test("dragging an unscheduled today task onto an hour slot sets the start time",
   const rendered = renderToday([open], createDefaultRoutineTemplate("44444444-4444-4444-8444-444444444444"));
   try {
     const card = rendered.container.querySelector<HTMLElement>(".schedule-tray-card");
+    const handle = rendered.container.querySelector<HTMLElement>(".schedule-tray-drag-handle");
     const slot = rendered.container.querySelector<HTMLElement>('[data-schedule-minutes="600"]');
     assert.ok(card, "unscheduled tray card exists");
+    assert.ok(handle, "the card exposes an explicit drag handle");
     assert.ok(slot, "10:00 hour slot exists");
     const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
     if (typeof proto.setPointerCapture !== "function") {
@@ -188,8 +190,8 @@ test("dragging an unscheduled today task onto an hour slot sets the start time",
     const original = doc.elementFromPoint;
     doc.elementFromPoint = () => slot;
     try {
-      card!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1, clientX: 4, clientY: 4 }) as unknown as Event);
-      card!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 1, clientX: 4, clientY: 4 }) as unknown as Event);
+      handle!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1, clientX: 4, clientY: 4 }) as unknown as Event);
+      handle!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 1, clientX: 4, clientY: 4 }) as unknown as Event);
     } finally {
       doc.elementFromPoint = original;
     }
@@ -202,7 +204,7 @@ test("dragging an unscheduled today task onto an hour slot sets the start time",
   }
 });
 
-test("dragging an unscheduled task by its title schedules it on the timeline", () => {
+test("the task title no longer starts a drag that can accidentally open details", () => {
   const today = taipeiDateKey(new Date());
   const open: BrainTaskSnapshot = {
     schemaVersion: 6,
@@ -222,7 +224,7 @@ test("dragging an unscheduled task by its title schedules it on the timeline", (
   try {
     const title = rendered.container.querySelector<HTMLElement>(".schedule-tray-card .inline-title-button");
     const slot = rendered.container.querySelector<HTMLElement>('[data-schedule-minutes="600"]');
-    assert.ok(title, "the task title is rendered inside the draggable card");
+    assert.ok(title, "the task title is rendered inside the card");
     assert.ok(slot, "10:00 hour slot exists");
     const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
     if (typeof proto.setPointerCapture !== "function") {
@@ -240,10 +242,7 @@ test("dragging an unscheduled task by its title schedules it on the timeline", (
     } finally {
       doc.elementFromPoint = original;
     }
-    assert.equal(rendered.saved.length, 1, "dropping the title schedules exactly once");
-    const updated = rendered.saved[0]!.find((item) => item.id === open.id);
-    assert.equal(updated?.startTime, "10:00");
-    assert.equal(updated?.taskDate, today);
+    assert.equal(rendered.saved.length, 0, "pointer movement on the title never schedules; only the six-dot handle drags");
   } finally {
     rendered.container.remove();
   }

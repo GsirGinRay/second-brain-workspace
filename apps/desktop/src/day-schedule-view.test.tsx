@@ -237,15 +237,17 @@ test("releasing a tray card onto a sibling reorders the tray instead of clearing
       );
     });
     const cards = container.querySelectorAll<HTMLElement>("[data-tray-card-id]");
+    const handles = container.querySelectorAll<HTMLElement>(".schedule-tray-drag-handle");
     assert.equal(cards.length, 2, "two tray cards render");
+    assert.equal(handles.length, 2, "each tray card has an explicit drag handle");
     const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
     const original = doc.elementFromPoint;
     doc.elementFromPoint = () => cards[1] ?? null;
     try {
       flushSync(() => {
-        cards[0]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 3, clientX: 30, clientY: 20 }) as unknown as Event);
-        cards[0]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 3, clientX: 30, clientY: 60 }) as unknown as Event);
-        cards[0]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 3, clientX: 30, clientY: 60 }) as unknown as Event);
+        handles[0]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 3, clientX: 30, clientY: 20 }) as unknown as Event);
+        handles[0]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 3, clientX: 30, clientY: 60 }) as unknown as Event);
+        handles[0]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 3, clientX: 30, clientY: 60 }) as unknown as Event);
       });
     } finally {
       doc.elementFromPoint = original;

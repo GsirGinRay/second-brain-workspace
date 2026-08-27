@@ -120,7 +120,7 @@ import { MarkdownEditor } from "./markdown-editor";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
 import { formatMinutesAsTime, minutesFromOffset, snapMinutes, timeFromSlotDrop } from "./day-schedule";
 import { DaySchedule } from "./day-schedule-view";
-import { ProjectDetailDialog, TaskDetailDialog } from "./entity-detail-dialog";
+import { ProjectDetailDialog, TaskDetailDialog, type DetailTab } from "./entity-detail-dialog";
 import { ProjectPicker } from "./project-picker";
 import { DangerConfirmButton } from "./danger-confirm";
 import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
@@ -142,6 +142,7 @@ import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./
 import "./styles.css";
 
 type View = "today" | "calendar" | "board" | "projects" | "collections" | "sync";
+type DetailTarget = { key: string; kind: "task" | "project"; id: string };
 // Native (Rust) errors arrive over IPC as plain strings (e.g. "Io", "UnsafePath"),
 // never as Error instances, so surface whatever we actually received instead of a
 // generic fallback code that hides the real cause.
@@ -274,8 +275,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [onboardingOpen, setOnboardingOpen] = useState(() => localStorage.getItem("second-brain.onboardingCompleted") !== "true");
   const [closeGuardOpen, setCloseGuardOpen] = useState(false);
   const [selectedBoardProjectId, setSelectedBoardProjectId] = useState<string | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [selectedProjectDetailId, setSelectedProjectDetailId] = useState<string | null>(null);
+  const [detailTargets, setDetailTargets] = useState<DetailTarget[]>([]);
+  const [activeDetailKey, setActiveDetailKey] = useState<string | null>(null);
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
   const [createEntity, setCreateEntity] = useState<"project" | "collection" | null>(null);
   const [promotedTask, setPromotedTask] = useState<BrainTaskSnapshot | null>(null);
@@ -328,8 +329,26 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const promptCollections = collections.filter((item) =>
     (item.category ?? "").trim().toLowerCase().startsWith("提示詞"),
   );
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
-  const selectedProjectDetail = projects.find((project) => project.id === selectedProjectDetailId) ?? null;
+  const activeDetail = detailTargets.find((target) => target.key === activeDetailKey) ?? null;
+  const selectedTask = activeDetail?.kind === "task" ? tasks.find((task) => task.id === activeDetail.id) ?? null : null;
+  const selectedProjectDetail = activeDetail?.kind === "project" ? projects.find((project) => project.id === activeDetail.id) ?? null : null;
+  const detailTabs: DetailTab[] = detailTargets.flatMap((target) => {
+    const title = target.kind === "task"
+      ? tasks.find((task) => task.id === target.id)?.title
+      : projects.find((project) => project.id === target.id)?.name;
+    return title ? [{ key: target.key, kind: target.kind, title }] : [];
+  });
+  const openDetail = (kind: DetailTarget["kind"], id: string) => {
+    const key = `${kind}:${id}`;
+    setDetailTargets((current) => current.some((target) => target.key === key) ? current : [...current, { key, kind, id }]);
+    setActiveDetailKey(key);
+  };
+  const closeDetail = (key: string) => {
+    const index = detailTargets.findIndex((target) => target.key === key);
+    const next = detailTargets.filter((target) => target.key !== key);
+    setDetailTargets(next);
+    if (activeDetailKey === key) setActiveDetailKey(next[Math.min(Math.max(index, 0), next.length - 1)]?.key ?? null);
+  };
   const doImportPrompts = () => {
     setImportError("");
     let imported;
@@ -1353,7 +1372,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onShowCompletedChange={setCompletedVisibility}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
-        onOpenTask={setSelectedTaskId}
+        onOpenTask={(id) => openDetail("task", id)}
         onQuickAdd={() => setQuickAddOpen(true)}
         routineTemplate={routineTemplate}
         onRoutineTemplateChange={saveRoutineTemplate}
@@ -1366,7 +1385,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onShowCompletedChange={setCompletedVisibility}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
-        onOpenTask={setSelectedTaskId}
+        onOpenTask={(id) => openDetail("task", id)}
         onPromote={(task) => {
           setPromotedTask(task);
           setCreateEntity("project");
@@ -1380,7 +1399,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onShowCompletedChange={setCompletedVisibility}
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
-        onOpenTask={setSelectedTaskId}
+        onOpenTask={(id) => openDetail("task", id)}
         selectedProjectId={selectedBoardProjectId}
         onProjectFilterChange={setSelectedBoardProjectId}
         onBackToProjects={() => setView("projects")}
@@ -1389,7 +1408,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       <Projects
         projects={projects}
         tasks={tasks}
-        onOpenProject={setSelectedProjectDetailId}
+        onOpenProject={(id) => openDetail("project", id)}
         onOpenBoard={(projectId) => {
           setSelectedBoardProjectId(projectId);
           setView("board");
@@ -1592,12 +1611,13 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           onSelect={(result) => {
             setSearchOpen(false);
             if (result.kind === "project") {
-              setSelectedProjectDetailId(result.id);
+              setView("projects");
+              openDetail("project", result.id);
             } else if (result.kind === "collection") {
               setSelectedCollectionId(result.id);
               setView("collections");
             } else {
-              setSelectedTaskId(result.id);
+              openDetail("task", result.id);
             }
           }}
           actions={[
@@ -1616,8 +1636,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           projects={projects}
           locale={preferences.language}
           surface={preferences.detailSurface}
+          tabs={detailTabs}
+          activeTabKey={activeDetailKey ?? undefined}
+          onSelectTab={setActiveDetailKey}
+          onCloseTab={closeDetail}
           t={t}
-          onClose={() => setSelectedTaskId(null)}
+          onClose={() => { if (activeDetailKey) closeDetail(activeDetailKey); }}
           onCreateProject={(name) => createProject(name, null, null)}
           onSave={async (next) => {
             const prepared = { ...next, completedAt: next.status === "done" ? (next.completedAt ?? taipeiDateKey()) : null };
@@ -1628,7 +1652,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
                 : changed,
             );
           }}
-          onDelete={(task) => void permanentlyDeleteTask(task)}
+          onDelete={(task) => { void permanentlyDeleteTask(task); if (activeDetailKey) closeDetail(activeDetailKey); }}
         />
       )}
       {selectedProjectDetail && (
@@ -1643,8 +1667,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             .sort((a, b) => a.rank.localeCompare(b.rank))}
           locale={preferences.language}
           surface={preferences.detailSurface}
+          tabs={detailTabs}
+          activeTabKey={activeDetailKey ?? undefined}
+          onSelectTab={setActiveDetailKey}
+          onCloseTab={closeDetail}
           t={t}
-          onClose={() => setSelectedProjectDetailId(null)}
+          onClose={() => { if (activeDetailKey) closeDetail(activeDetailKey); }}
           onAddProjectTask={(title) => {
             const base = newTask(title, { taskDate: undefined });
             const bound = {
@@ -1658,7 +1686,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           onToggleProjectTask={(task) => void persistLocal(tasks.map((item) => item.id === task.id
             ? { ...item, status: item.status === "done" ? "todo" as const : "done" as const, completedAt: item.status === "done" ? null : taipeiDateKey() }
             : item))}
-          onOpenProjectTask={(taskId) => setSelectedTaskId(taskId)}
+          onOpenProjectTask={(taskId) => openDetail("task", taskId)}
           onDeleteProjectTask={(task) => void permanentlyDeleteTask(task)}
           onSave={(next) => persistLocal(tasks, projects.map((project) => {
             if (project.id === next.id) return next;
@@ -1666,7 +1694,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           }))}
           onOpenBoard={() => {
             setSelectedBoardProjectId(selectedProjectDetail.id);
-            setSelectedProjectDetailId(null);
+            if (activeDetailKey) closeDetail(activeDetailKey);
             setView("board");
           }}
           onComplete={() => {
@@ -1677,7 +1705,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           }}
           onReopen={() => void persistLocal(tasks, projects.map((project) => project.id === selectedProjectDetail.id ? { ...project, status: "active", completedAt: null, focusToday: false } : project))}
           onArchive={() => void persistLocal(tasks, projects.map((project) => project.id === selectedProjectDetail.id ? { ...project, status: "archived", focusToday: false } : project))}
-          onDelete={() => void permanentlyDeleteProject(selectedProjectDetail)}
+          onDelete={() => { void permanentlyDeleteProject(selectedProjectDetail); if (activeDetailKey) closeDetail(activeDetailKey); }}
         />
       )}
       {createEntity && (
@@ -2218,6 +2246,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
         }}
       />
     </section>
+    <button className="today-quick-add-fab" type="button" onClick={onQuickAdd} aria-label={t("app.quickAdd")} title={t("app.quickAdd")}><Plus aria-hidden="true" /></button>
     {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} projects={projects} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} onPickProject={pickProject} />)}</div></details>}
   </section>;
 }
@@ -2549,7 +2578,7 @@ function QuickAddModal({
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [projectId, setProjectId] = useState("");
-  const [ideaInbox, setIdeaInbox] = useState(true);
+  const [ideaInbox, setIdeaInbox] = useState(false);
   const [taskDate, setTaskDate] = useState(taipeiDateKey());
   const [startTime, setStartTime] = useState("");
   const [durationMinutes, setDurationMinutes] = useState(30);
@@ -2625,7 +2654,10 @@ function QuickAddModal({
             }}
           />
         </label>
-        <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} />
+        <div className="quick-content-field">
+          <span>{t("quick.content")}</span>
+          <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} />
+        </div>
         {templates.length > 0 && (
           <div className="quick-template-row">
             <span>{preferences.language === "zh-TW" ? "範本" : "Template"}</span>

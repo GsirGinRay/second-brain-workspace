@@ -478,6 +478,26 @@ export function DaySchedule({
     }
   };
 
+  const beginLooseDrag = (event: ReactPointerEvent<HTMLElement>, task: BrainTaskSnapshot) => {
+    if (event.button !== 0 || !task.id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    moved.current = false;
+    const grid = gridRef.current;
+    dragOrigin.current = {
+      id: task.id,
+      kind: "loose",
+      fromTray: true,
+      startMinutes: 0,
+      duration: task.durationMinutes ?? 30,
+      grabOffsetMinutes: 0,
+      startScrollTop: grid?.scrollTop ?? 0,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
   // Drag the splitter between the tray and the timeline to set the tray width.
   // The grid uses a CSS custom property, so the change is instant; the value
   // is clamped to keep both columns usable and persisted for the next visit.
@@ -526,29 +546,6 @@ export function DaySchedule({
                   data-tray-card-id={task.id ?? undefined}
                   className={`schedule-tray-card ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""} ${trayHint?.id === task.id ? (trayHint.place === "before" ? "drop-before" : "drop-after") : ""}`}
                   tabIndex={0}
-                  onPointerDown={(event) => {
-                    if (event.button !== 0 || !task.id || (event.target as HTMLElement).closest("button,input,select,textarea,a")) return;
-                    moved.current = false;
-                    const grid = gridRef.current;
-                    dragOrigin.current = {
-                      id: task.id,
-                      kind: "loose",
-                      fromTray: true,
-                      startMinutes: 0,
-                      duration: task.durationMinutes ?? 30,
-                      grabOffsetMinutes: 0,
-                      startScrollTop: grid?.scrollTop ?? 0,
-                      startClientX: event.clientX,
-                      startClientY: event.clientY,
-                    };
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                  }}
-                  onPointerMove={moveLooseDrag}
-                  onPointerUp={(event) => finishDrag(event, task.id)}
-                  onPointerCancel={resetDrag}
-                  onLostPointerCapture={() => {
-                    if (dragOrigin.current?.id === task.id) resetDrag();
-                  }}
                   onClick={() => {
                     if (performance.now() < suppressClickUntil.current) {
                       return;
@@ -572,7 +569,20 @@ export function DaySchedule({
                     }
                   }}
                 >
-                  <GripVertical aria-hidden="true" />
+                  <button
+                    type="button"
+                    className="schedule-tray-drag-handle"
+                    aria-label={locale === "zh-TW" ? `拖曳 ${task.title}` : `Drag ${task.title}`}
+                    title={locale === "zh-TW" ? "拖曳任務" : "Drag task"}
+                    onClick={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => beginLooseDrag(event, task)}
+                    onPointerMove={moveLooseDrag}
+                    onPointerUp={(event) => finishDrag(event, task.id)}
+                    onPointerCancel={resetDrag}
+                    onLostPointerCapture={() => {
+                      if (dragOrigin.current?.id === task.id) resetDrag();
+                    }}
+                  ><GripVertical aria-hidden="true" /></button>
                   <div className="schedule-tray-body">
                     <div className="schedule-tray-title-row">
                       {onPriority && task.id ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}

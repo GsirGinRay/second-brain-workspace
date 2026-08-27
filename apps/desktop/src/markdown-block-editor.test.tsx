@@ -4,7 +4,7 @@ import React, { act } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
-import { MarkdownBlockEditor } from "./markdown-block-editor";
+import { deriveBlockKind, MarkdownBlockEditor, parseStyledBlock } from "./markdown-block-editor";
 
 const window = new Window({ url: "http://localhost/" });
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -16,6 +16,31 @@ globals.HTMLElement = window.HTMLElement;
 globals.Node = window.Node;
 globals.Event = window.Event;
 globals.MouseEvent = window.MouseEvent;
+
+test("Markdown markers identify their visual block type immediately", () => {
+  assert.deepEqual(deriveBlockKind("# "), { kind: "heading", level: 1 });
+  assert.deepEqual(deriveBlockKind("- "), { kind: "bullet" });
+  assert.deepEqual(deriveBlockKind("1. "), { kind: "ordered" });
+  assert.deepEqual(deriveBlockKind("> "), { kind: "quote" });
+  assert.deepEqual(deriveBlockKind("---"), { kind: "divider" });
+  assert.deepEqual(deriveBlockKind("```"), { kind: "code" });
+});
+
+test("structural Markdown markers stay in storage but disappear from the live field", () => {
+  const heading = renderEditor("# The idea");
+  try {
+    assert.equal(openTextarea(heading.container, 0).value, "The idea");
+  } finally {
+    heading.container.remove();
+  }
+  const bullet = renderEditor("- First point");
+  try {
+    assert.equal(openTextarea(bullet.container, 0).value, "First point");
+    assert.equal(bullet.container.querySelector(".markdown-structural-edit-row>span")?.textContent, "•");
+  } finally {
+    bullet.container.remove();
+  }
+});
 globals.PointerEvent = window.PointerEvent;
 // Continuation/caret restores are deferred by one frame.
 globals.requestAnimationFrame = (callback: (time: number) => void) => setTimeout(callback, 0);
@@ -145,11 +170,13 @@ test("deleting a block is undoable inside the editor", () => {
   }
 });
 
-test("an empty body shows a hint instead of a blank canvas", () => {
+test("an empty body does not show instructional copy", () => {
   const rendered = renderEditor("");
   try {
-    assert.ok(rendered.container.querySelector(".markdown-block-empty"), "empty state hint is shown");
-    assert.ok(rendered.container.querySelector(".markdown-block-add"), "add block action remains available");
+    assert.equal(rendered.container.querySelector(".markdown-block-empty"), null);
+    assert.doesNotMatch(rendered.container.textContent ?? "", /尚無詳細內容|No detail yet/);
+    assert.equal(rendered.container.querySelectorAll(".markdown-block").length, 1, "an editable blank block is ready immediately");
+    assert.match(rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")?.placeholder ?? "", /輸入文字/);
   } finally {
     rendered.container.remove();
   }
@@ -180,31 +207,69 @@ function setCaret(textarea: HTMLTextAreaElement, start: number) {
   Object.defineProperty(textarea, "selectionEnd", { value: start, configurable: true });
 }
 
-test("typing `- [ ] ` plus space turns the block into a live checklist", () => {
+test("a complete checkbox marker immediately exposes a live checkbox and content field", () => {
   const rendered = renderEditor("- [ ]");
   try {
+    assert.ok(rendered.container.querySelector('.markdown-task-block input[type="checkbox"]'), "the checkbox is visible without Enter");
     const textarea = openTextarea(rendered.container, 0);
-    // The rule fires on the keypress of the finishing space, before it lands.
-    setCaret(textarea, "- [ ]".length);
-    pressKey(textarea, { key: " " });
-    assert.equal(rendered.changes.at(-1), "- [ ] ", "the checklist shell is committed");
-    assert.ok(
-      rendered.container.querySelector(".markdown-task-block"),
-      "an interactive checkbox row appears without leaving the canvas",
-    );
+    assert.ok(textarea.classList.contains("markdown-task-input"), "editing keeps the live checkbox beside the content field");
+    assert.equal(textarea.value, "", "the Markdown marker is hidden from the task content field");
   } finally {
     rendered.container.remove();
   }
 });
 
-test("Enter on a todo item continues the list with the same marker", () => {
+test("slash commands transform a block with the keyboard", () => {
+  const rendered = renderEditor("/h1");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    assert.ok(rendered.container.querySelector(".markdown-slash-menu"));
+    pressKey(textarea, { key: "Enter" });
+    assert.equal(rendered.changes.at(-1), "# ");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("block background colors persist in an ignored Markdown comment", () => {
+  const rendered = renderEditor("The idea /blue background");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    pressKey(textarea, { key: "Enter" });
+    const saved = rendered.changes.at(-1) ?? "";
+    assert.deepEqual(parseStyledBlock(saved), {
+      content: "The idea",
+      style: { color: "default", background: "blue" },
+    });
+    assert.equal(rendered.container.querySelector(".markdown-block")?.getAttribute("data-block-background"), "blue");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("Enter on a todo item creates a separately draggable checkbox block", () => {
   const rendered = renderEditor("- [ ] 撰寫初稿");
   try {
     const textarea = openTextarea(rendered.container, 0);
     const end = "- [ ] 撰寫初稿".length;
     setCaret(textarea, end);
     pressKey(textarea, { key: "Enter" });
-    assert.equal(rendered.changes.at(-1), "- [ ] 撰寫初稿\n- [ ] ", "the next line keeps the todo format");
+    assert.equal(rendered.changes.at(-1), "- [ ] 撰寫初稿\n\n- [ ] ", "the next checkbox is its own Markdown block");
+    assert.equal(rendered.container.querySelectorAll("[data-markdown-block-id]").length, 2, "both checkboxes have independent drag handles");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("Enter continues lists as separately draggable blocks", () => {
+  const rendered = renderEditor("1. First");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    setCaret(textarea, "First".length);
+    pressKey(textarea, { key: "Enter" });
+    assert.equal(rendered.changes.at(-1), "1. First\n\n2. ");
+    assert.equal(rendered.container.querySelectorAll("[data-markdown-block-id]").length, 2);
+    assert.equal(rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")?.value, "");
   } finally {
     rendered.container.remove();
   }

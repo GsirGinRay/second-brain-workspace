@@ -124,7 +124,8 @@ test("project detail opens an empty live canvas and keeps the board action separ
       />,
     ));
     assert.ok(container.querySelector(".markdown-block-editor"));
-    assert.equal(container.querySelectorAll(".markdown-block").length, 0);
+    assert.equal(container.querySelectorAll(".markdown-block").length, 1, "an empty project starts with one editable block");
+    assert.ok(container.querySelector(".markdown-block-input"));
     const openBoard = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("project.action.open"));
     assert.ok(openBoard);
     flushSync(() => openBoard!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
@@ -206,6 +207,7 @@ test("the task detail delete button arms in place before deleting", () => {
 
 test("panel detail is non-modal when wide and becomes modal when the viewport narrows", async () => {
   const originalWidth = window.innerWidth;
+  let closed = false;
   Object.defineProperty(window, "innerWidth", { value: 1200, writable: true, configurable: true });
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -218,7 +220,7 @@ test("panel detail is non-modal when wide and becomes modal when the viewport na
         locale="zh-TW"
         surface="panel"
         t={(key) => key}
-        onClose={() => undefined}
+        onClose={() => { closed = true; }}
         onSave={() => true}
         onDelete={() => undefined}
       />,
@@ -226,6 +228,12 @@ test("panel detail is non-modal when wide and becomes modal when the viewport na
     const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
     assert.ok(dialog.classList.contains("detail-dialog-panel"));
     assert.equal(dialog.getAttribute("aria-modal"), null, "wide side panel leaves the surrounding view available");
+
+    await act(async () => {
+      document.body.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }) as unknown as Event);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(closed, true, "clicking the main workspace closes the docked panel after autosave");
 
     await act(async () => {
       Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });

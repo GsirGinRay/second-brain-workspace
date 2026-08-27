@@ -7,6 +7,31 @@ interface MarkdownBlock {
   source: string;
 }
 
+type BlockColor = "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red";
+
+interface BlockStyle {
+  color: BlockColor;
+  background: BlockColor;
+}
+
+const DEFAULT_BLOCK_STYLE: BlockStyle = { color: "default", background: "default" };
+const BLOCK_STYLE_MARKER = /\n?<!-- sbw:block-style color=(default|gray|brown|orange|yellow|green|blue|purple|pink|red) background=(default|gray|brown|orange|yellow|green|blue|purple|pink|red) -->\s*$/;
+
+/** Block colours live in an ignored HTML comment so ordinary Markdown readers stay clean. */
+export function parseStyledBlock(source: string): { content: string; style: BlockStyle } {
+  const match = source.match(BLOCK_STYLE_MARKER);
+  if (!match) return { content: source, style: DEFAULT_BLOCK_STYLE };
+  return {
+    content: source.slice(0, match.index).replace(/\n$/, ""),
+    style: { color: match[1] as BlockColor, background: match[2] as BlockColor },
+  };
+}
+
+function withBlockStyle(content: string, style: BlockStyle): string {
+  if (style.color === "default" && style.background === "default") return content;
+  return `${content}${content ? "\n" : ""}<!-- sbw:block-style color=${style.color} background=${style.background} -->`;
+}
+
 const TASK_LINE = /^(\s*[-*+]\s+)\[([ xX])\](\s*.*)$/;
 
 /**
@@ -15,13 +40,6 @@ const TASK_LINE = /^(\s*[-*+]\s+)\[([ xX])\](\s*.*)$/;
  * are copied literally because rendering normalises them anyway.
  */
 const LIST_PREFIX = /^(\s*)([-*+][ \t]+\[[ xX]\][ \t]?|[-*+][ \t]+|>[ \t]?|[0-9]+[.、][ \t]*)(.*)$/;
-
-/**
- * Typing `- [ ] ` (or `[ ] `) followed by a space at the start of a block
- * converts it into a live checklist immediately — the one trigger whose empty
- * shell is itself meaningful UI.
- */
-const TODO_INPUT_RULE = /^(\s*)([-*+][ \t]+)?\[[ xX]\][ \t]$/;
 
 /** Structural edits are undoable inside the editor; textareas keep native undo. */
 const EDITOR_HISTORY_LIMIT = 50;
@@ -53,7 +71,8 @@ export function splitMarkdownBlocks(value: string): string[] {
 }
 
 function createBlocks(value: string): MarkdownBlock[] {
-  return splitMarkdownBlocks(value).map((source) => ({ id: newBlockId(), source }));
+  const created = splitMarkdownBlocks(value).map((source) => ({ id: newBlockId(), source }));
+  return created.length > 0 ? created : [{ id: newBlockId(), source: "" }];
 }
 
 function serializeBlocks(blocks: MarkdownBlock[]): string {
@@ -64,7 +83,7 @@ function serializeBlocks(blocks: MarkdownBlock[]): string {
 }
 
 function isTaskBlock(source: string): boolean {
-  const lines = source.split("\n");
+  const lines = parseStyledBlock(source).content.split("\n");
   return lines.length > 0 && lines.every((line) => TASK_LINE.test(line));
 }
 
@@ -91,10 +110,14 @@ export interface DerivedBlock {
  * truth — they just drive the visual treatment.
  */
 export function deriveBlockKind(source: string): DerivedBlock {
+  source = parseStyledBlock(source).content;
   const lines = source.split("\n");
   const first = lines[0] ?? "";
   if (isTaskBlock(source)) return { kind: "task" };
   if (lines.length === 1 && /^---+$/.test(first.trim())) return { kind: "divider" };
+  const trimmed = source.trim();
+  if ((trimmed.startsWith("```") && trimmed.endsWith("```") && lines.length > 1)
+    || (trimmed.startsWith("~~~") && trimmed.endsWith("~~~") && lines.length > 1)) return { kind: "code" };
   if (lines.length === 1) {
     const heading = first.match(/^(\s*)(#{1,6})\s+(.*)$/);
     if (heading) return { kind: "heading", level: heading[2]!.length as 1 | 2 | 3 | 4 | 5 | 6 };
@@ -127,6 +150,60 @@ export function parseListPrefix(line: string): ParsedListPrefix | null {
   return { indent: match[1] ?? "", marker: match[2] ?? "", content: match[3] ?? "" };
 }
 
+type SlashAction =
+  | { kind: "turn"; value: "text" | "h1" | "h2" | "h3" | "todo" | "bullet" | "number" | "quote" | "divider" }
+  | { kind: "color" | "background"; value: BlockColor };
+
+interface SlashCommand {
+  id: string;
+  label: string;
+  hint: string;
+  keywords: string;
+  action: SlashAction;
+}
+
+function stripBlockPrefix(content: string): string {
+  return content
+    .replace(/^\s*#{1,6}\s+/, "")
+    .replace(/^\s*[-*+]\s+\[[ xX]\]\s*/, "")
+    .replace(/^\s*[-*+]\s+/, "")
+    .replace(/^\s*\d+[.)、]\s+/, "")
+    .replace(/^\s*>\s*/, "");
+}
+
+function trailingSlash(content: string): { start: number; query: string } | null {
+  const match = content.match(/(?:^|\s)\/([^/\n]*)$/);
+  if (!match || match.index === undefined) return null;
+  return { start: match.index + match[0].indexOf("/"), query: (match[1] ?? "").trim().toLowerCase() };
+}
+
+interface EditablePresentation {
+  value: string;
+  sourcePrefix: string;
+  marker: string;
+}
+
+function editablePresentation(content: string, derived: DerivedBlock): EditablePresentation {
+  if (content.includes("\n")) return { value: content, sourcePrefix: "", marker: "" };
+  if (derived.kind === "heading") {
+    const match = content.match(/^(\s*#{1,6}\s+)(.*)$/);
+    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, marker: "" };
+  }
+  if (derived.kind === "bullet") {
+    const match = content.match(/^(\s*[-*+]\s+)(.*)$/);
+    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, marker: "•" };
+  }
+  if (derived.kind === "ordered") {
+    const match = content.match(/^(\s*\d+[.)、]\s+)(.*)$/);
+    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, marker: match[1]!.trim() };
+  }
+  if (derived.kind === "quote") {
+    const match = content.match(/^(\s*>\s*)(.*)$/);
+    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, marker: "" };
+  }
+  return { value: content, sourcePrefix: "", marker: "" };
+}
+
 export function MarkdownBlockEditor({
   value,
   onChange,
@@ -138,19 +215,46 @@ export function MarkdownBlockEditor({
 }) {
   const zh = locale === "zh-TW";
   const [blocks, setBlocks] = useState<MarkdownBlock[]>(() => createBlocks(value));
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(() => value.trim() ? null : blocks[0]?.id ?? null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [activeCommand, setActiveCommand] = useState(0);
+  const [blockMenuId, setBlockMenuId] = useState<string | null>(null);
+  const [dismissedSlash, setDismissedSlash] = useState<string | null>(null);
   // Index of the insertion gap currently highlighted while dragging (0 = before the
   // first block, blocks.length = after the last one).
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const dragRef = useRef<{ id: string; startY: number; moved: boolean } | null>(null);
+  const suppressHandleClickRef = useRef(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const historyRef = useRef<{ past: string[]; future: string[] }>({ past: [], future: [] });
 
+  const colorNames: Array<[BlockColor, string, string]> = zh
+    ? [["default", "預設", "default"], ["gray", "灰色", "gray grey"], ["brown", "棕色", "brown"], ["orange", "橘色", "orange"], ["yellow", "黃色", "yellow"], ["green", "綠色", "green"], ["blue", "藍色", "blue"], ["purple", "紫色", "purple"], ["pink", "粉色", "pink"], ["red", "紅色", "red"]]
+    : [["default", "Default", "default"], ["gray", "Gray", "gray grey"], ["brown", "Brown", "brown"], ["orange", "Orange", "orange"], ["yellow", "Yellow", "yellow"], ["green", "Green", "green"], ["blue", "Blue", "blue"], ["purple", "Purple", "purple"], ["pink", "Pink", "pink"], ["red", "Red", "red"]];
+  const slashCommands: SlashCommand[] = [
+    { id: "text", label: zh ? "文字" : "Text", hint: zh ? "一般文字區塊" : "Plain text block", keywords: "text plain 文字 段落", action: { kind: "turn", value: "text" } },
+    { id: "h1", label: zh ? "標題 1" : "Heading 1", hint: zh ? "大型標題" : "Large heading", keywords: "h1 heading title 標題", action: { kind: "turn", value: "h1" } },
+    { id: "h2", label: zh ? "標題 2" : "Heading 2", hint: zh ? "中型標題" : "Medium heading", keywords: "h2 heading subtitle 標題", action: { kind: "turn", value: "h2" } },
+    { id: "h3", label: zh ? "標題 3" : "Heading 3", hint: zh ? "小型標題" : "Small heading", keywords: "h3 heading 標題", action: { kind: "turn", value: "h3" } },
+    { id: "todo", label: zh ? "待辦清單" : "To-do list", hint: zh ? "可勾選的工作項目" : "Track a task with a checkbox", keywords: "todo checkbox task 待辦 核取", action: { kind: "turn", value: "todo" } },
+    { id: "bullet", label: zh ? "項目符號清單" : "Bulleted list", hint: zh ? "建立簡單清單" : "Create a simple list", keywords: "bullet list 清單 項目", action: { kind: "turn", value: "bullet" } },
+    { id: "number", label: zh ? "編號清單" : "Numbered list", hint: zh ? "依序排列項目" : "Create an ordered list", keywords: "number ordered list 編號 清單", action: { kind: "turn", value: "number" } },
+    { id: "quote", label: zh ? "引言" : "Quote", hint: zh ? "醒目引用文字" : "Capture a quote", keywords: "quote 引言 引用", action: { kind: "turn", value: "quote" } },
+    { id: "divider", label: zh ? "分隔線" : "Divider", hint: zh ? "分隔內容區段" : "Visually divide blocks", keywords: "divider rule line 分隔線", action: { kind: "turn", value: "divider" } },
+    ...colorNames.map(([value, name, keywords]) => ({ id: `color-${value}`, label: zh ? `${name}文字` : `${name} text`, hint: zh ? "設定整個區塊的文字顏色" : "Color this block's text", keywords: `${keywords} color text 顏色 文字`, action: { kind: "color" as const, value } })),
+    ...colorNames.map(([value, name, keywords]) => ({ id: `background-${value}`, label: zh ? `${name}底色` : `${name} background`, hint: zh ? "設定整個區塊的背景色" : "Highlight this block", keywords: `${keywords} background highlight 底色 背景`, action: { kind: "background" as const, value } })),
+  ];
+
+  const filteredCommands = (query: string) => slashCommands.filter((command) => {
+    const haystack = `${command.label} ${command.keywords}`.toLowerCase();
+    return !query || query.split(/\s+/).every((part) => haystack.includes(part));
+  }).slice(0, 12);
+
   useEffect(() => {
     if (value !== serializeBlocks(blocks)) {
-      setBlocks(createBlocks(value));
-      setEditingId(null);
+      const next = createBlocks(value);
+      setBlocks(next);
+      setEditingId(value.trim() ? null : next[0]?.id ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
@@ -200,6 +304,57 @@ export function MarkdownBlockEditor({
   const updateBlock = (id: string, source: string) => {
     commit(blocks.map((block) => block.id === id ? { ...block, source } : block));
   };
+  const updateBlockContent = (block: MarkdownBlock, content: string, style = parseStyledBlock(block.source).style) => {
+    updateBlock(block.id, withBlockStyle(content, style));
+  };
+  const applyBlockStyle = (block: MarkdownBlock, style: BlockStyle) => {
+    pushHistory();
+    updateBlockContent(block, parseStyledBlock(block.source).content, style);
+    setBlockMenuId(null);
+  };
+  const runSlashCommand = (block: MarkdownBlock, command: SlashCommand) => {
+    const styled = parseStyledBlock(block.source);
+    const slash = trailingSlash(styled.content);
+    const before = (slash ? styled.content.slice(0, slash.start) : styled.content).trimEnd();
+    pushHistory();
+    if (command.action.kind === "color" || command.action.kind === "background") {
+      const style = { ...styled.style, [command.action.kind]: command.action.value };
+      updateBlockContent(block, before, style);
+      setActiveCommand(0);
+      return;
+    }
+    const plain = stripBlockPrefix(before);
+    const next = command.action.value === "text" ? plain
+      : command.action.value === "h1" ? `# ${plain}`
+      : command.action.value === "h2" ? `## ${plain}`
+      : command.action.value === "h3" ? `### ${plain}`
+      : command.action.value === "todo" ? `- [ ] ${plain}`
+      : command.action.value === "bullet" ? `- ${plain}`
+      : command.action.value === "number" ? `1. ${plain}`
+      : command.action.value === "quote" ? `> ${plain}`
+      : "---";
+    updateBlockContent(block, next);
+    setActiveCommand(0);
+    if (command.action.value === "divider") setEditingId(null);
+  };
+  const updateTypedBlock = (block: MarkdownBlock, source: string) => {
+    // Marker-only blocks become their final visual form as soon as the last
+    // marker character lands. Heading/list/quote markers already restyle the
+    // live textarea on their trailing space through deriveBlockKind().
+    if (/^\s*```$/.test(source)) {
+      pushHistory();
+      updateBlockContent(block, "```\n\n```");
+      setEditingId(null);
+      return;
+    }
+    if (/^\s*---$/.test(source)) {
+      pushHistory();
+      updateBlockContent(block, "---");
+      setEditingId(null);
+      return;
+    }
+    updateBlockContent(block, source);
+  };
   const removeBlock = (id: string) => {
     if (!blocks.some((block) => block.id === id)) return;
     pushHistory();
@@ -210,9 +365,10 @@ export function MarkdownBlockEditor({
     const block = blocks.find((item) => item.id === blockId);
     if (!block) return;
     pushHistory();
-    const lines = block.source.split("\n");
+    const styled = parseStyledBlock(block.source);
+    const lines = styled.content.split("\n");
     lines[lineIndex] = lines[lineIndex]!.replace(TASK_LINE, (_line, prefix: string, _checked: string, content: string) => `${prefix}[${checked ? "x" : " "}]${content}`);
-    updateBlock(blockId, lines.join("\n"));
+    updateBlock(blockId, withBlockStyle(lines.join("\n"), styled.style));
   };
   const moveBlock = (id: string, delta: -1 | 1) => {
     const from = blocks.findIndex((block) => block.id === id);
@@ -221,11 +377,21 @@ export function MarkdownBlockEditor({
     pushHistory();
     commit(moveItem(blocks, from, to));
   };
+  const duplicateBlock = (id: string) => {
+    const index = blocks.findIndex((block) => block.id === id);
+    if (index < 0) return;
+    pushHistory();
+    const copy = { id: newBlockId(), source: blocks[index]!.source };
+    const next = [...blocks];
+    next.splice(index + 1, 0, copy);
+    commit(next);
+    setBlockMenuId(null);
+  };
 
   /** Leaves edit mode, dropping the block when it ended up empty. */
   const finishEditing = (id: string) => {
     const block = blocks.find((item) => item.id === id);
-    if (block && !block.source.trim() && blocks.length > 1) {
+    if (block && !parseStyledBlock(block.source).content.trim() && blocks.length > 1) {
       pushHistory();
       commit(blocks.filter((item) => item.id !== id));
     }
@@ -248,61 +414,76 @@ export function MarkdownBlockEditor({
   const handleTextKeydown = (
     event: ReactKeyboardEvent<HTMLTextAreaElement>,
     block: MarkdownBlock,
+    visibleOffset = 0,
   ): boolean => {
     const textarea = event.currentTarget;
+    const source = parseStyledBlock(block.source).content;
     // Chinese/Japanese IME confirmations arrive as Enter with isComposing set;
     // they must never be read as structural edits.
     if (event.nativeEvent.isComposing || (event.nativeEvent as { keyCode?: number }).keyCode === 229) return false;
+
+    const slash = trailingSlash(source);
+    const commandOptions = slash ? filteredCommands(slash.query) : [];
+    const slashKey = slash ? `${block.id}:${source}` : null;
+    if (slash && slashKey !== dismissedSlash && commandOptions.length > 0) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        setActiveCommand((current) => (current + delta + commandOptions.length) % commandOptions.length);
+        return true;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        runSlashCommand(block, commandOptions[Math.min(activeCommand, commandOptions.length - 1)]!);
+        return true;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDismissedSlash(slashKey);
+        return true;
+      }
+    }
+
+    if (event.key === "Backspace" && visibleOffset > 0 && textarea.selectionStart === 0 && textarea.selectionEnd === 0 && source.length === visibleOffset) {
+      event.preventDefault();
+      pushHistory();
+      updateBlockContent(block, "");
+      return true;
+    }
 
     // Inline wrapping shortcuts.
     if ((event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "b" || event.key.toLowerCase() === "i")) {
       event.preventDefault();
       const prefix = event.key.toLowerCase() === "b" ? "**" : "*";
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const selected = block.source.slice(start, end);
+      const start = textarea.selectionStart + visibleOffset;
+      const end = textarea.selectionEnd + visibleOffset;
+      const selected = source.slice(start, end);
       const placeholder = selected || (prefix === "**" ? (zh ? "粗體文字" : "bold text") : (zh ? "斜體文字" : "italic text"));
       pushHistory();
-      updateBlock(block.id, block.source.slice(0, start) + prefix + placeholder + prefix + block.source.slice(end));
+      updateBlockContent(block, source.slice(0, start) + prefix + placeholder + prefix + source.slice(end));
       requestAnimationFrame(() => {
         textarea.focus();
-        textarea.setSelectionRange(start + prefix.length, start + prefix.length + placeholder.length);
+        textarea.setSelectionRange(start + prefix.length - visibleOffset, start + prefix.length + placeholder.length - visibleOffset);
       });
       return true;
     }
 
     if (event.ctrlKey || event.metaKey || event.altKey) return false;
 
-    // `- [ ] ` + space becomes a live checklist straight away.
-    if (event.key === " ") {
-      const caret = textarea.selectionStart;
-      const lineStart = block.source.lastIndexOf("\n", caret - 1) + 1;
-      const prospective = block.source.slice(lineStart, caret) + " ";
-      if (TODO_INPUT_RULE.test(prospective) && caret === block.source.length) {
-        const normalized = `${prospective.trimEnd()} `;
-        event.preventDefault();
-        pushHistory();
-        updateBlock(block.id, block.source.slice(0, lineStart) + normalized.replace(/^[-*+][ \t]+/, "- "));
-        setEditingId(null);
-        return true;
-      }
-      return false;
-    }
-
     if (event.key !== "Enter" || event.shiftKey) return false;
 
-    const caret = textarea.selectionStart;
-    const lineStart = block.source.lastIndexOf("\n", caret - 1) + 1;
-    const lineEndIndex = block.source.indexOf("\n", caret);
-    const lineEnd = lineEndIndex === -1 ? block.source.length : lineEndIndex;
-    const line = block.source.slice(lineStart, lineEnd);
+    const caret = textarea.selectionStart + visibleOffset;
+    const lineStart = source.lastIndexOf("\n", caret - 1) + 1;
+    const lineEndIndex = source.indexOf("\n", caret);
+    const lineEnd = lineEndIndex === -1 ? source.length : lineEndIndex;
+    const line = source.slice(lineStart, lineEnd);
     const relCaret = caret - lineStart;
 
     // ``` + Enter opens a fenced code block.
     if (line.trim() === "```") {
       event.preventDefault();
       pushHistory();
-      updateBlock(block.id, `${block.source.slice(0, lineStart)}\`\`\`\n\n\`\`\``);
+      updateBlockContent(block, `${source.slice(0, lineStart)}\`\`\`\n\n\`\`\``);
       setEditingId(null);
       return true;
     }
@@ -311,7 +492,7 @@ export function MarkdownBlockEditor({
     if (/^\s*---\s*$/.test(line)) {
       event.preventDefault();
       pushHistory();
-      updateBlock(block.id, `${block.source.slice(0, lineStart)}---`);
+      updateBlockContent(block, `${source.slice(0, lineStart)}---`);
       setEditingId(null);
       return true;
     }
@@ -322,27 +503,27 @@ export function MarkdownBlockEditor({
       if (parsed.content.trim() === "") {
         // Second Enter on an empty item drops the marker: back to plain text.
         pushHistory();
-        const stripped = block.source.slice(0, lineStart) + parsed.indent + block.source.slice(lineEnd);
-        updateBlock(block.id, stripped);
+        const stripped = source.slice(0, lineStart) + parsed.indent + source.slice(lineEnd);
+        updateBlockContent(block, stripped);
         requestAnimationFrame(() => {
           textarea.focus();
-          textarea.setSelectionRange(lineStart + parsed.indent.length, lineStart + parsed.indent.length);
+          const position = Math.max(0, lineStart + parsed.indent.length - visibleOffset);
+          textarea.setSelectionRange(position, position);
         });
       } else {
-        // Enter continues the list with the same marker.
+        // Each Notion-style list row remains an independently draggable block.
         pushHistory();
         const before = line.slice(0, relCaret);
         const after = line.slice(relCaret);
-        const insertion = `\n${parsed.indent}${parsed.marker}`;
-        updateBlock(
-          block.id,
-          block.source.slice(0, lineStart) + before + insertion + after + block.source.slice(lineEnd),
-        );
-        const anchor = lineStart + before.length + insertion.length;
-        requestAnimationFrame(() => {
-          textarea.focus();
-          textarea.setSelectionRange(anchor, anchor);
-        });
+        const head = source.slice(0, lineStart) + before;
+        const ordered = parsed.marker.match(/^(\d+)([.、][ \t]*)$/);
+        const continuationMarker = ordered ? `${Number(ordered[1]) + 1}${ordered[2]}` : parsed.marker;
+        const created = { id: newBlockId(), source: `${parsed.indent}${continuationMarker}${after}${source.slice(lineEnd)}` };
+        const next = blocks.flatMap((item) => item.id === block.id
+          ? [{ ...item, source: withBlockStyle(head, parseStyledBlock(block.source).style) }, created]
+          : [item]);
+        commit(next);
+        setEditingId(created.id);
       }
       return true;
     }
@@ -358,10 +539,10 @@ export function MarkdownBlockEditor({
     // opens a fresh block right below for continued writing.
     event.preventDefault();
     pushHistory();
-    const head = block.source.slice(0, lineStart + relCaret);
-    const tail = block.source.slice(lineStart + relCaret);
+    const head = source.slice(0, lineStart + relCaret);
+    const tail = source.slice(lineStart + relCaret);
     const created = { id: newBlockId(), source: tail };
-    const next = blocks.flatMap((item) => item.id === block.id ? [{ ...item, source: head }, created] : [item]);
+    const next = blocks.flatMap((item) => item.id === block.id ? [{ ...item, source: withBlockStyle(head, parseStyledBlock(block.source).style) }, created] : [item]);
     commit(next);
     setEditingId(created.id);
     return true;
@@ -419,6 +600,7 @@ export function MarkdownBlockEditor({
   };
   const finishDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
+    suppressHandleClickRef.current = Boolean(drag?.moved);
     const target = drag?.moved ? computeDropIndex(event.clientX, event.clientY) : null;
     dragRef.current = null;
     setDraggingId(null);
@@ -447,18 +629,36 @@ export function MarkdownBlockEditor({
     <section className="markdown-block-editor" aria-label={zh ? "Markdown 內容" : "Markdown content"} onKeyDown={handleHistoryShortcut}>
       <div className="markdown-block-list" ref={listRef}>
         {blocks.map((block, index) => {
-          const { kind, level } = deriveBlockKind(block.source);
-          const isEditing = editingId === block.id;
+          const styled = parseStyledBlock(block.source);
+          const derived = deriveBlockKind(styled.content);
+          const { kind, level } = derived;
+          const presentation = editablePresentation(styled.content, derived);
+          const isEditing = editingId === block.id || !styled.content.trim();
+          const singleTaskMatch = styled.content.includes("\n") ? null : styled.content.match(TASK_LINE);
           const kindClass = `kind-${kind}${level ? `-h${level}` : ""}`;
+          const slash = isEditing ? trailingSlash(styled.content) : null;
+          const commandOptions = slash ? filteredCommands(slash.query) : [];
+          const showSlashMenu = slash && dismissedSlash !== `${block.id}:${styled.content}` && commandOptions.length > 0;
           return (
           <React.Fragment key={block.id}>
             {renderIndicator(index)}
             <article
               data-markdown-block-id={block.id}
               data-block-kind={kind}
+              data-block-color={styled.style.color}
+              data-block-background={styled.style.background}
               className={`markdown-block ${kindClass} ${isEditing ? "editing" : ""} ${draggingId === block.id ? "dragging" : ""}`}
             >
               <div className="markdown-block-tools">
+                <button
+                  type="button"
+                  className="markdown-block-add-inline"
+                  aria-label={zh ? "在下方新增區塊" : "Add a block below"}
+                  title={zh ? "新增區塊" : "Add block"}
+                  onClick={() => addBlock(index)}
+                >
+                  <Plus aria-hidden="true" />
+                </button>
                 <button
                   type="button"
                   className="markdown-block-grip"
@@ -472,6 +672,13 @@ export function MarkdownBlockEditor({
                   onLostPointerCapture={() => {
                     if (dragRef.current?.id === block.id) cancelDrag();
                   }}
+                  onClick={() => {
+                    if (suppressHandleClickRef.current) {
+                      suppressHandleClickRef.current = false;
+                      return;
+                    }
+                    setBlockMenuId((current) => current === block.id ? null : block.id);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowUp") {
                       event.preventDefault();
@@ -483,15 +690,6 @@ export function MarkdownBlockEditor({
                   }}
                 >
                   <GripVertical aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className="markdown-block-add-inline"
-                  aria-label={zh ? "在下方新增區塊" : "Add a block below"}
-                  title={zh ? "新增區塊" : "Add block"}
-                  onClick={() => addBlock(index)}
-                >
-                  <Plus aria-hidden="true" />
                 </button>
                 <span className="markdown-block-move">
                   <button
@@ -515,31 +713,84 @@ export function MarkdownBlockEditor({
                 </span>
               </div>
               <div className="markdown-block-content">
-                {isEditing ? (
-                  <textarea
-                    autoFocus
-                    value={block.source}
-                    rows={1}
-                    className={`markdown-block-input ${kindClass}`}
-                    aria-label={zh ? "編輯 Markdown 區塊" : "Edit Markdown block"}
-                    onChange={(event) => updateBlock(block.id, event.target.value)}
-                    onBlur={() => finishEditing(block.id)}
-                    ref={(element) => {
-                      if (!element) return;
-                      element.style.height = "auto";
-                      element.style.height = `${element.scrollHeight}px`;
-                    }}
-                    onKeyDown={(event) => {
-                      if (handleTextKeydown(event, block)) return;
-                      if (event.key === "Escape" || (event.ctrlKey && event.key === "Enter")) {
-                        event.preventDefault();
-                        event.currentTarget.blur();
-                      }
-                    }}
-                  />
+                {isEditing && singleTaskMatch ? (
+                  <div className="markdown-task-edit-row">
+                    <input
+                      type="checkbox"
+                      checked={singleTaskMatch[2]!.toLowerCase() === "x"}
+                      aria-label={zh ? "切換待辦狀態" : "Toggle task"}
+                      onChange={(event) => toggleTask(block.id, 0, event.currentTarget.checked)}
+                    />
+                    <textarea
+                      autoFocus
+                      value={singleTaskMatch[3]!.trimStart()}
+                      rows={1}
+                      className="markdown-block-input markdown-task-input kind-task"
+                      aria-label={zh ? "編輯待辦內容" : "Edit task content"}
+                      placeholder={zh ? "輸入待辦內容" : "Type task content"}
+                      onChange={(event) => updateBlockContent(block, `${singleTaskMatch[1]}[${singleTaskMatch[2]}] ${event.target.value}`)}
+                      onBlur={(event) => {
+                        if (event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) return;
+                        finishEditing(block.id);
+                      }}
+                      ref={(element) => {
+                        if (!element) return;
+                        element.style.height = "auto";
+                        element.style.height = `${element.scrollHeight}px`;
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.nativeEvent.isComposing || (event.nativeEvent as { keyCode?: number }).keyCode === 229) return;
+                        if (event.key === "Backspace" && !singleTaskMatch[3]!.trim() && event.currentTarget.selectionStart === 0) {
+                          event.preventDefault();
+                          pushHistory();
+                          updateBlockContent(block, "");
+                        } else if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          pushHistory();
+                          const content = singleTaskMatch[3]!.trim();
+                          if (!content) {
+                            updateBlockContent(block, "");
+                            return;
+                          }
+                          const created = { id: newBlockId(), source: "- [ ] " };
+                          commit(blocks.flatMap((item) => item.id === block.id ? [item, created] : [item]));
+                          setEditingId(created.id);
+                        } else if (event.key === "Escape" || (event.ctrlKey && event.key === "Enter")) {
+                          event.preventDefault();
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  </div>
+                ) : isEditing ? (
+                  <div className={`markdown-structural-edit-row ${presentation.marker ? "has-marker" : ""}`}>
+                    {presentation.marker && <span aria-hidden="true">{presentation.marker}</span>}
+                    <textarea
+                      autoFocus
+                      value={presentation.value}
+                      rows={1}
+                      className={`markdown-block-input ${kindClass}`}
+                      aria-label={zh ? "編輯 Markdown 區塊" : "Edit Markdown block"}
+                      placeholder={zh ? "輸入文字，或輸入 / 使用指令" : "Type text, or press / for commands"}
+                      onChange={(event) => { setActiveCommand(0); updateTypedBlock(block, presentation.sourcePrefix + event.target.value); }}
+                      onBlur={() => finishEditing(block.id)}
+                      ref={(element) => {
+                        if (!element) return;
+                        element.style.height = "auto";
+                        element.style.height = `${element.scrollHeight}px`;
+                      }}
+                      onKeyDown={(event) => {
+                        if (handleTextKeydown(event, block, presentation.sourcePrefix.length)) return;
+                        if (event.key === "Escape" || (event.ctrlKey && event.key === "Enter")) {
+                          event.preventDefault();
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  </div>
                 ) : kind === "task" ? (
                   <div className="markdown-task-block">
-                    {block.source.split("\n").map((line, lineIndex) => {
+                    {styled.content.split("\n").map((line, lineIndex) => {
                       const match = line.match(TASK_LINE)!;
                       return (
                         <label key={`${block.id}:${lineIndex}`}>
@@ -578,7 +829,26 @@ export function MarkdownBlockEditor({
                       }
                     }}
                   >
-                    <MarkdownPreview value={block.source} locale={locale} />
+                    <MarkdownPreview value={styled.content} locale={locale} />
+                  </div>
+                )}
+                {showSlashMenu && (
+                  <div className="markdown-slash-menu" role="listbox" aria-label={zh ? "區塊指令" : "Block commands"}>
+                    <header>{zh ? "基本區塊與色彩" : "Blocks and colors"}<kbd>↑↓ Enter</kbd></header>
+                    {commandOptions.map((command, commandIndex) => (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={commandIndex === activeCommand}
+                        className={commandIndex === activeCommand ? "active" : ""}
+                        key={command.id}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => runSlashCommand(block, command)}
+                      >
+                        <span className={`markdown-command-swatch command-${command.action.kind}-${command.action.value}`} aria-hidden="true">A</span>
+                        <span><strong>{command.label}</strong><small>{command.hint}</small></span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -591,27 +861,30 @@ export function MarkdownBlockEditor({
               >
                 <Trash2 aria-hidden="true" />
               </button>
+              {blockMenuId === block.id && (
+                <div className="markdown-block-menu" role="menu">
+                  <strong>{zh ? "轉換成" : "Turn into"}</strong>
+                  <div className="markdown-block-menu-types">
+                    {slashCommands.slice(0, 9).map((command) => <button type="button" role="menuitem" key={command.id} onClick={() => { runSlashCommand(block, command); setBlockMenuId(null); }}>{command.label}</button>)}
+                  </div>
+                  <strong>{zh ? "文字顏色" : "Text color"}</strong>
+                  <div className="markdown-color-grid">
+                    {colorNames.map(([color, name]) => <button type="button" role="menuitem" data-color={color} aria-label={zh ? `${name}文字` : `${name} text`} title={name} key={`text-${color}`} onClick={() => applyBlockStyle(block, { ...styled.style, color })} />)}
+                  </div>
+                  <strong>{zh ? "底色" : "Background"}</strong>
+                  <div className="markdown-color-grid background-grid">
+                    {colorNames.map(([background, name]) => <button type="button" role="menuitem" data-color={background} aria-label={zh ? `${name}底色` : `${name} background`} title={name} key={`background-${background}`} onClick={() => applyBlockStyle(block, { ...styled.style, background })} />)}
+                  </div>
+                  <div className="markdown-block-menu-actions"><button type="button" onClick={() => duplicateBlock(block.id)}>{zh ? "建立複本" : "Duplicate"}</button><button type="button" className="danger" onClick={() => removeBlock(block.id)}>{zh ? "刪除" : "Delete"}</button></div>
+                </div>
+              )}
             </article>
           </React.Fragment>
           );
         })}
         {renderIndicator(blocks.length)}
       </div>
-      {blocks.length === 0 && (
-        <p className="markdown-block-empty">
-          {zh
-            ? "尚無詳細內容。直接輸入文字，按 Enter 建立下一個區塊；行首打「- [ ] 」變待辦清單、「# 」變標題、「---」變分隔線，像 Notion 一樣自由編排。"
-            : "No detail yet. Type freely and press Enter for the next block; start a line with “- [ ] ” for a checklist, “# ” for a heading, “---” for a divider."}
-        </p>
-      )}
-      <button
-        type="button"
-        className="markdown-block-add"
-        onClick={() => addBlock()}
-      >
-        <Plus aria-hidden="true" />
-        {zh ? "新增區塊" : "Add block"}
-      </button>
+      {blocks.some((block) => parseStyledBlock(block.source).content.trim()) && <button type="button" className="markdown-block-add" onClick={() => addBlock()}><Plus aria-hidden="true" />{zh ? "新增區塊" : "Add block"}</button>}
     </section>
   );
 }

@@ -142,7 +142,7 @@ test("task actions are compact accessible icons and permanent delete is never ar
   assert.doesNotMatch(source, /永久刪除[\s\S]{0,180}archive\(/);
   assert.match(styles, /\.task-action-button[^}]*min-width:\s*40px/);
   assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(4/);
-  assert.match(source, /onOpenTask=\{setSelectedTaskId\}/);
+  assert.match(source, /onOpenTask=\{\(id\) => openDetail\("task", id\)\}/);
   assert.match(source, /className="week-task-actions"/);
   assert.match(source, /className=\{`calendar-quick-check/);
   assert.match(source, /className="agenda-drag-handle"[\s\S]{0,400}setPointerCapture/);
@@ -155,11 +155,12 @@ test("tasks use one Notion-like live Markdown detail canvas", () => {
   const styles = css();
   const detailSource = detail();
   const blockSource = blockEditor();
-  assert.match(source, /selectedTaskId/);
+  assert.match(source, /activeDetail\?\.kind === "task"/);
   assert.match(detailSource, /<MarkdownBlockEditor/);
   assert.doesNotMatch(detailSource, /<MarkdownEditor/);
   assert.doesNotMatch(detailSource, /role="tablist"/);
   assert.match(blockSource, /data-markdown-drag-handle/);
+  assert.match(blockSource, /className="markdown-block-add-inline"[\s\S]{0,700}className="markdown-block-grip"/);
   assert.match(blockSource, /type="checkbox"/);
   assert.match(styles, /\.markdown-block-editor/);
 });
@@ -185,6 +186,21 @@ test("desktop exposes global task and project search with keyboard shortcuts", (
   assert.match(source, /search\.date/);
 });
 
+test("detail panels support multiple views while capture defaults to today", () => {
+  const source = app();
+  const detailSource = detail();
+  const styles = css();
+  assert.match(source, /const \[detailTargets, setDetailTargets\]/);
+  assert.match(source, /setView\("projects"\);[\s\S]{0,80}openDetail\("project", result\.id\)/);
+  assert.match(source, /const \[ideaInbox, setIdeaInbox\] = useState\(false\)/);
+  assert.match(source, /className="today-quick-add-fab"/);
+  assert.match(detailSource, /className="detail-panel-resizer"/);
+  assert.match(detailSource, /className="detail-dialog-tabs"/);
+  assert.match(detailSource, /expanded \? <Minimize2/);
+  assert.match(styles, /\.detail-dialog-panel\.detail-dialog-expanded/);
+  assert.match(styles, /\[data-theme="dark"\] \.board-card small/);
+});
+
 test("projects navigate to an id-filtered board and expose planning, filters and safe deletion", () => {
   const source = app();
   assert.match(source, /selectedBoardProjectId/);
@@ -195,7 +211,7 @@ test("projects navigate to an id-filtered board and expose planning, filters and
   // Deletion is confirmed by the in-place armed button, not a detached
   // window.confirm dialog standing between the user and the control.
   assert.doesNotMatch(source, /window\.confirm\([^)]*解除專案連結/s);
-  assert.match(source, /onDelete=\{\(\) => void permanentlyDeleteProject\(selectedProjectDetail\)\}/);
+  assert.match(source, /onDelete=\{\(\) => \{ void permanentlyDeleteProject\(selectedProjectDetail\); if \(activeDetailKey\) closeDetail\(activeDetailKey\); \}\}/);
 });
 
 test("desktop separates collections from outcome projects and supports promotion", () => {
@@ -211,8 +227,8 @@ test("desktop calendar and board open the shared task detail", () => {
   const source = app();
   assert.match(source, /<Board[\s\S]*projects=\{projects\}/);
   assert.match(source, /<Calendar[\s\S]*projects=\{projects\}/);
-  assert.match(source, /<Board[\s\S]*onOpenTask=\{setSelectedTaskId\}/);
-  assert.match(source, /<Calendar[\s\S]*onOpenTask=\{setSelectedTaskId\}/);
+  assert.match(source, /<Board[\s\S]*onOpenTask=\{\(id\) => openDetail\("task", id\)\}/);
+  assert.match(source, /<Calendar[\s\S]*onOpenTask=\{\(id\) => openDetail\("task", id\)\}/);
   assert.match(source, /<TaskDetailDialog[\s\S]*task=\{selectedTask\}/);
 });
 
@@ -370,7 +386,15 @@ test("capture, detail and project surfaces accept tasks and projects inline", ()
   const source = app();
   const styles = css();
   // Quick add: Notion canvas + searchable picker that can create a project.
-  assert.match(source, /<MarkdownBlockEditor value=\{body\}/);
+  assert.match(source, /className="quick-content-field"[\s\S]{0,100}<span>\{t\("quick\.content"\)\}<\/span>[\s\S]{0,100}<MarkdownBlockEditor value=\{body\}/);
+  assert.match(styles, /\.quick-content-field\{[^}]*margin-top:\s*18px/);
+  assert.match(styles, /\.quick-content-field \.markdown-block-editor\{padding-top:\s*0\}/);
+  assert.match(styles, /\.quick-content-field \.markdown-block\{grid-template-columns:\s*24px/);
+  assert.match(styles, /\.quick-content-field \.markdown-block-add-inline\{position:\s*absolute;right:\s*24px\}/);
+  assert.match(styles, /\.quick-content-field \.markdown-block-add\{margin:\s*0 0 4px 24px\}/);
+  assert.doesNotMatch(styles, /\.quick-content-field \.markdown-block-editor\{[^}]*border:/);
+  assert.doesNotMatch(styles, /\.quick-add-modal>\.modal-header\+label\{margin-left:/);
+  assert.doesNotMatch(styles, /\.quick-content-field>span\{margin-left:/);
   assert.match(source, /<ProjectPicker[\s\S]{0,400}onCreateProject=\{onCreateProject\}/);
   assert.match(source, /onCreateProject=\{\(name\) => createProject\(name, null, null\)\}/);
   // Stray clicks and Escape auto-save a titled draft instead of discarding it.

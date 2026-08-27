@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState, type ReactNode } from "react";
+import React, { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   Archive,
   CheckCircle2,
   FolderKanban,
+  Maximize2,
+  Minimize2,
   RotateCcw,
   Save,
   X,
@@ -41,6 +43,13 @@ function confirmDiscard(locale: UiLanguage): boolean {
 }
 
 const NARROW_DETAIL_BREAKPOINT = 900;
+const DETAIL_PANEL_WIDTH_KEY = "second-brain.detailPanelWidth";
+
+export interface DetailTab {
+  key: string;
+  kind: "task" | "project";
+  title: string;
+}
 
 function useNarrowDetailViewport(): boolean {
   const [narrow, setNarrow] = useState(() => window.innerWidth <= NARROW_DETAIL_BREAKPOINT);
@@ -61,6 +70,10 @@ function DetailDialog({
   eyebrow,
   locale,
   surface = "dialog",
+  tabs = [],
+  activeTabKey,
+  onRequestTabChange,
+  onCloseTab,
   onRequestClose,
   children,
 }: {
@@ -68,6 +81,10 @@ function DetailDialog({
   eyebrow: string;
   locale: UiLanguage;
   surface?: UiDetailSurface;
+  tabs?: DetailTab[];
+  activeTabKey?: string;
+  onRequestTabChange?: (key: string) => Promise<boolean> | boolean;
+  onCloseTab?: (key: string) => void;
   onRequestClose: () => Promise<boolean> | boolean;
   children: ReactNode;
 }) {
@@ -77,6 +94,35 @@ function DetailDialog({
   const narrowViewport = useNarrowDetailViewport();
   const panelSurface = surface === "panel";
   const dockedPanel = panelSurface && !narrowViewport;
+  const [expanded, setExpanded] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const stored = Number.parseInt(window.localStorage?.getItem(DETAIL_PANEL_WIDTH_KEY) ?? "", 10);
+    return Number.isFinite(stored) && stored >= 420 && stored <= 1200 ? stored : 620;
+  });
+  const resizeStartRef = useRef<{ clientX: number; width: number; pointerId: number } | null>(null);
+
+  useEffect(() => {
+    window.localStorage?.setItem(DETAIL_PANEL_WIDTH_KEY, String(panelWidth));
+  }, [panelWidth]);
+
+  const clampPanelWidth = (width: number) => Math.max(420, Math.min(Math.max(420, window.innerWidth - 240), width));
+  const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || expanded) return;
+    event.preventDefault();
+    resizeStartRef.current = { clientX: event.clientX, width: panelWidth, pointerId: event.pointerId };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const moveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = resizeStartRef.current;
+    if (!start) return;
+    setPanelWidth(clampPanelWidth(start.width + start.clientX - event.clientX));
+  };
+  const endResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = resizeStartRef.current;
+    if (!start) return;
+    try { event.currentTarget.releasePointerCapture(start.pointerId); } catch { /* already released */ }
+    resizeStartRef.current = null;
+  };
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement as HTMLElement | null;
@@ -137,7 +183,8 @@ function DetailDialog({
     >
       <section
         ref={dialogRef}
-        className={`detail-dialog${panelSurface ? " detail-dialog-panel" : ""}`}
+        className={`detail-dialog${panelSurface ? " detail-dialog-panel" : ""}${expanded ? " detail-dialog-expanded" : ""}`}
+        style={dockedPanel ? ({ ["--detail-panel-width" as string]: `${panelWidth}px` } as CSSProperties) : undefined}
         role="dialog"
         aria-modal={dockedPanel ? undefined : true}
         aria-label={title}
@@ -162,20 +209,78 @@ function DetailDialog({
           }
         }}
       >
+        {dockedPanel && !expanded && (
+          <div
+            className="detail-panel-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={locale === "zh-TW" ? "調整側面板寬度" : "Resize side panel"}
+            aria-valuemin={420}
+            aria-valuemax={Math.max(420, window.innerWidth - 240)}
+            aria-valuenow={panelWidth}
+            tabIndex={0}
+            onPointerDown={beginResize}
+            onPointerMove={moveResize}
+            onPointerUp={endResize}
+            onPointerCancel={endResize}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") { event.preventDefault(); setPanelWidth((width) => clampPanelWidth(width + 20)); }
+              else if (event.key === "ArrowRight") { event.preventDefault(); setPanelWidth((width) => clampPanelWidth(width - 20)); }
+              else if (event.key === "Home") { event.preventDefault(); setPanelWidth(620); }
+            }}
+          />
+        )}
+        {tabs.length > 0 && (
+          <nav className="detail-dialog-tabs" aria-label={locale === "zh-TW" ? "已開啟的視窗" : "Open views"}>
+            {tabs.map((tab) => (
+              <button
+                type="button"
+                key={tab.key}
+                className={tab.key === activeTabKey ? "active" : ""}
+                aria-current={tab.key === activeTabKey ? "page" : undefined}
+                onClick={() => tab.key !== activeTabKey && void onRequestTabChange?.(tab.key)}
+                title={tab.title}
+              >
+                <span>{tab.title}</span>
+                <X
+                  aria-label={locale === "zh-TW" ? `關閉 ${tab.title}` : `Close ${tab.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (tab.key === activeTabKey) void onRequestClose();
+                    else onCloseTab?.(tab.key);
+                  }}
+                />
+              </button>
+            ))}
+          </nav>
+        )}
         <header className="detail-dialog-header">
           <div>
             <span className="eyebrow">{eyebrow}</span>
             <h2>{title}</h2>
           </div>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={locale === "zh-TW" ? "關閉" : "Close"}
-            title={locale === "zh-TW" ? "關閉" : "Close"}
-            onClick={onRequestClose}
-          >
-            <X aria-hidden="true" />
-          </button>
+          <div className="detail-dialog-header-actions">
+            {dockedPanel && (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={locale === "zh-TW" ? (expanded ? "還原側面板" : "展開全部") : (expanded ? "Restore panel" : "Expand fully")}
+                title={locale === "zh-TW" ? (expanded ? "還原側面板" : "展開全部") : (expanded ? "Restore panel" : "Expand fully")}
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+              </button>
+            )}
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={locale === "zh-TW" ? "關閉" : "Close"}
+              title={locale === "zh-TW" ? "關閉" : "Close"}
+              onClick={onRequestClose}
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
         </header>
         {children}
       </section>
@@ -203,6 +308,10 @@ export function TaskDetailDialog({
   projects,
   locale,
   surface,
+  tabs,
+  activeTabKey,
+  onSelectTab,
+  onCloseTab,
   t,
   onClose,
   onSave,
@@ -213,6 +322,10 @@ export function TaskDetailDialog({
   projects: BrainProjectSnapshot[];
   locale: UiLanguage;
   surface?: UiDetailSurface;
+  tabs?: DetailTab[];
+  activeTabKey?: string;
+  onSelectTab?: (key: string) => void;
+  onCloseTab?: (key: string) => void;
   t: DetailTranslate;
   onClose: () => void;
   onSave: (task: BrainTaskSnapshot) => Promise<boolean> | boolean;
@@ -241,20 +354,22 @@ export function TaskDetailDialog({
   };
   // Clicking outside / Escape / the × saves work in progress automatically;
   // only an untitled draft still asks before being thrown away.
-  const requestClose = async (): Promise<boolean> => {
+  const commitBefore = async (action: () => void): Promise<boolean> => {
     if (!dirty) {
-      onClose();
+      action();
       return true;
     }
     if (!draft.title.trim()) {
       if (!confirmDiscard(locale)) return false;
-      onClose();
+      action();
       return true;
     }
     if (!await save()) return false;
-    onClose();
+    action();
     return true;
   };
+  const requestClose = () => commitBefore(onClose);
+  const requestTabChange = (key: string) => commitBefore(() => onSelectTab?.(key));
   const cancel = () => {
     if (dirty && !confirmDiscard(locale)) return;
     onClose();
@@ -262,9 +377,9 @@ export function TaskDetailDialog({
   useSaveShortcut(() => void save());
 
   return (
-    <DetailDialog title={task.title} eyebrow="TASK" locale={locale} surface={surface} onRequestClose={requestClose}>
+    <DetailDialog title={task.title} eyebrow="TASK" locale={locale} surface={surface} tabs={tabs} activeTabKey={activeTabKey} onRequestTabChange={requestTabChange} onCloseTab={onCloseTab} onRequestClose={requestClose}>
       <div className="detail-edit-form notion-editor">
-        <input
+        <textarea
           className="detail-title-input"
           aria-label={t("task.field.title")}
           value={draft.title}
@@ -409,6 +524,10 @@ export function ProjectDetailDialog({
   projectTasks,
   locale,
   surface,
+  tabs,
+  activeTabKey,
+  onSelectTab,
+  onCloseTab,
   t,
   onClose,
   onSave,
@@ -430,6 +549,10 @@ export function ProjectDetailDialog({
   projectTasks: BrainTaskSnapshot[];
   locale: UiLanguage;
   surface?: UiDetailSurface;
+  tabs?: DetailTab[];
+  activeTabKey?: string;
+  onSelectTab?: (key: string) => void;
+  onCloseTab?: (key: string) => void;
   t: DetailTranslate;
   onClose: () => void;
   onSave: (project: BrainProjectSnapshot) => Promise<boolean> | boolean;
@@ -456,20 +579,22 @@ export function ProjectDetailDialog({
       setSaving(false);
     }
   };
-  const requestClose = async (): Promise<boolean> => {
+  const commitBefore = async (action: () => void): Promise<boolean> => {
     if (!dirty) {
-      onClose();
+      action();
       return true;
     }
     if (!draft.name.trim()) {
       if (!confirmDiscard(locale)) return false;
-      onClose();
+      action();
       return true;
     }
     if (!await save()) return false;
-    onClose();
+    action();
     return true;
   };
+  const requestClose = () => commitBefore(onClose);
+  const requestTabChange = (key: string) => commitBefore(() => onSelectTab?.(key));
   const cancel = () => {
     if (dirty && !confirmDiscard(locale)) return;
     onClose();
@@ -477,9 +602,9 @@ export function ProjectDetailDialog({
   useSaveShortcut(() => void save());
 
   return (
-    <DetailDialog title={project.name} eyebrow="PROJECT" locale={locale} surface={surface} onRequestClose={requestClose}>
+    <DetailDialog title={project.name} eyebrow="PROJECT" locale={locale} surface={surface} tabs={tabs} activeTabKey={activeTabKey} onRequestTabChange={requestTabChange} onCloseTab={onCloseTab} onRequestClose={requestClose}>
       <div className="detail-edit-form notion-editor">
-        <input className="detail-title-input" aria-label={t("entity.field.name")} value={draft.name} maxLength={200} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+        <textarea className="detail-title-input" aria-label={t("entity.field.name")} value={draft.name} maxLength={200} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
         <div className="detail-form-grid">
           <label>{t("project.field.status")}<select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}><option value="planning">{t("project.status.planning")}</option><option value="active">{t("project.status.active")}</option><option value="paused">{t("project.status.paused")}</option><option value="done">{t("project.status.done")}</option><option value="archived">{t("project.status.archived")}</option></select></label>
           <label>{t("project.field.category")}<CategoryInput value={draft.area ?? ""} existingCategories={existingAreas} listId={`project-detail-area-${project.id ?? "draft"}`} ariaLabel={t("project.field.category")} onChange={(area) => setDraft({ ...draft, area: area || null })} /></label>
