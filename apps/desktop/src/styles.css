@@ -60,12 +60,14 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .dot.online { background: #20a464; }
 
 .main { min-width: 0; }
-.topbar { min-height: 92px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 28px; background: #fffffff2; position: sticky; top: 0; z-index: 10; backdrop-filter: blur(16px); }
+.topbar { min-height: 92px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 28px; background: #fffffff2; position: sticky; top: 0; z-index: 10; backdrop-filter: blur(16px); }
 .title-row, .top-actions, .sync-state { display: flex; align-items: center; gap: 12px; }
-.title-row { min-width:0; flex:1 1 auto; }
+/* A real basis so the row breaks instead of crushing the title: below it the action
+   toolbar drops to its own line, keeping its fixed-icon layout intact. */
+.title-row { min-width:0; flex:1 1 240px; }
 .title-row > div { min-width:0; }
 .title-row p { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.top-actions { flex:0 0 auto;flex-wrap:nowrap; }
+.top-actions { flex:0 0 auto;flex-wrap:nowrap;margin-left:auto; }
 .topbar h1 { font-size: 22px; margin: 0 0 4px; }
 .topbar p { font-size: 12px; margin: 0; }
 .icon-button { border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 9px; min-width: 38px; height: 38px; font-size: 18px; display:inline-flex;align-items:center;justify-content:center; }
@@ -220,6 +222,21 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 
 [data-theme="dark"] :is(.topbar,.quick-add-button,.add-task-panel,.overview-card,.command-summary>article,.template-settings-button,.routine-items article,.secondary,.timeline-section,.today-panel,.inline-task-card,.clear-check,.inline-fields input,.inline-fields select,.task-card,.check,.priority-badge,.edit-button,.important-button,.archive-button,.secondary-button,.browse-button,.task-editor input,.input-action input,.quick-add-modal input,.quick-add-modal select,.form-row input,.form-row select,.agenda input,.board-toolbar select,.board-card,.board-actions select,.board-actions button,.project-editor-grid input,.project-editor-grid select,.calendar-card,.agenda,.project-card,.settings-card,.calendar-toolbar button,.idea-count-button,.idea-expand-button,.idea-drawer article,.idea-context-menu,.idea-context-menu button,.task-action-button,.board-date-input,.search-button,.search-input-row input,.search-toolbar select,.segmented-control button,.search-results>button,.collection-list>button,.collection-preview,.entity-modal input,.entity-modal select,.modal,.conflict-row button,.routine-template-card,.routine-template-action,.mobile-nav,.day-schedule-tray,.day-schedule-main,.timed-block,.schedule-tray-card,.all-day-chip,.day-schedule-composer,.week-plan-button,.project-picker-field,.project-picker-chip,.project-picker-menu,.detail-task-composer input,.detail-task-list li,.lane-composer input,.lane-add-button,kbd) { background:var(--paper);color:var(--ink);border-color:var(--line); }
 [data-theme="dark"] :is(.board-column,.project-status-board>section,.idea-drawer,.routine-editor,.task-editor,.search-toolbar,.capture-guidance span,.pair-code,.completed-task,.all-day-row,.hour-slot) { background:#202327!important; }
+/* The action row grows every time a control is added - undo/redo pushed it past the
+   viewport - so it folds to its own line, and at the 320px minimum window the seven
+   fixed icons shrink rather than letting the first one slide off the left edge. */
+@media (max-width: 760px) {
+  .top-actions { flex-wrap:wrap;gap:8px; }
+}
+@media (max-width: 420px) {
+  .topbar { padding: 12px 10px; }
+  .top-actions, .sync-state { gap: 6px; }
+  .top-actions { justify-content: center; }
+  .topbar .icon-button { min-width: 34px; height: 34px; }
+  .sync-state .sync-icon-action { width: 34px; min-width: 34px; height: 34px; }
+  .topbar .icon-button svg { width: 16px; height: 16px; }
+}
+
 [data-theme="dark"] :is(.sidebar nav button,.mobile-nav button) { color:var(--muted); }
 [data-theme="dark"] :is(.sidebar nav button:hover,.search-results>button.active,.inline-title-button:hover,.task-action-button:hover,.task-action-button:focus-visible,.task-action-button.active) { background:#292c30;color:var(--ink); }
 [data-theme="dark"] :is(.sidebar nav button.active,.mobile-nav button.active,.segmented-control button.active,.project-tabs button.active,.primary,.sync-state button) { background:var(--ink);color:#111214; }
