@@ -204,6 +204,41 @@ test("the task detail delete button arms in place before deleting", () => {
   }
 });
 
+test("panel detail is non-modal when wide and becomes modal when the viewport narrows", async () => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { value: 1200, writable: true, configurable: true });
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <TaskDetailDialog
+        task={detailTask()}
+        projects={[]}
+        locale="zh-TW"
+        surface="panel"
+        t={(key) => key}
+        onClose={() => undefined}
+        onSave={() => true}
+        onDelete={() => undefined}
+      />,
+    ));
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
+    assert.ok(dialog.classList.contains("detail-dialog-panel"));
+    assert.equal(dialog.getAttribute("aria-modal"), null, "wide side panel leaves the surrounding view available");
+
+    await act(async () => {
+      Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });
+      window.dispatchEvent(new window.Event("resize"));
+    });
+    assert.equal(dialog.getAttribute("aria-modal"), "true", "narrow fallback restores modal semantics");
+  } finally {
+    root.unmount();
+    container.remove();
+    Object.defineProperty(window, "innerWidth", { value: originalWidth, writable: true, configurable: true });
+  }
+});
+
 test("project detail lists its tasks and the composer adds one bound to the project", async () => {
   const project = projectDetail();
   const added: string[] = [];

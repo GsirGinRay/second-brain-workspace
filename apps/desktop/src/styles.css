@@ -318,7 +318,13 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .priority-badge.priority-compact{min-width:26px;justify-content:center;padding:0 4px;border-radius:5px;font-size:9px;line-height:1}
 .detail-backdrop{z-index:110;padding:24px}
 .detail-dialog{display:flex;flex-direction:column;width:min(960px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:hidden;border:1px solid var(--line);border-radius:20px;background:var(--paper);color:var(--ink);box-shadow:0 28px 90px #00000038;outline:0}
+.detail-backdrop-panel{place-items:stretch;justify-items:end;padding:0;background:transparent;pointer-events:none}
+.detail-dialog-panel{pointer-events:auto;width:min(620px,calc(100vw - 280px));height:100vh;max-height:100vh;border-width:0 0 0 1px;border-radius:0;box-shadow:-18px 0 48px #0000002b}
+.detail-dialog-panel .detail-edit-form{padding:22px 24px 24px}
+.detail-dialog-panel .detail-title-input{font-size:26px}
+.detail-dialog-panel .detail-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .detail-dialog-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line);background:var(--paper)}
+.detail-dialog-header>div{min-width:0}
 .detail-dialog-header h2{margin:4px 0 0;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .detail-dialog-header .icon-button{flex:0 0 auto}
 .detail-edit-form{display:grid;gap:18px;overflow:auto;padding:26px 34px 24px}
@@ -335,6 +341,11 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .detail-dialog-actions.split-actions{justify-content:space-between;flex-wrap:wrap}
 .detail-dialog-actions>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .detail-dialog-actions svg{width:16px;height:16px}
+.surface-choice{display:grid;gap:8px;margin-top:12px}
+.surface-choice button{display:grid;gap:3px;text-align:left;border:1px solid var(--line);border-radius:11px;background:var(--paper);color:var(--ink);padding:11px 13px}
+.surface-choice button small{color:var(--muted);font-size:11.5px;line-height:1.45}
+.surface-choice button.active{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.surface-choice button.active small{color:var(--ink)}
 
 /* Notion-style flat block canvas: no per-block box, the left gutter holds
    the drag handle and the inline "+" add button on hover, and the content
@@ -500,6 +511,13 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 
 [data-theme="dark"] :is(.detail-dialog,.detail-dialog-header,.detail-form-grid input,.detail-form-grid select,.markdown-block-content>textarea){background:var(--paper);color:var(--ink);border-color:var(--line)}
 [data-theme="dark"] :is(.detail-form-grid,.markdown-block:hover,.markdown-block:focus-within){background:var(--soft)}
+[data-theme="dark"] .detail-backdrop-panel{background:transparent}
+
+@media (max-width:900px){
+  .detail-backdrop-panel{place-items:center;background:#00000099;pointer-events:auto}
+  [data-theme="dark"] .detail-backdrop-panel{background:#000c}
+  .detail-dialog-panel{width:100vw;max-height:100vh;height:100vh;border:0;border-radius:0;box-shadow:none}
+}
 
 @media (max-width:760px){
   .detail-backdrop{padding:0}

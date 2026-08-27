@@ -13,13 +13,14 @@ test("UI preferences default to Traditional Chinese, light theme and comfortable
     language: "zh-TW",
     theme: "light",
     density: "comfortable",
+    detailSurface: "dialog",
   });
 });
 
 test("UI preferences accept only supported persisted values", () => {
   assert.deepEqual(
     normalizeUiPreferences({ language: "en", theme: "dark" }),
-    { language: "en", theme: "dark", density: "comfortable" },
+    { language: "en", theme: "dark", density: "comfortable", detailSurface: "dialog" },
   );
   assert.deepEqual(
     normalizeUiPreferences({ language: "ja", theme: "system" }),
@@ -41,7 +42,12 @@ test("translations preserve stable data values while localizing visible labels",
   assert.equal(translate("en", "missing.key"), "missing.key");
 });
 
-test("both language and theme choices round-trip as a complete preference", () => {
-  const value: UiPreferences = { language: "en", theme: "dark", density: "compact" };
+test("detail surface accepts the panel and rejects unknown persisted values", () => {
+  assert.equal(normalizeUiPreferences({ language: "en", theme: "dark", detailSurface: "panel" }).detailSurface, "panel");
+  assert.equal(normalizeUiPreferences({ language: "en", theme: "dark", detailSurface: "drawer" }).detailSurface, "dialog");
+});
+
+test("all UI choices round-trip as a complete preference", () => {
+  const value: UiPreferences = { language: "en", theme: "dark", density: "compact", detailSurface: "panel" };
   assert.deepEqual(normalizeUiPreferences(JSON.parse(JSON.stringify(value))), value);
 });

@@ -16,7 +16,7 @@ import { CategoryInput } from "./category-input";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
 import { ProjectPicker, type CreatedProject } from "./project-picker";
 import { DangerConfirmButton } from "./danger-confirm";
-import type { UiLanguage } from "./ui-preferences";
+import type { UiDetailSurface, UiLanguage } from "./ui-preferences";
 
 export type DetailTranslate = (
   key: string,
@@ -40,6 +40,18 @@ function confirmDiscard(locale: UiLanguage): boolean {
   );
 }
 
+const NARROW_DETAIL_BREAKPOINT = 900;
+
+function useNarrowDetailViewport(): boolean {
+  const [narrow, setNarrow] = useState(() => window.innerWidth <= NARROW_DETAIL_BREAKPOINT);
+  useEffect(() => {
+    const update = () => setNarrow(window.innerWidth <= NARROW_DETAIL_BREAKPOINT);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+  return narrow;
+}
+
 /**
  * The dialog shell only owns focus trapping and layout. Closing policy lives
  * with each dialog so an outside click can auto-save instead of discarding.
@@ -48,17 +60,23 @@ function DetailDialog({
   title,
   eyebrow,
   locale,
+  surface = "dialog",
   onRequestClose,
   children,
 }: {
   title: string;
   eyebrow: string;
   locale: UiLanguage;
-  onRequestClose: () => void;
+  surface?: UiDetailSurface;
+  onRequestClose: () => Promise<boolean> | boolean;
   children: ReactNode;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const forwardingOutsideClickRef = useRef(false);
+  const narrowViewport = useNarrowDetailViewport();
+  const panelSurface = surface === "panel";
+  const dockedPanel = panelSurface && !narrowViewport;
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement as HTMLElement | null;
@@ -66,27 +84,71 @@ function DetailDialog({
     return () => previousFocusRef.current?.focus();
   }, []);
 
+  useEffect(() => {
+    if (!dockedPanel) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      if (!target || dialogRef.current?.contains(target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (forwardingOutsideClickRef.current) return;
+      forwardingOutsideClickRef.current = true;
+
+      // The original click must wait for autosave. Replaying it afterwards lets a
+      // task/project behind the panel become the next selection without the old
+      // dialog's eventual onClose clearing that new selection.
+      const clickDetails = {
+        bubbles: true,
+        cancelable: true,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey,
+      };
+      const blockOriginalClick = (clickEvent: MouseEvent) => {
+        const clickTarget = clickEvent.target as Node | null;
+        if (clickTarget && dialogRef.current?.contains(clickTarget)) return;
+        clickEvent.preventDefault();
+        clickEvent.stopImmediatePropagation();
+      };
+      document.addEventListener("click", blockOriginalClick, true);
+      void Promise.resolve(onRequestClose()).then((closed) => {
+        window.setTimeout(() => {
+          document.removeEventListener("click", blockOriginalClick, true);
+          forwardingOutsideClickRef.current = false;
+          if (closed && target.isConnected) {
+            target.dispatchEvent(new MouseEvent("click", clickDetails));
+          }
+        }, 0);
+      });
+    };
+    document.addEventListener("mousedown", onMouseDown, true);
+    return () => document.removeEventListener("mousedown", onMouseDown, true);
+  }, [dockedPanel, onRequestClose]);
+
   return (
     <div
-      className="modal-backdrop detail-backdrop"
+      className={`modal-backdrop detail-backdrop${panelSurface ? " detail-backdrop-panel" : ""}`}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onRequestClose();
+        if (!dockedPanel && event.target === event.currentTarget) void onRequestClose();
       }}
     >
       <section
         ref={dialogRef}
-        className="detail-dialog"
+        className={`detail-dialog${panelSurface ? " detail-dialog-panel" : ""}`}
         role="dialog"
-        aria-modal="true"
+        aria-modal={dockedPanel ? undefined : true}
         aria-label={title}
         tabIndex={-1}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
-            onRequestClose();
+            void onRequestClose();
             return;
           }
-          if (event.key !== "Tab") return;
+          if (event.key !== "Tab" || dockedPanel) return;
           const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)];
           if (focusable.length === 0) return;
           const first = focusable[0]!;
@@ -140,6 +202,7 @@ export function TaskDetailDialog({
   task,
   projects,
   locale,
+  surface,
   t,
   onClose,
   onSave,
@@ -149,6 +212,7 @@ export function TaskDetailDialog({
   task: BrainTaskSnapshot;
   projects: BrainProjectSnapshot[];
   locale: UiLanguage;
+  surface?: UiDetailSurface;
   t: DetailTranslate;
   onClose: () => void;
   onSave: (task: BrainTaskSnapshot) => Promise<boolean> | boolean;
@@ -177,16 +241,19 @@ export function TaskDetailDialog({
   };
   // Clicking outside / Escape / the × saves work in progress automatically;
   // only an untitled draft still asks before being thrown away.
-  const requestClose = async () => {
+  const requestClose = async (): Promise<boolean> => {
     if (!dirty) {
       onClose();
-      return;
+      return true;
     }
     if (!draft.title.trim()) {
-      if (confirmDiscard(locale)) onClose();
-      return;
+      if (!confirmDiscard(locale)) return false;
+      onClose();
+      return true;
     }
-    if (await save()) onClose();
+    if (!await save()) return false;
+    onClose();
+    return true;
   };
   const cancel = () => {
     if (dirty && !confirmDiscard(locale)) return;
@@ -195,7 +262,7 @@ export function TaskDetailDialog({
   useSaveShortcut(() => void save());
 
   return (
-    <DetailDialog title={task.title} eyebrow="TASK" locale={locale} onRequestClose={() => void requestClose()}>
+    <DetailDialog title={task.title} eyebrow="TASK" locale={locale} surface={surface} onRequestClose={requestClose}>
       <div className="detail-edit-form notion-editor">
         <input
           className="detail-title-input"
@@ -341,6 +408,7 @@ export function ProjectDetailDialog({
   existingAreas,
   projectTasks,
   locale,
+  surface,
   t,
   onClose,
   onSave,
@@ -361,6 +429,7 @@ export function ProjectDetailDialog({
   /** Open tasks belonging to this project, rank-ordered by the caller. */
   projectTasks: BrainTaskSnapshot[];
   locale: UiLanguage;
+  surface?: UiDetailSurface;
   t: DetailTranslate;
   onClose: () => void;
   onSave: (project: BrainProjectSnapshot) => Promise<boolean> | boolean;
@@ -387,16 +456,19 @@ export function ProjectDetailDialog({
       setSaving(false);
     }
   };
-  const requestClose = async () => {
+  const requestClose = async (): Promise<boolean> => {
     if (!dirty) {
       onClose();
-      return;
+      return true;
     }
     if (!draft.name.trim()) {
-      if (confirmDiscard(locale)) onClose();
-      return;
+      if (!confirmDiscard(locale)) return false;
+      onClose();
+      return true;
     }
-    if (await save()) onClose();
+    if (!await save()) return false;
+    onClose();
+    return true;
   };
   const cancel = () => {
     if (dirty && !confirmDiscard(locale)) return;
@@ -405,7 +477,7 @@ export function ProjectDetailDialog({
   useSaveShortcut(() => void save());
 
   return (
-    <DetailDialog title={project.name} eyebrow="PROJECT" locale={locale} onRequestClose={() => void requestClose()}>
+    <DetailDialog title={project.name} eyebrow="PROJECT" locale={locale} surface={surface} onRequestClose={requestClose}>
       <div className="detail-edit-form notion-editor">
         <input className="detail-title-input" aria-label={t("entity.field.name")} value={draft.name} maxLength={200} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
         <div className="detail-form-grid">
