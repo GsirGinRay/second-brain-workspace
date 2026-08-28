@@ -260,7 +260,10 @@ test("today and calendar share a full-day schedule surface", () => {
   assert.match(source, /calendar\.schedule/);
   assert.match(source, /openSchedule/);
   assert.match(source, /<Maximize2\b/);
-  assert.match(styles, /\.day-schedule\{display:grid/);
+  // Match the declaration anywhere in the rule: pinning it to the first position turns
+  // "the surface is a grid" into "display must be declared first", and 224a2f7 broke
+  // this test by inserting position:relative for the marquee overlay.
+  assert.match(styles, /\.day-schedule\{[^}]*display:grid/);
   assert.match(styles, /\.calendar-stage/);
   assert.match(styles, /\.week-grid\{[^}]*height:min\(52vh,520px\)/);
 });
