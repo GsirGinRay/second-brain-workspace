@@ -68,7 +68,8 @@ test("board and calendar expose direct date editing and task-level drag feedback
   const styles = css();
   assert.match(source, /className="board-date-input"/);
   assert.match(source, /className="calendar-task-drag-handle"/);
-  assert.match(source, /dragTaskId === entry\.task\.id \? "dragging"/);
+  // Batch drags lift every selected chip, not only the grabbed one.
+  assert.match(source, /dragBatchIds\.includes\(entry\.task\.id \?\? ""\) \? "dragging"/);
   assert.match(source, /event\.stopPropagation\(\)/);
   assert.match(styles, /\.calendar-task-title\.dragging/);
   assert.match(styles, /\.week-task-list article\.dragging/);
@@ -163,6 +164,44 @@ test("tasks use one Notion-like live Markdown detail canvas", () => {
   assert.match(blockSource, /className="markdown-block-add-inline"[\s\S]{0,700}className="markdown-block-grip"/);
   assert.match(blockSource, /type="checkbox"/);
   assert.match(styles, /\.markdown-block-editor/);
+});
+
+test("todo and bullet rows keep identical geometry between preview and edit", () => {
+  const styles = css();
+  // The old editing override stripped the 18px content inset in edit mode
+  // only, so clicking a bullet shoved the whole row 18px to the left.
+  assert.doesNotMatch(
+    styles,
+    /\.markdown-block\.editing:is\(\.kind-bullet/,
+    "edit mode must not restyle bullet/ordered rows that preview shows differently",
+  );
+  // The structural textarea inset mirrors .markdown-block-static exactly, so
+  // bullet/ordered/quote text starts at the same x in both modes.
+  assert.match(styles, /\.markdown-structural-edit-row>textarea\{[^}]*padding:0 4px/);
+  assert.match(styles, /\.markdown-block-static\{[^}]*padding:0 4px/);
+  // Todo rows: the preview wrapper and the edit row share the same 4px inset
+  // and the edit textarea carries no extra offset, so the checkbox column
+  // never shifts by a "space" when the user clicks into a task.
+  assert.match(styles, /\.markdown-task-block\{[^}]*padding:0 4px/);
+  assert.match(styles, /\.markdown-task-edit-row\{[^}]*padding:1px 4px/);
+  assert.doesNotMatch(
+    styles,
+    /\.markdown-task-edit-row \.markdown-block-input\{[^}]*padding:0 0 0 4px/,
+    "the task edit textarea must not re-add the offset the row already provides",
+  );
+});
+
+test("calendar box-selection works without Shift and Delete reaches body-level focus", () => {
+  const source = app();
+  const marquee = readFileSync(resolve(import.meta.dirname, "global-shift-marquee.tsx"), "utf8");
+  const schedule = readFileSync(resolve(import.meta.dirname, "day-schedule-view.tsx"), "utf8");
+  assert.match(source, /data-plain-marquee-scope/, "the calendar stage opts into plain-drag box selection");
+  assert.match(source, /consumeGlobalMarqueeClick/, "the month cell swallows the click a box-drag leaves behind");
+  assert.match(marquee, /data-plain-marquee-scope/, "the global marquee arms without Shift inside opt-in scopes");
+  assert.match(marquee, /dispatchGlobalSelectionDelete/, "window-level Delete dispatches per-kind delete events");
+  assert.match(source, /GLOBAL_SELECTION_DELETE_EVENT/, "the calendar listens for the marquee delete event");
+  assert.match(schedule, /setSelectionOfKind/, "the day schedule mirrors its selection into the app-wide module");
+  assert.match(schedule, /onDeleteBatch/, "the day schedule supports deleting the whole selection in one call");
 });
 
 test("today command center exposes template management from the hero", () => {

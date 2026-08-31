@@ -5,6 +5,7 @@ import {
   movedIds,
   reorderDisplayed,
   reorderTodayTray,
+  reorderTodayTrayBatch,
   todayTraySegmentKey,
   withReassignedRanks,
 } from "./task-reorder";
@@ -79,6 +80,41 @@ test("withReassignedRanks patches only the listed tasks", () => {
   assert.equal(next.find((item) => item.id === "a")!.rank, "00000001");
   assert.equal(next.find((item) => item.id === "c")!.rank, "00000000", "unlisted ranks stay untouched");
   assert.deepEqual(withReassignedRanks(tasks, []), tasks);
+});
+
+test("reorderTodayTrayBatch moves the whole selected group as one block", () => {
+  const tray = [
+    task("p1a", { priority: "highest" }),
+    task("p1b", { priority: "highest" }),
+    task("p1c", { priority: "highest" }),
+    task("p4a", { priority: "normal" }),
+  ];
+  // Selecting p1a+p1b and dropping them after p1c keeps the pair together.
+  const next = reorderTodayTrayBatch(tray, TODAY, ["p1a", "p1b"], "p1c", "after");
+  assert.ok(next);
+  assert.deepEqual(next!.map((item) => item.id), ["p1c", "p1a", "p1b", "p4a"]);
+  // Dropping before keeps the pair's internal order too.
+  const before = reorderTodayTrayBatch(tray, TODAY, ["p1a", "p1b"], "p1c", "before");
+  assert.deepEqual(before!.map((item) => item.id), ["p1a", "p1b", "p1c", "p4a"]);
+});
+
+test("reorderTodayTrayBatch ignores cross-group members and no-op drops", () => {
+  const tray = [
+    task("p1a", { priority: "highest" }),
+    task("p1b", { priority: "highest" }),
+    task("p1c", { priority: "highest" }),
+    task("overdue", { priority: "highest", taskDate: "2026-08-18" }),
+  ];
+  // The overdue card in the selection does not travel into the P1 group;
+  // only the members of the dragged task's own group move.
+  const next = reorderTodayTrayBatch(tray, TODAY, ["p1a", "overdue"], "p1c", "after");
+  assert.ok(next);
+  assert.deepEqual(next!.map((item) => item.id), ["p1b", "p1c", "p1a", "overdue"]);
+  // Dropping the group onto one of its own members changes nothing.
+  assert.equal(reorderTodayTrayBatch(tray, TODAY, ["p1a", "p1b"], "p1b", "after"), null);
+  // A single-member selection delegates to the plain single reorder.
+  const single = reorderTodayTrayBatch(tray, TODAY, ["p1a"], "p1c", "after");
+  assert.deepEqual(single!.map((item) => item.id), reorderTodayTray(tray, TODAY, "p1a", "p1c", "after")!.map((item) => item.id));
 });
 
 test("movedIds reports which rows actually changed position", () => {

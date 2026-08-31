@@ -7,6 +7,7 @@ import { Window } from "happy-dom";
 import type { BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
 import { PX_PER_HOUR } from "./day-schedule";
 import { DaySchedule } from "./day-schedule-view";
+import { addToSelection, getSelectedIdsOfKind } from "./global-shift-marquee";
 
 const window = new Window({ url: "http://localhost/" });
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -213,6 +214,146 @@ test("dragging a timed task to the unscheduled tray clears its time", () => {
   }
 });
 
+test("dragging a marquee-selected group by its grip reorders the whole batch inside the tray", () => {
+  stubPointer();
+  const drops: Array<{ draggedId: string; targetId: string; place: string; draggedIds?: string[] }> = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[]}
+          trayTasks={[task("a", "第一件事", ""), task("b", "第二件事", ""), task("c", "第三件事", "")]}
+          showTray
+          labels={labels}
+          onSchedule={() => undefined}
+          onCreateAt={() => undefined}
+          onReorderTray={(drop) => drops.push(drop)}
+        />,
+      );
+    });
+    const cards = container.querySelectorAll<HTMLElement>("[data-tray-card-id]");
+    const handles = container.querySelectorAll<HTMLElement>(".schedule-tray-drag-handle");
+    assert.equal(cards.length, 3, "three tray cards render");
+    // A box-selection marked a and b (mirrored through the app-wide module).
+    addToSelection("a", "task");
+    addToSelection("b", "task");
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => cards[2] ?? null;
+    try {
+      flushSync(() => {
+        handles[0]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 91, clientX: 30, clientY: 20 }) as unknown as Event);
+        handles[0]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 91, clientX: 30, clientY: 60 }) as unknown as Event);
+        handles[0]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 91, clientX: 30, clientY: 60 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+    assert.deepEqual(drops[0], { draggedId: "a", targetId: "c", place: "after", draggedIds: ["a", "b"] }, "the whole selection travels with the grip");
+  } finally {
+    container.remove();
+  }
+});
+
+test("dragging a marquee-selected timeline group into the tray unschedules every selected task", () => {
+  stubPointer();
+  const cleared: string[] = [];
+  const clearedBatches: string[][] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[task("a", "已排", "09:00"), task("b", "也排了", "10:00")]}
+          showTray
+          labels={labels}
+          onSchedule={() => undefined}
+          onClearTime={(id) => cleared.push(id)}
+          onClearTimeBatch={(ids) => clearedBatches.push(ids)}
+          onCreateAt={() => undefined}
+        />,
+      );
+    });
+    const blocks = container.querySelectorAll<HTMLElement>(".timed-block");
+    const tray = container.querySelector<HTMLElement>("[data-unscheduled-tray]");
+    assert.equal(blocks.length, 2, "two timed blocks render");
+    assert.ok(tray, "unscheduled tray exists");
+    addToSelection("a", "task");
+    addToSelection("b", "task");
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => tray;
+    try {
+      flushSync(() => {
+        blocks[0]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 92, clientX: 300, clientY: 10 }) as unknown as Event);
+        blocks[0]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 92, clientX: 50, clientY: 10 }) as unknown as Event);
+        blocks[0]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 92, clientX: 50, clientY: 10 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+    assert.deepEqual(clearedBatches, [["a", "b"]], "the whole selection is unscheduled in one transaction");
+    assert.deepEqual(cleared, [], "no single-task clear fires alongside the batch");
+  } finally {
+    container.remove();
+  }
+});
+
+test("dropping a marquee-selected group on the all-day row clears the whole batch", () => {
+  stubPointer();
+  const cleared: string[] = [];
+  const clearedBatches: string[][] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[]}
+          allDayTasks={[task("a", "整日一", ""), task("b", "整日二", "")]}
+          showTray={false}
+          labels={labels}
+          onSchedule={() => undefined}
+          onClearTime={(id) => cleared.push(id)}
+          onClearTimeBatch={(ids) => clearedBatches.push(ids)}
+          onCreateAt={() => undefined}
+        />,
+      );
+    });
+    const chips = container.querySelectorAll<HTMLElement>(".all-day-chip");
+    const allDayRow = container.querySelector<HTMLElement>("[data-schedule-all-day]");
+    assert.equal(chips.length, 2, "two all-day chips render");
+    assert.ok(allDayRow, "all-day row exists");
+    addToSelection("a", "task");
+    addToSelection("b", "task");
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => allDayRow;
+    try {
+      flushSync(() => {
+        chips[0]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 93, clientX: 20, clientY: 20 }) as unknown as Event);
+        chips[0]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 93, clientX: 40, clientY: 30 }) as unknown as Event);
+        chips[0]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 93, clientX: 40, clientY: 30 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+    assert.deepEqual(clearedBatches, [["a", "b"]], "the whole selection is cleared in one transaction");
+    assert.deepEqual(cleared, [], "no single-task clear fires alongside the batch");
+  } finally {
+    container.remove();
+  }
+});
+
 test("releasing a tray card onto a sibling reorders the tray instead of clearing", () => {
   stubPointer();
   const drops: Array<{ draggedId: string; targetId: string; place: string }> = [];
@@ -285,7 +426,12 @@ test("tasks selected by a marquee that starts outside the unscheduled tray still
     const slot = container.querySelector<HTMLElement>("[data-schedule-minutes='540']");
     assert.equal(cards[0]?.dataset.globalSelectId, "a", "tray cards participate in the app-wide marquee");
     assert.equal(cards[1]?.dataset.globalSelectId, "b");
-    cards.forEach((card) => card.classList.add("global-shift-selected"));
+    cards.forEach((card) => {
+      const id = card.dataset.globalSelectId;
+      const kind = card.dataset.globalSelectKind ?? "task";
+      if (id) addToSelection(id, kind);
+      card.classList.add("global-shift-selected");
+    });
     const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
     const original = doc.elementFromPoint;
     doc.elementFromPoint = () => slot;
@@ -299,6 +445,164 @@ test("tasks selected by a marquee that starts outside the unscheduled tray still
       doc.elementFromPoint = original;
     }
     assert.deepEqual(batches, [[ ["a", "b"], "09:00" ]]);
+  } finally {
+    container.remove();
+  }
+});
+
+test("Delete key removes every marquee-selected task in one call", () => {
+  stubPointer();
+  const batchDeletes: string[][] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[]}
+          trayTasks={[task("a", "第一件事", ""), task("b", "第二件事", "")]}
+          showTray
+          labels={labels}
+          onSchedule={() => undefined}
+          onCreateAt={() => undefined}
+          onDeleteBatch={(tasks) => batchDeletes.push(tasks.map((item) => item.id!))}
+        />,
+      );
+    });
+    const cards = container.querySelectorAll<HTMLElement>("[data-tray-card-id]");
+    assert.equal(cards.length, 2, "two tray cards render");
+    const cardRects = [
+      { left: 10, top: 40, right: 200, bottom: 80, width: 190, height: 40, x: 10, y: 40, toJSON: () => ({}) },
+      { left: 10, top: 90, right: 200, bottom: 130, width: 190, height: 40, x: 10, y: 90, toJSON: () => ({}) },
+    ];
+    cards.forEach((card, index) => {
+      card.getBoundingClientRect = () => cardRects[index] as DOMRect;
+    });
+    const scheduleRoot = container.querySelector<HTMLElement>(".day-schedule")!;
+    flushSync(() => {
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, shiftKey: true, pointerId: 61, clientX: 12, clientY: 44 }) as unknown as Event);
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, shiftKey: true, pointerId: 61, clientX: 190, clientY: 120 }) as unknown as Event);
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 61, clientX: 190, clientY: 120 }) as unknown as Event);
+    });
+    assert.equal(container.querySelectorAll(".schedule-tray-card.selected").length, 2, "the marquee selects both cards");
+    assert.deepEqual(getSelectedIdsOfKind("task").sort(), ["a", "b"], "the internal selection is mirrored to the app-wide module");
+
+    flushSync(() => {
+      scheduleRoot.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "Delete" }) as unknown as Event);
+    });
+    assert.deepEqual(batchDeletes, [["a", "b"]], "Delete removes every selected task in one call");
+    assert.equal(container.querySelectorAll(".schedule-tray-card.selected").length, 0, "the selection clears after the delete");
+    assert.deepEqual(getSelectedIdsOfKind("task"), [], "the module mirror clears with the selection");
+  } finally {
+    container.remove();
+  }
+});
+
+test("dragging a marquee-selected timed task reschedules the whole selection", () => {
+  stubPointer();
+  const batches: Array<[string[], string]> = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[task("a", "第一件事", "09:00"), task("b", "第二件事", "10:00")]}
+          showTray={false}
+          labels={labels}
+          onSchedule={() => undefined}
+          onScheduleBatch={(ids, time) => batches.push([ids, time])}
+          onCreateAt={() => undefined}
+        />,
+      );
+    });
+    const blocks = container.querySelectorAll<HTMLElement>(".timed-block");
+    assert.equal(blocks.length, 2, "two timed blocks render");
+    const rects = [
+      { left: 60, top: 504, right: 300, bottom: 546, width: 240, height: 42, x: 60, y: 504, toJSON: () => ({}) },
+      { left: 60, top: 588, right: 300, bottom: 630, width: 240, height: 42, x: 60, y: 588, toJSON: () => ({}) },
+    ];
+    blocks.forEach((block, index) => {
+      block.getBoundingClientRect = () => rects[index] as DOMRect;
+    });
+    const scheduleRoot = container.querySelector<HTMLElement>(".day-schedule")!;
+    // Shift-drag a box over both blocks.
+    flushSync(() => {
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, shiftKey: true, pointerId: 71, clientX: 70, clientY: 510 }) as unknown as Event);
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, shiftKey: true, pointerId: 71, clientX: 290, clientY: 620 }) as unknown as Event);
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 71, clientX: 290, clientY: 620 }) as unknown as Event);
+    });
+    assert.equal(container.querySelectorAll(".timed-block.selected").length, 2, "the marquee selects both blocks");
+
+    // Grab block "a" (no Shift) and drop it on the 10:00 position. The grid
+    // auto-scrolls to hour 7 on mount, so clientY = canvasY - 7*PX_PER_HOUR.
+    const slot = container.querySelector<HTMLElement>("[data-schedule-minutes='600']");
+    assert.ok(slot, "the 10:00 slot exists");
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => slot;
+    try {
+      flushSync(() => {
+        blocks[0]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 72, clientX: 100, clientY: 504 - PX_PER_HOUR * 7 }) as unknown as Event);
+        blocks[0]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 72, clientX: 100, clientY: 560 - PX_PER_HOUR * 7 }) as unknown as Event);
+        blocks[0]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 72, clientX: 100, clientY: 560 - PX_PER_HOUR * 7 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+    assert.deepEqual(batches, [[["a", "b"], "10:00"]], "dropping one selected task moves the whole selection");
+  } finally {
+    container.remove();
+  }
+});
+
+test("a plain drag on the canvas box-selects tasks without Shift; a plain click stays a click", () => {
+  stubPointer();
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[task("a", "第一件事", "09:00"), task("b", "第二件事", "10:00")]}
+          showTray={false}
+          labels={labels}
+          onSchedule={() => undefined}
+          onCreateAt={() => undefined}
+        />,
+      );
+    });
+    const blocks = container.querySelectorAll<HTMLElement>(".timed-block");
+    const rects = [
+      { left: 60, top: 504, right: 300, bottom: 546, width: 240, height: 42, x: 60, y: 504, toJSON: () => ({}) },
+      { left: 60, top: 588, right: 300, bottom: 630, width: 240, height: 42, x: 60, y: 588, toJSON: () => ({}) },
+    ];
+    blocks.forEach((block, index) => {
+      block.getBoundingClientRect = () => rects[index] as DOMRect;
+    });
+    const scheduleRoot = container.querySelector<HTMLElement>(".day-schedule")!;
+
+    // A press-and-release without movement is an ordinary click.
+    flushSync(() => {
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 81, clientX: 20, clientY: 20 }) as unknown as Event);
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 81, clientX: 20, clientY: 20 }) as unknown as Event);
+    });
+    assert.equal(container.querySelectorAll(".timed-block.selected").length, 0, "a plain click selects nothing");
+    assert.equal(container.querySelector(".day-schedule.marquee-selecting"), null, "no marquee rectangle without movement");
+
+    // Dragging from empty canvas box-selects the intersecting tasks.
+    flushSync(() => {
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 82, clientX: 20, clientY: 20 }) as unknown as Event);
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 82, clientX: 290, clientY: 620 }) as unknown as Event);
+      scheduleRoot.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 82, clientX: 290, clientY: 620 }) as unknown as Event);
+    });
+    assert.equal(container.querySelectorAll(".timed-block.selected").length, 2, "a plain drag box-selects both tasks");
   } finally {
     container.remove();
   }
@@ -333,6 +637,59 @@ test("Alt+ArrowUp/Down reorders tray cards from the keyboard", () => {
       cards[0]!.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown", altKey: true }) as unknown as Event);
     });
     assert.deepEqual(drops[1], { draggedId: "a", targetId: "b", place: "after" });
+  } finally {
+    container.remove();
+  }
+});
+
+test("dragging a marquee-selected timed task slides the whole selection together", () => {
+  stubPointer();
+  const batches: Array<[string[], string]> = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => {
+      root.render(
+        <DaySchedule
+          date="2026-08-21"
+          timedTasks={[task("a", "第一件事", "09:00"), task("b", "第二件事", "10:00")]}
+          showTray={false}
+          labels={labels}
+          onSchedule={() => undefined}
+          onScheduleBatch={(ids, time) => batches.push([ids, time])}
+          onCreateAt={() => undefined}
+        />,
+      );
+    });
+    const blocks = container.querySelectorAll<HTMLElement>(".timed-block");
+    assert.equal(blocks.length, 2);
+    addToSelection("a", "task");
+    addToSelection("b", "task");
+    const scheduleRoot = container.querySelector<HTMLElement>(".day-schedule")!;
+    const grid = container.querySelector<HTMLElement>("[data-day-schedule-grid]")!;
+    assert.ok(grid, "grid exists");
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const original = doc.elementFromPoint;
+    doc.elementFromPoint = () => grid;
+    try {
+      // Grab "a" (the block body — not a six-dot handle) and drag one hour down.
+      // The grid auto-scrolls to hour 7 on mount, so clientY = canvasY - 7*56.
+      flushSync(() => {
+        blocks[0]!.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 95, clientX: 100, clientY: 504 - PX_PER_HOUR * 7 }) as unknown as Event);
+        blocks[0]!.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, button: 0, pointerId: 95, clientX: 100, clientY: 560 - PX_PER_HOUR * 7 }) as unknown as Event);
+      });
+      assert.equal(blocks[0]!.style.top, "560px", "the grabbed block follows the pointer");
+      assert.equal(blocks[1]!.style.top, "616px", "the other selected block slides by the same delta");
+      assert.equal(blocks[1]!.classList.contains("dragging"), true, "the whole batch shows dragging feedback");
+      assert.match(blocks[1]!.querySelector("small")?.textContent ?? "", /^11:00/, "each block's time label ticks along");
+      flushSync(() => {
+        blocks[0]!.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 95, clientX: 100, clientY: 560 - PX_PER_HOUR * 7 }) as unknown as Event);
+      });
+    } finally {
+      doc.elementFromPoint = original;
+    }
+    assert.deepEqual(batches, [[["a", "b"], "10:00"]], "the drop still persists the whole batch");
   } finally {
     container.remove();
   }
