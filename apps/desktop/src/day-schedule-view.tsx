@@ -1059,7 +1059,7 @@ export function DaySchedule({
                 key={task.id}
                 data-selectable-task-id={task.id}
                 data-global-select-id={task.id}
-                className={`timed-block ${selectedTaskIdSet.has(task.id) ? "selected" : ""} ${dragId && (dragId === task.id || batchMember) ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
+                className={`timed-block ${height < 42 ? "short" : ""} ${selectedTaskIdSet.has(task.id) ? "selected" : ""} ${dragId && (dragId === task.id || batchMember) ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
                 style={{ top, height, left, width }}
                 tabIndex={0}
                 onPointerDown={(event) => beginTimedDrag(event, task)}
