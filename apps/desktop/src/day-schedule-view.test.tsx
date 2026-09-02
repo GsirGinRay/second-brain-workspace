@@ -792,7 +792,7 @@ test("tray meta shows the start time beside complete and armed delete", () => {
   assert.ok(when, "start time renders inside the meta row");
   assert.equal(when!.textContent, "14:00");
   const actions = card.querySelector<HTMLElement>(".schedule-tray-actions")!;
-  assert.ok(actions.querySelector('button:not(.danger-confirm)'), "complete stays an inline icon button");
+  assert.ok(card.querySelector(".task-complete"), "complete is a square checkbox on the title row");
   const danger = actions.querySelector<HTMLButtonElement>(".danger-confirm")!;
   click(danger);
   assert.equal(deleted.length, 0, "delete waits for the confirmation dialog");

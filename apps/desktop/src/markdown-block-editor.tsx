@@ -103,6 +103,25 @@ function createBlocks(value: string): MarkdownBlock[] {
   return created.length > 0 ? created : [{ id: newBlockId(), source: "" }];
 }
 
+/** Reuse existing block ids when an external `value` matches current sources, so a
+ *  parent re-render never remounts the textarea mid-stroke (Notion-like typing). */
+function syncBlocks(previous: MarkdownBlock[], value: string): MarkdownBlock[] {
+  const sources = splitMarkdownBlocks(value);
+  if (sources.length === 0) {
+    const empty = previous.find((block) => !block.source.trim()) ?? previous[0];
+    return [{ id: empty?.id ?? newBlockId(), source: "" }];
+  }
+  const unused = [...previous];
+  return sources.map((source) => {
+    const matchIndex = unused.findIndex((block) => block.source === source);
+    if (matchIndex >= 0) {
+      const [match] = unused.splice(matchIndex, 1);
+      return match!;
+    }
+    return { id: newBlockId(), source };
+  });
+}
+
 function serializeBlocks(blocks: MarkdownBlock[]): string {
   // No per-source trimming: a block that legitimately ends with spaces must
   // keep serializing identically, otherwise the value-sync effect mistakes our
@@ -406,11 +425,13 @@ export function MarkdownBlockEditor({
   }).slice(0, 12);
 
   useEffect(() => {
-    if (value !== serializeBlocks(blocks)) {
-      const next = createBlocks(value);
-      setBlocks(next);
-      setEditingId(value.trim() ? null : next[0]?.id ?? null);
-    }
+    if (value === serializeBlocks(blocks)) return;
+    const next = syncBlocks(blocks, value);
+    setBlocks(next);
+    setEditingId((current) => {
+      if (current && next.some((block) => block.id === current)) return current;
+      return value.trim() ? null : next[0]?.id ?? null;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 

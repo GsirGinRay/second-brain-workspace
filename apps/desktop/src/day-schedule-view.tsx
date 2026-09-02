@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { Check, GripVertical, Star } from "lucide-react";
+import { GripVertical, Star } from "lucide-react";
 import type { BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
 import {
   durationFromResize,
@@ -16,6 +16,7 @@ import {
 import { PriorityControl } from "./priority-control";
 import { ProjectPicker } from "./project-picker";
 import { DangerConfirmButton } from "./danger-confirm";
+import { TaskCompleteButton } from "./task-complete-button";
 import type { DropPosition } from "./task-reorder";
 import type { UiLanguage } from "./ui-preferences";
 import { getGlobalSelectedIds, setSelectionOfKind } from "./global-shift-marquee";
@@ -858,6 +859,13 @@ export function DaySchedule({
                   ><GripVertical aria-hidden="true" /></button>
                   <div className="schedule-tray-body">
                     <div className="schedule-tray-title-row">
+                      {onComplete && (
+                        <TaskCompleteButton
+                          done={task.status === "done"}
+                          label={task.status === "done" ? labels.reopen : labels.complete}
+                          onClick={() => onComplete(task)}
+                        />
+                      )}
                       {onPriority && task.id ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
                       <strong className="inline-title-button" title={task.title}>{task.title}</strong>
                       {onStar && task.id && (
@@ -891,17 +899,14 @@ export function DaySchedule({
                           />
                         </div>
                       )}
-                      {(onComplete || onDelete) && (
+                      {onDelete && (
                         <span className="schedule-tray-actions">
-                          {onComplete && <button type="button" aria-label={task.status === "done" ? labels.reopen : labels.complete} title={task.status === "done" ? labels.reopen : labels.complete} onClick={(event) => { event.stopPropagation(); onComplete(task); }}><Check aria-hidden="true" /></button>}
-                          {onDelete && (
-                            <DangerConfirmButton
-                              className="schedule-tray-delete"
-                              armLabel={labels.delete}
-                              confirmLabel={labels.deleteAgain ?? labels.delete}
-                              onConfirm={() => onDelete(task)}
-                            />
-                          )}
+                          <DangerConfirmButton
+                            className="schedule-tray-delete"
+                            armLabel={labels.delete}
+                            confirmLabel={labels.deleteAgain ?? labels.delete}
+                            onConfirm={() => onDelete(task)}
+                          />
                         </span>
                       )}
                     </div>
@@ -1083,6 +1088,14 @@ export function DaySchedule({
                 }}
               >
                 <div className="timed-block-head">
+                  {onComplete && (
+                    <TaskCompleteButton
+                      size="sm"
+                      done={task.status === "done"}
+                      label={task.status === "done" ? labels.reopen : labels.complete}
+                      onClick={() => onComplete(task)}
+                    />
+                  )}
                   {onPriority ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
                   <strong className="timed-block-title">{task.title}</strong>
                   <span className="timed-block-inline-actions" onClick={(event) => event.stopPropagation()}>
@@ -1101,23 +1114,9 @@ export function DaySchedule({
                         <Star aria-hidden="true" fill={task.priority === "highest" ? "currentColor" : "none"} />
                       </button>
                     )}
-                    {onComplete && (
-                      <button
-                        type="button"
-                        className="timed-block-action"
-                        aria-label={task.status === "done" ? labels.reopen : labels.complete}
-                        title={task.status === "done" ? labels.reopen : labels.complete}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onComplete(task);
-                        }}
-                      >
-                        <Check aria-hidden="true" />
-                      </button>
-                    )}
                     {onDelete && (
                       <DangerConfirmButton
-                        className="timed-block-action danger"
+                        className="timed-block-action"
                         armLabel={labels.delete}
                         confirmLabel={labels.deleteAgain ?? labels.delete}
                         onConfirm={() => onDelete(task)}

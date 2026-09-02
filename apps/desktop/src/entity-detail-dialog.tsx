@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import React, { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   Archive,
   CheckCircle2,
@@ -18,6 +18,7 @@ import { CategoryInput } from "./category-input";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
 import { ProjectPicker, type CreatedProject } from "./project-picker";
 import { DangerConfirmButton } from "./danger-confirm";
+import { TaskCompleteButton } from "./task-complete-button";
 import type { UiDetailSurface, UiLanguage } from "./ui-preferences";
 
 export type DetailTranslate = (
@@ -336,7 +337,18 @@ export function TaskDetailDialog({
   const [draft, setDraft] = useState(task);
   const [saving, setSaving] = useState(false);
   useEffect(() => setDraft(task), [task]);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(task);
+  const dirty = draft.title !== task.title
+    || (draft.body ?? "") !== (task.body ?? "")
+    || draft.status !== task.status
+    || draft.priority !== task.priority
+    || draft.taskDate !== task.taskDate
+    || draft.startTime !== task.startTime
+    || draft.durationMinutes !== task.durationMinutes
+    || draft.projectId !== task.projectId
+    || draft.completedAt !== task.completedAt;
+  const onBodyChange = useCallback((body: string) => {
+    setDraft((current) => ({ ...current, body }));
+  }, []);
   const chooseProject = (project: BrainProjectSnapshot | null) => {
     setDraft((current) => ({
       ...current,
@@ -380,13 +392,25 @@ export function TaskDetailDialog({
   return (
     <DetailDialog title={task.title} eyebrow="TASK" locale={locale} surface={surface} tabs={tabs} activeTabKey={activeTabKey} onRequestTabChange={requestTabChange} onCloseTab={onCloseTab} onRequestClose={requestClose}>
       <div className="detail-edit-form notion-editor">
-        <textarea
-          className="detail-title-input"
-          aria-label={t("task.field.title")}
-          value={draft.title}
-          maxLength={500}
-          onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-        />
+        <div className="detail-title-row">
+          <TaskCompleteButton
+            size="lg"
+            done={draft.status === "done"}
+            label={t(draft.status === "done" ? "task.action.reopen" : "task.action.complete")}
+            onClick={() => setDraft((current) => ({
+              ...current,
+              status: current.status === "done" ? "todo" : "done",
+              completedAt: current.status === "done" ? null : current.completedAt,
+            }))}
+          />
+          <textarea
+            className="detail-title-input"
+            aria-label={t("task.field.title")}
+            value={draft.title}
+            maxLength={500}
+            onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+          />
+        </div>
         <div className="detail-form-grid">
           <label>{t("task.field.status")}<select value={draft.status} onChange={(event) => { const status = event.target.value as TaskStatus; setDraft({ ...draft, status, completedAt: status === "done" ? draft.completedAt : null }); }}><option value="todo">{t("task.status.todo")}</option><option value="doing">{t("task.status.doing")}</option><option value="waiting">{t("task.status.waiting")}</option><option value="done">{t("task.status.done")}</option></select></label>
           <label>{t("task.field.priority")}<select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as BrainTaskSnapshot["priority"] })}><option value="highest">P1 · {t("task.priority.highest")}</option><option value="high">P2 · {t("task.priority.high")}</option><option value="medium">P3 · {t("task.priority.medium")}</option><option value="normal">P4 · {t("task.priority.normal")}</option><option value="low">P5 · {t("task.priority.low")}</option></select></label>
@@ -405,16 +429,15 @@ export function TaskDetailDialog({
             />
           </div>
         </div>
-        <MarkdownBlockEditor value={draft.body ?? ""} onChange={(body) => setDraft((current) => ({ ...current, body }))} locale={locale} />
+        <MarkdownBlockEditor value={draft.body ?? ""} onChange={onBodyChange} locale={locale} />
         <div className="detail-dialog-actions split-actions">
           <div>
-            <button type="button" className="secondary-button action-with-icon" onClick={() => setDraft((current) => ({ ...current, status: current.status === "done" ? "todo" : "done", completedAt: current.status === "done" ? null : current.completedAt }))}><CheckCircle2 aria-hidden="true" />{t(draft.status === "done" ? "task.action.reopen" : "task.action.complete")}</button>
             <DangerConfirmButton
-              className="action-with-icon danger"
+              className="icon-action"
               armLabel={t("task.action.delete")}
               confirmLabel={t("confirm.deleteAgain")}
               onConfirm={() => onDelete(task)}
-            >{t("task.action.delete")}</DangerConfirmButton>
+            />
           </div>
           <div>
             <button type="button" className="secondary-button" onClick={cancel}>{t("app.cancel")}</button>
@@ -490,13 +513,11 @@ function ProjectTaskSection({
         <ul className="detail-task-list">
           {tasks.map((task) => (
             <li key={task.id ?? `${projectKey}:${task.rank}`}>
-              <button
-                type="button"
-                className={`detail-task-check ${task.status === "done" ? "done" : ""}`}
-                aria-label={`${task.title} ${task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}`}
-                title={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+              <TaskCompleteButton
+                done={task.status === "done"}
+                label={`${task.title} ${task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}`}
                 onClick={() => onToggleTask(task)}
-              >{task.status === "done" ? "✓" : ""}</button>
+              />
               <button
                 type="button"
                 className="detail-task-title"

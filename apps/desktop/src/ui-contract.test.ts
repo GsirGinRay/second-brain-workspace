@@ -80,11 +80,13 @@ test("board and calendar expose direct date editing and task-level drag feedback
 
 test("public settings hide cloud sync, write to the local folder, and complete board tasks with a checkbox", () => {
   const source = app();
+  const styles = css();
   assert.match(source, /const cloudEnabled = diagnostics\?\.syncEnabled === true/);
   assert.match(source, /settings\.localHelp/);
   assert.doesNotMatch(source, /settings\.phoneHelp/);
   assert.match(source, /diagnostics\?\.syncEnabled && \(/);
-  assert.match(source, /board-card[\s\S]{0,1200}className=\{`clear-check/);
+  assert.match(source, /board-card[\s\S]{0,5000}<TaskCompleteButton/);
+  assert.match(styles, /\.task-complete[^}]*border-radius:4px/);
   assert.doesNotMatch(source, /className="board-card-complete"/);
   assert.doesNotMatch(source, /<span>\{task\.status === "done" \? t\("task\.action\.reopen"\) : t\("task\.action\.complete"\)\}<\/span>/);
 });
@@ -152,14 +154,15 @@ test("task actions are compact accessible icons and permanent delete is never ar
   for (const key of ["task.action.important", "task.action.complete", "task.action.edit", "task.action.delete"]) {
     assert.ok(source.includes(`t("${key}")`));
   }
-  assert.match(source, /aria-label=\{done \? t\("task\.action\.reopen"\) : t\("task\.action\.complete"\)\}/);
+  assert.match(source, /label=\{done \? t\("task\.action\.reopen"\) : t\("task\.action\.complete"\)\}/);
   assert.match(source, /onDelete=\{onDelete\}/);
   assert.doesNotMatch(source, /永久刪除[\s\S]{0,180}archive\(/);
   assert.match(styles, /\.task-action-button[^}]*min-width:\s*40px/);
   assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(4/);
   assert.match(source, /onOpenTask=\{\(id\) => openDetail\("task", id\)\}/);
   assert.match(source, /className="week-task-actions"/);
-  assert.match(source, /className=\{`calendar-quick-check/);
+  assert.match(source, /className="calendar-quick-check"/);
+  assert.match(source, /<TaskCompleteButton/);
   assert.match(source, /className="agenda-drag-handle"[\s\S]{0,400}setPointerCapture/);
   assert.match(source, /remoteEnabled:\s*devicePaired/);
   assert.match(source, /if \(devicePaired\) \{[\s\S]{0,160}runSync\(\{ background: true \}\)/);
@@ -478,7 +481,18 @@ test("today's focus panel widens the tray and surfaces star, time and delete inl
   assert.match(styles, /\.delete-confirm-dialog/);
   assert.match(styles, /\.delete-confirm-accept[^}]*#b42318/);
   assert.doesNotMatch(styles, /\.clear-check\{[^}]*width:\s*40px/);
-  assert.match(styles, /\.inline-task-card\{[^}]*26px minmax\(0,1fr\)/);
+  assert.match(styles, /\.inline-task-card\{[^}]*20px minmax\(0,1fr\)/);
+  assert.match(styles, /\.task-complete[^}]*border-radius:4px/);
+});
+
+test("calendar and board delete hover keeps the trash contrasting", () => {
+  const styles = css();
+  // A red glyph on a red fill made the icon vanish; hover keeps ink/white.
+  assert.match(styles, /\.danger-confirm:hover,\.danger-confirm:focus-visible\{[^}]*color:var\(--ink\)/);
+  assert.doesNotMatch(styles, /\.danger-confirm:hover\{[^}]*color:#a5261c/);
+  assert.match(styles, /\.board-card-inline-actions \.danger-confirm:hover/);
+  assert.match(styles, /\.week-task-actions \.danger-confirm:hover/);
+  assert.match(styles, /\.task-action-button\.danger:hover,\.task-action-button\.danger:focus-visible\{[^}]*color:#fff/);
 });
 
 test("board lanes offer an inline add button bound to the active project filter", () => {

@@ -123,6 +123,7 @@ import { DaySchedule } from "./day-schedule-view";
 import { ProjectDetailDialog, TaskDetailDialog, type DetailTab } from "./entity-detail-dialog";
 import { ProjectPicker } from "./project-picker";
 import { DangerConfirmButton } from "./danger-confirm";
+import { TaskCompleteButton } from "./task-complete-button";
 import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
 import {
   applyRedo,
@@ -2150,14 +2151,17 @@ function TaskActionBar({
       <button className={`task-action-button ${important ? "active" : ""}`} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={onImportant}>
         <Star aria-hidden="true" fill={important ? "currentColor" : "none"} />
       </button>
-      <button className="task-action-button completion-action" aria-label={done ? t("task.action.reopen") : t("task.action.complete")} title={done ? t("task.action.reopen") : t("task.action.complete")} onClick={onComplete}>
-        {done ? <RotateCcw aria-hidden="true" /> : <span className="action-checkmark" aria-hidden="true">✓</span>}
-      </button>
+      <TaskCompleteButton
+        size="lg"
+        done={done}
+        label={done ? t("task.action.reopen") : t("task.action.complete")}
+        onClick={onComplete}
+      />
       {showEdit && <button className="task-action-button" aria-label={t("task.action.edit")} title={t("task.action.edit")} onClick={onEdit}>
         <Pencil aria-hidden="true" />
       </button>}
       <DangerConfirmButton
-        className="task-action-button danger"
+        className="task-action-button"
         armLabel={t("task.action.delete")}
         confirmLabel={t("confirm.deleteAgain")}
         onConfirm={() => onDelete(task)}
@@ -2314,7 +2318,7 @@ function InlineTaskCard({ task, today, projects, onOpen, onPatch, onComplete, on
   const { t, preferences } = useUiPreferences();
   const overdueDays = task.status !== "done" && task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
   const important = task.priority === "highest";
-  return <article className={`inline-task-card ${important ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><button className={`clear-check ${task.status === "done" ? "done" : ""}`} aria-label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={(event) => { event.stopPropagation(); onComplete(task); }}>{task.status === "done" ? "✓" : ""}</button><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong className="inline-task-title" title={task.title}>{task.title}</strong><button type="button" className={`row-star ${important ? "active" : ""}`} aria-pressed={important} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={(event) => { event.stopPropagation(); if (task.id) onPatch(task, { priority: important ? "high" : "highest", ...(important ? {} : { taskDate: today }) }); }}><Star aria-hidden="true" fill={important ? "currentColor" : "none"} /></button></div><div className="inline-task-meta"><span className="inline-project-inline">{projects && onPickProject && task.id ? <ProjectPicker variant="compact" projects={projects} valueId={task.projectId} onSelect={(project) => onPickProject(task.id!, project?.id ?? null)} locale={preferences.language} ariaLabel={`${task.title} 專案`} /> : (task.projectName ?? t("app.unassigned"))}{task.startTime ? ` · ${task.startTime}` : ""}</span></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<DangerConfirmButton armLabel="永久刪除" confirmLabel={t("confirm.deleteAgain")} onConfirm={() => onDelete(task)} /></div></article>;
+  return <article className={`inline-task-card ${important ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><TaskCompleteButton done={task.status === "done"} label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)} /><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong className="inline-task-title" title={task.title}>{task.title}</strong><button type="button" className={`row-star ${important ? "active" : ""}`} aria-pressed={important} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={(event) => { event.stopPropagation(); if (task.id) onPatch(task, { priority: important ? "high" : "highest", ...(important ? {} : { taskDate: today }) }); }}><Star aria-hidden="true" fill={important ? "currentColor" : "none"} /></button></div><div className="inline-task-meta"><span className="inline-project-inline">{projects && onPickProject && task.id ? <ProjectPicker variant="compact" projects={projects} valueId={task.projectId} onSelect={(project) => onPickProject(task.id!, project?.id ?? null)} locale={preferences.language} ariaLabel={`${task.title} 專案`} /> : (task.projectName ?? t("app.unassigned"))}{task.startTime ? ` · ${task.startTime}` : ""}</span></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<DangerConfirmButton armLabel="永久刪除" confirmLabel={t("confirm.deleteAgain")} onConfirm={() => onDelete(task)} /></div></article>;
 }
 
 function TaskDateInput({
@@ -2498,13 +2502,12 @@ function LegacyToday({
                   }
                 }}
               >
-                <button
-                  className={`check ${task.status === "done" ? "done" : ""}`}
-                  aria-label={`${task.title}標記完成`}
+                <TaskCompleteButton
+                  size="lg"
+                  done={task.status === "done"}
+                  label={`${task.title}標記完成`}
                   onClick={() => toggleDone(task)}
-                >
-                  {task.status === "done" ? "✓" : ""}
-                </button>
+                />
                 <div className="task-body">
                   <div className="task-title-row">
                     <PriorityBadge priority={task.priority} />
@@ -2564,13 +2567,12 @@ function LegacyToday({
                 className="task-card completed-task"
                 key={task.id ?? task.title}
               >
-                <button
-                  className="check done"
-                  aria-label={`${task.title}重新開啟`}
+                <TaskCompleteButton
+                  size="lg"
+                  done
+                  label={`${task.title}重新開啟`}
                   onClick={() => toggleDone(task)}
-                >
-                  ✓
-                </button>
+                />
                 <div className="task-body">
                   <div className="task-title-row">
                     <PriorityBadge priority={task.priority} />
@@ -3053,16 +3055,11 @@ function Board({
                       <button type="button" className="board-drag-handle" data-drag-handle aria-label={`拖曳 ${task.title}`} onClick={(event) => event.stopPropagation()}>
                         <GripVertical aria-hidden="true" />
                       </button>
-                      <button
-                        type="button"
-                        className={`clear-check ${task.status === "done" ? "done" : ""}`}
-                        aria-label={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
-                        title={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          moveToLane(task.id, task.status === "done" ? "todo" : "done");
-                        }}
-                      >{task.status === "done" ? "✓" : ""}</button>
+                      <TaskCompleteButton
+                        done={task.status === "done"}
+                        label={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                        onClick={() => moveToLane(task.id, task.status === "done" ? "todo" : "done")}
+                      />
                       <PriorityControl
                         priority={task.priority}
                         compact
@@ -3655,8 +3652,7 @@ export function Calendar({
                           >
                             <GripVertical aria-hidden="true" />
                           </button>
-                          <button type="button" className={`calendar-quick-check ${entry.task.status === "done" ? "done" : ""}`} aria-label={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} title={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); complete(entry.task.id); }}>{entry.task.status === "done" ? "✓" : ""}</button>
-                          {entry.task.status === "done" && <span className="task-done-check">✓</span>}
+                          <TaskCompleteButton size="sm" className="calendar-quick-check" done={entry.task.status === "done"} label={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} onClick={() => complete(entry.task.id)} />
                           <span className="calendar-task-text">{entry.task.title}</span>
                           {dragTaskId === entry.task.id && dragBatchIds.length > 1 && <span className="calendar-drag-count" aria-hidden="true">{dragBatchIds.length}</span>}
                         </span>
@@ -3770,15 +3766,18 @@ export function Calendar({
                           >
                             <GripVertical aria-hidden="true" />
                           </button>
-                          <strong>
-                            {entry.task.status === "done" ? "✓ " : ""}
-                            {entry.task.title}
-                          </strong>
+                          <TaskCompleteButton
+                            size="sm"
+                            done={entry.task.status === "done"}
+                            label={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                            onClick={() => complete(entry.task.id)}
+                          />
+                          <strong>{entry.task.title}</strong>
                         </div>
                         <small>
                           {entry.task.projectName ?? "無專案"}
                         </small>
-                        <div className="week-task-actions"><button type="button" aria-label={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} title={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} onClick={(event) => { event.stopPropagation(); complete(entry.task.id); }}><CheckCircle2 aria-hidden="true" /></button><DangerConfirmButton className="danger" armLabel={t("task.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={() => remove(entry.task)} /></div>
+                        <div className="week-task-actions"><DangerConfirmButton armLabel={t("task.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={() => remove(entry.task)} /></div>
                       </article>
                     ))}
                   </div>

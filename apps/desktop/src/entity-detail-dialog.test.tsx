@@ -154,10 +154,9 @@ test("clicking outside auto-saves dirty task edits instead of discarding them", 
         onDelete={() => undefined}
       />,
     ));
-    // Make the draft dirty through the status flip button (typing is not
+    // Make the draft dirty through the title-row checkbox (typing is not
     // reproducible for controlled inputs in this DOM shim).
-    const toggle = [...container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("task.action.complete"))!;
+    const toggle = container.querySelector<HTMLButtonElement>(".task-complete")!;
     assert.ok(toggle, "a completion toggle exists in the form");
     flushSync(() => toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
     await act(async () => {
@@ -192,7 +191,7 @@ test("the task detail delete button asks in a dialog before deleting", () => {
         onDelete={() => { deleted += 1; }}
       />,
     ));
-    const danger = [...container.querySelectorAll<HTMLButtonElement>(".danger-confirm")].find((button) => button.textContent?.includes("task.action.delete"))!;
+    const danger = container.querySelector<HTMLButtonElement>(".danger-confirm")!;
     assert.ok(danger, "a delete control is rendered");
     flushSync(() => danger.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
     assert.equal(deleted, 0, "opening the dialog does not delete");
