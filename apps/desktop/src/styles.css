@@ -539,15 +539,26 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .timed-block-inline-actions button,.timed-block-inline-actions .danger-confirm{display:grid;place-items:center;width:22px;height:22px;padding:0;border:1px solid #00000026;border-radius:6px;background:#ffffffd9;color:inherit;cursor:pointer}
 .timed-block-inline-actions button:hover,.timed-block-inline-actions .danger-confirm.armed{background:#fff;color:#a5261c}
 .timed-block-inline-actions svg{width:12px;height:12px}
-.tray-star,.row-star{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:#b9bbbd;cursor:pointer}
-.tray-star svg,.row-star svg{width:14px;height:14px}
-.tray-star:hover,.row-star:hover,.tray-star.active,.row-star.active{color:#d92d20;background:var(--red-soft)}
-.schedule-tray-title-row{grid-column:1/-1;display:flex;align-items:center;gap:6px;min-width:0}
-.schedule-tray-title-row strong{flex:1;min-width:0;font-size:12px;line-height:1.35;overflow-wrap:anywhere}
-.schedule-tray-meta{grid-column:1/-1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:28px}
-.tray-when{font-size:11px;font-weight:750;color:#555}
-.tray-overdue-date{color:#a5261c;font-size:10px}
-.schedule-tray-project{margin-left:auto;min-width:0;max-width:100%}
+.tray-star,.row-star{display:grid;place-items:center;width:26px;height:26px;padding:0;border:1px solid transparent;border-radius:7px;background:transparent;color:#b0b0ad;cursor:pointer;flex:0 0 auto}
+.tray-star svg,.row-star svg{width:15px;height:15px}
+.tray-star:hover,.row-star:hover,.tray-star.active,.row-star.active{color:#d92d20;background:var(--red-soft);border-color:#f0c4bf}
+.schedule-tray-title-row{grid-column:1/-1;display:flex;align-items:flex-start;gap:6px;min-width:0}
+.schedule-tray-title-row strong,.schedule-tray-title-row .inline-title-button{flex:1;min-width:0;font-size:12px;line-height:1.35;display:-webkit-box;overflow:hidden;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.schedule-tray-meta{grid-column:1/-1;display:flex;align-items:center;gap:6px;flex-wrap:nowrap;min-width:0;min-height:24px}
+.tray-when{font-size:11px;font-weight:750;color:#555;flex:0 0 auto}
+.tray-overdue-date{color:#a5261c;font-size:10px;flex:0 0 auto;max-width:7.5em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.schedule-tray-project{flex:1 1 auto;min-width:0;max-width:100%;margin-left:0}
+.schedule-tray-actions{flex:0 0 auto;margin-left:auto}
+.schedule-tray-card{min-width:0;overflow:hidden}
+.schedule-tray-card strong{overflow-wrap:anywhere}
+.project-picker-chip-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-picker-chip svg,.project-picker-chip .dot{flex:0 0 auto}
+.project-picker-compact,.project-picker.compact{max-width:100%}
+.project-picker-compact .project-picker-chip,.project-picker.compact .project-picker-chip{max-width:100%;padding:2px 8px;font-size:10px}
+.inline-title-row{min-width:0}
+.inline-task-title,.inline-title-row strong{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.inline-project-inline,.inline-task-meta{min-width:0;max-width:100%}
+.inline-project-inline .project-picker{max-width:100%}
 .calendar-quick-check{display:grid;place-items:center;flex:0 0 15px;width:15px;height:15px;border:1.5px solid #666;border-radius:4px;background:var(--paper);color:#fff;padding:0;font-size:10px;line-height:1}
 .calendar-quick-check.done{border-color:#16834c;background:#16834c}
 .week-task-actions{display:flex;justify-content:flex-end;gap:4px}

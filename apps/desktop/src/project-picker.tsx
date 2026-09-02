@@ -216,7 +216,7 @@ export function ProjectPicker({
             style={{ background: projectColor(selected?.id ?? selected?.name ?? "").accent }}
             aria-hidden="true"
           />
-          <strong>{selected?.name ?? translate(locale, "picker.none")}</strong>
+          <span className="project-picker-chip-label">{selected?.name ?? translate(locale, "picker.none")}</span>
           <ChevronDown aria-hidden="true" />
         </button>
         {menu}

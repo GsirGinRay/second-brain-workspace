@@ -859,7 +859,7 @@ export function DaySchedule({
                   <div className="schedule-tray-body">
                     <div className="schedule-tray-title-row">
                       {onPriority && task.id ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
-                      <strong className="inline-title-button">{task.title}</strong>
+                      <strong className="inline-title-button" title={task.title}>{task.title}</strong>
                       {onStar && task.id && (
                         <button
                           type="button"
@@ -876,10 +876,22 @@ export function DaySchedule({
                         </button>
                       )}
                     </div>
-                    {task.taskDate && task.taskDate < date ? <small className="tray-overdue-date">{task.taskDate}</small> : null}
-                    {(onComplete || onDelete) && (
-                      <div className="schedule-tray-meta">
-                        {task.startTime && <span className="tray-when">{task.startTime}</span>}
+                    <div className="schedule-tray-meta">
+                      {task.taskDate && task.taskDate < date ? <small className="tray-overdue-date" title={task.taskDate}>{task.taskDate}</small> : null}
+                      {task.startTime && <span className="tray-when">{task.startTime}</span>}
+                      {projects && onPickProject && task.id && (
+                        <div className="schedule-tray-project" onClick={(event) => event.stopPropagation()}>
+                          <ProjectPicker
+                            variant="compact"
+                            projects={projects}
+                            valueId={task.projectId}
+                            onSelect={(project) => onPickProject(task.id!, project?.id ?? null)}
+                            locale={locale}
+                            ariaLabel={`${task.title} 專案`}
+                          />
+                        </div>
+                      )}
+                      {(onComplete || onDelete) && (
                         <span className="schedule-tray-actions">
                           {onComplete && <button type="button" aria-label={task.status === "done" ? labels.reopen : labels.complete} title={task.status === "done" ? labels.reopen : labels.complete} onClick={(event) => { event.stopPropagation(); onComplete(task); }}><Check aria-hidden="true" /></button>}
                           {onDelete && (
@@ -891,20 +903,8 @@ export function DaySchedule({
                             />
                           )}
                         </span>
-                      </div>
-                    )}
-                    {projects && onPickProject && task.id && (
-                      <div className="schedule-tray-project" onClick={(event) => event.stopPropagation()}>
-                        <ProjectPicker
-                          variant="compact"
-                          projects={projects}
-                          valueId={task.projectId}
-                          onSelect={(project) => onPickProject(task.id!, project?.id ?? null)}
-                          locale={locale}
-                          ariaLabel={`${task.title} 專案`}
-                        />
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </article>
               ))}
