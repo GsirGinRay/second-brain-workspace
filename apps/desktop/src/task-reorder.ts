@@ -67,6 +67,48 @@ export function reorderTodayTray(
 }
 
 /**
+ * Batch variant of reorderTodayTray: a marquee selection dragged by its
+ * six-dot grip travels as one block (kept in its current display order) and
+ * lands before/after `targetId`. Like the single reorder, the group may only
+ * travel inside the dragged task's own tray segment — a selection spanning
+ * several priority/date groups reorders just its members inside that segment.
+ * Pure: returns null when the drop changes nothing or is impossible.
+ */
+export function reorderTodayTrayBatch(
+  trayTasks: readonly BrainTaskSnapshot[],
+  today: string,
+  draggedIds: readonly string[],
+  targetId: string | null,
+  place: DropPosition,
+): BrainTaskSnapshot[] | null {
+  const dragged = trayTasks.find((task) => task.id === draggedIds[0]);
+  if (!dragged || !targetId) return null;
+  const key = todayTraySegmentKey(dragged, today);
+  const moving = trayTasks.filter((task) =>
+    task.id && draggedIds.includes(task.id) && todayTraySegmentKey(task, today) === key);
+  if (moving.length === 0) return null;
+  if (moving.length === 1) return reorderTodayTray(trayTasks, today, moving[0]!.id!, targetId, place);
+  if (moving.some((task) => task.id === targetId)) return null;
+  const segment = trayTasks.filter((task) => todayTraySegmentKey(task, today) === key);
+  if (!segment.some((task) => task.id === targetId)) return null;
+  const movingIds = new Set(moving.map((task) => task.id as string));
+  const remainingSegment = segment.filter((task) => !(task.id && movingIds.has(task.id)));
+  const anchor = remainingSegment.findIndex((task) => task.id === targetId);
+  if (anchor < 0) return null;
+  const to = place === "before" ? anchor : anchor + 1;
+  const reorderedSegment = [...remainingSegment.slice(0, to), ...moving, ...remainingSegment.slice(to)];
+  const next = [...trayTasks];
+  let cursor = 0;
+  for (let index = 0; index < next.length; index += 1) {
+    if (todayTraySegmentKey(next[index]!, today) === key) {
+      next[index] = reorderedSegment[cursor]!;
+      cursor += 1;
+    }
+  }
+  return next;
+}
+
+/**
  * Persist a displayed order into the long-term Markdown data: each listed id gets
  * the rank for its position. Tasks not listed keep their rank untouched so a tray
  * reorder never shuffles unrelated views (the board sorts purely by rank).

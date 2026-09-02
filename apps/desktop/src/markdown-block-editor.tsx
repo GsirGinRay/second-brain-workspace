@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Code2, Copy, GripVertical, Palette, Plus, Repeat2, Trash2 } from "lucide-react";
 import { MarkdownPreview, type MarkdownEditorLocale } from "./markdown-editor";
+import { GLOBAL_SELECTION_DELETE_EVENT } from "./global-shift-marquee";
 
 interface MarkdownBlock {
   id: string;
@@ -210,6 +211,16 @@ function stripBlockPrefix(content: string): string {
     .replace(/^\s*>\s*/, "");
 }
 
+/** Strip the line-start marker (`- `, `1. `, `> `, `# ` …) so the row preview
+ *  shows just the content. Heading / paragraph blocks are returned as-is. */
+function stripBlockPrefixForPreview(line: string, kind: BlockKind): string {
+  if (kind === "heading") return line.replace(/^\s*#{1,6}\s+/, "");
+  if (kind === "bullet") return line.replace(/^\s*[-*+]\s+/, "");
+  if (kind === "ordered") return line.replace(/^\s*\d+[.)、]\s+/, "");
+  if (kind === "quote") return line.replace(/^\s*>\s*/, "");
+  return line;
+}
+
 function trailingSlash(content: string): { start: number; query: string } | null {
   const match = content.match(/(?:^|\s)\/([^/\n]*)$/);
   if (!match || match.index === undefined) return null;
@@ -273,6 +284,101 @@ export function MarkdownBlockEditor({
   const editorRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const historyRef = useRef<{ past: string[]; future: string[] }>({ past: [], future: [] });
+  // IME (輸入法) Enter handling, modelled on how Notion-class editors treat
+  // it (ProseMirror does the same with its compositionEndedAt timestamp):
+  // - While the IME is composing (`isComposing` / keyCode 229) Enter belongs
+  //   to the input method: never split the block, and never preventDefault —
+  //   cancelling the browser default inside an active composition breaks the
+  //   confirm on some IMEs.
+  // - Some IMEs (notably 注音) re-dispatch the confirming Enter *immediately
+  //   after* compositionend. That echo is identified by its timestamp sitting
+  //   within ~100ms of the compositionend event and is cancelled so it
+  //   neither splits the block nor inserts a newline. A tight timestamp
+  //   window — not a long blanket timeout — keeps the very next real Enter
+  //   (the one that creates the following todo) instant: one press, like
+  //   Notion. The old 1.5s dark window swallowed 1-2 legitimate Enters and
+  //   made line breaks feel like they needed four presses.
+  const IME_ECHO_WINDOW_MS = 100;
+  const imeCompositionEndedAtRef = useRef(0);
+  // Composition timing is a DOM-level concern, so compositionend is recorded
+  // through a native listener (attached with the textarea ref) instead of a
+  // React prop: the timestamp is then guaranteed to be in place before any
+  // following keydown is dispatched, independent of React's event delegation.
+  const imeEndListeners = new WeakMap<HTMLTextAreaElement, (event: CompositionEvent) => void>();
+  const bindImeEndListener = (element: HTMLTextAreaElement) => {
+    const previous = imeEndListeners.get(element);
+    if (previous) element.removeEventListener("compositionend", previous);
+    const listener = (event: CompositionEvent) => {
+      imeCompositionEndedAtRef.current = event.timeStamp;
+    };
+    imeEndListeners.set(element, listener);
+    element.addEventListener("compositionend", listener);
+  };
+  const imeEnterDisposition = (event: ReactKeyboardEvent<HTMLTextAreaElement>): "confirm" | "echo" | false => {
+    if (event.key !== "Enter" && event.key !== "Process") return false;
+    const native = event.nativeEvent as KeyboardEvent & { keyCode?: number; isComposing?: boolean };
+    if (event.key === "Process" || native.isComposing || native.keyCode === 229) return "confirm";
+    const endedAt = imeCompositionEndedAtRef.current;
+    if (endedAt > 0 && Math.abs(event.timeStamp - endedAt) < IME_ECHO_WINDOW_MS) return "echo";
+    return false;
+  };
+  // Tracks the id of the block whose textarea was last focused so we can place
+  // the caret at the end whenever the editor switches into editing mode for a
+  // *different* block. Re-entering edit mode on the same block keeps the
+  // existing caret (the user clicked back into a specific spot).
+  const lastFocusedBlockRef = useRef<string | null>(null);
+  /** Auto-size a textarea and place the caret at the end of its current value. */
+  const bindTextareaRef = (blockId: string) => (element: HTMLTextAreaElement | null) => {
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+    bindImeEndListener(element);
+    if (lastFocusedBlockRef.current !== blockId) {
+      lastFocusedBlockRef.current = blockId;
+      // Defer past React's autoFocus commit so the caret lands after focus,
+      // not before (Chromium otherwise resets the selection to 0).
+      const focus = () => {
+        try { element.focus({ preventScroll: true }); } catch { /* element unmounted */ }
+        const end = element.value.length;
+        try { element.setSelectionRange(end, end); } catch { /* element unmounted */ }
+      };
+      // Two animation frames are safer than one: the first waits for
+      // React to commit, the second waits for Chromium to settle the
+      // selection that autoFocus inserted.
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(focus));
+      } else {
+        window.setTimeout(focus, 0);
+      }
+    }
+  };
+
+  // Whenever the editor switches the active block, re-snap the caret to
+  // the end of *that* block's value. React's `autoFocus` only fires on the
+  // first render, and on later renders the focused element does not get
+  // re-focused — which means the previous selection (or default 0) leaks
+  // into the freshly mounted textarea.
+  useEffect(() => {
+    if (!editingId) return;
+    const escape = (value: string) =>
+      typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(value) : value;
+    const placeCaretAtEnd = () => {
+      const element = listRef.current?.querySelector<HTMLTextAreaElement>(`[data-markdown-block-id="${escape(editingId)}"] .markdown-block-input`);
+      if (!element) return;
+      try { element.focus({ preventScroll: true }); } catch { /* ignore */ }
+      const end = element.value.length;
+      try { element.setSelectionRange(end, end); } catch { /* ignore */ }
+    };
+    // Wait a frame for the value to settle (React commit + the value
+    // attribute write) before measuring the length, otherwise the caret
+    // snaps to the *previous* block's length.
+    const raf = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+      ? window.requestAnimationFrame(() => window.requestAnimationFrame(placeCaretAtEnd))
+      : window.setTimeout(placeCaretAtEnd, 0);
+    return () => {
+      if (typeof raf === "number" && typeof window !== "undefined") window.cancelAnimationFrame(raf);
+    };
+  }, [editingId]);
 
   const colorNames: Array<[BlockColor, string, string]> = zh
     ? [["default", "預設", "default"], ["gray", "灰色", "gray grey"], ["brown", "棕色", "brown"], ["orange", "橘色", "orange"], ["yellow", "黃色", "yellow"], ["green", "綠色", "green"], ["blue", "藍色", "blue"], ["purple", "紫色", "purple"], ["pink", "粉色", "pink"], ["red", "紅色", "red"]]
@@ -316,6 +422,34 @@ export function MarkdownBlockEditor({
     });
   }, [blocks]);
 
+  // Listen for delete-selection requests from the global shift marquee: a user
+  // who blue-rectangle-selected blocks across panels and pressed Delete expects
+  // every block here to vanish in one undoable step.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ ids: string[]; kind: string }>).detail;
+      if (!detail || detail.kind !== "markdown-block") return;
+      const targets = new Set(detail.ids);
+      const survivors = blocks.filter((block) => !targets.has(block.id));
+      if (survivors.length === blocks.length) return;
+      pushHistory();
+      if (survivors.length === 0) {
+        const replacement = { id: newBlockId(), source: "" };
+        commit([replacement]);
+        setEditingId(replacement.id);
+      } else {
+        commit(survivors);
+        if (editingId && targets.has(editingId)) {
+          const next = blocks.find((block) => !targets.has(block.id));
+          setEditingId(next ? next.id : null);
+        }
+      }
+      setSelectedBlockIds([]);
+    };
+    window.addEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
+    return () => window.removeEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
+  }, [blocks, editingId]);
+
   const commit = (next: MarkdownBlock[]) => {
     setBlocks(next);
     onChange(serializeBlocks(next));
@@ -349,9 +483,39 @@ export function MarkdownBlockEditor({
 
   // Ctrl+Z / Ctrl+Shift+Z inside the canvas restores the previous arrangement.
   // Inside a textarea the browser's native text undo applies instead.
+  // Delete/Backspace with selected blocks removes them in one undoable step.
   const handleHistoryShortcut = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape" && selectedBlockIds.length > 0) {
       event.preventDefault();
+      setSelectedBlockIds([]);
+      return;
+    }
+    if ((event.key === "Delete" || event.key === "Backspace") && selectedBlockIds.length > 0) {
+      const target = event.target as HTMLElement;
+      // Inside a textarea, only batch-delete when the caret is collapsed;
+      // a real text selection there should still delete the selected text.
+      if (target.tagName === "TEXTAREA") {
+        const textarea = target as HTMLTextAreaElement;
+        if (textarea.selectionStart !== textarea.selectionEnd) return;
+      } else if (target.tagName === "INPUT") {
+        return;
+      }
+      event.preventDefault();
+      const targets = new Set(selectedBlockIds);
+      const survivors = blocks.filter((block) => !targets.has(block.id));
+      if (survivors.length === blocks.length) return;
+      pushHistory();
+      if (survivors.length === 0) {
+        const replacement = { id: newBlockId(), source: "" };
+        commit([replacement]);
+        setEditingId(replacement.id);
+      } else {
+        commit(survivors);
+        if (editingId && targets.has(editingId)) {
+          const next = blocks.find((block) => !targets.has(block.id));
+          setEditingId(next ? next.id : null);
+        }
+      }
       setSelectedBlockIds([]);
       return;
     }
@@ -415,6 +579,14 @@ export function MarkdownBlockEditor({
       pushHistory();
       updateBlockContent(block, "---");
       setEditingId(null);
+      return;
+    }
+    // Notion-style: typing `[] ` (bracket + space) on an empty line turns
+    // the line into a todo task without the user having to type `-` first.
+    if (/^\s*\[\]\s$/.test(source)) {
+      const replacement = source.replace(/^(\s*)\[\]\s/, "$1- [ ] ");
+      pushHistory();
+      updateBlockContent(block, replacement);
       return;
     }
     updateBlockContent(block, source);
@@ -484,8 +656,9 @@ export function MarkdownBlockEditor({
     const textarea = event.currentTarget;
     const source = parseStyledBlock(block.source).content;
     // Chinese/Japanese IME confirmations arrive as Enter with isComposing set;
-    // they must never be read as structural edits.
-    if (event.nativeEvent.isComposing || (event.nativeEvent as { keyCode?: number }).keyCode === 229) return false;
+    // they must never be read as structural edits. (The IME gate in the
+    // textarea's onKeyDown already routed composing/echo Enters away, so this
+    // is only a safety net and never cancels the browser default.)
 
     const slash = trailingSlash(source);
     const commandOptions = slash ? filteredCommands(slash.query) : [];
@@ -509,11 +682,70 @@ export function MarkdownBlockEditor({
       }
     }
 
-    if (event.key === "Backspace" && visibleOffset > 0 && textarea.selectionStart === 0 && textarea.selectionEnd === 0 && source.length === visibleOffset) {
+    if (event.key === "Backspace" && textarea.selectionStart === 0 && textarea.selectionEnd === 0) {
+      const previousIndex = blocks.findIndex((item) => item.id === block.id) - 1;
+      const previousBlock = previousIndex >= 0 ? blocks[previousIndex] : undefined;
+      if (visibleOffset > 0 && source.length === visibleOffset) {
+        // The line is just its list marker ("- " just typed): clear it.
+        event.preventDefault();
+        pushHistory();
+        updateBlockContent(block, "");
+        return true;
+      }
+      if (!previousBlock) return false;
+      // Notion-style merge upward: the previous line's text joins this one at
+      // the caret (its own list/todo marker never travels), the previous block
+      // disappears, and the caret lands at the junction so further Backspaces
+      // keep deleting the previous line's characters.
       event.preventDefault();
+      const previousStyled = parseStyledBlock(previousBlock.source);
+      const previousBody = previousStyled.content.includes("\n")
+        ? previousStyled.content
+        : stripBlockPrefix(previousStyled.content);
+      const mergedSource = `${source.slice(0, visibleOffset)}${previousBody}${source.slice(visibleOffset)}`;
       pushHistory();
-      updateBlockContent(block, "");
+      const remaining = blocks.filter((item) => item.id !== previousBlock.id);
+      const next = remaining.map((item) => item.id === block.id
+        ? { ...item, source: withBlockStyle(mergedSource, parseStyledBlock(block.source).style) }
+        : item);
+      commit(next);
+      // The textarea shows the content without the block's own marker, so the
+      // junction sits at previousBody.length in textarea coordinates.
+      const caretInTextarea = previousBody.length;
+      requestAnimationFrame(() => {
+        textarea.focus({ preventScroll: true });
+        textarea.setSelectionRange(caretInTextarea, caretInTextarea);
+      });
       return true;
+    }
+
+    // Notion-style merge: pressing Delete at the very end of a block (and
+    // nothing selected) pulls the next block's content into the current one,
+    // mirroring how a single physical paragraph is split across blocks. A
+    // todo below donates its text without its `- [ ] ` marker, and an empty
+    // todo simply disappears instead of smearing marker junk into the text.
+    if (event.key === "Delete" && textarea.selectionStart === textarea.selectionEnd && textarea.selectionEnd + visibleOffset === source.length) {
+      const currentIndex = blocks.findIndex((item) => item.id === block.id);
+      const nextBlock = currentIndex >= 0 ? blocks[currentIndex + 1] : undefined;
+      if (nextBlock) {
+        event.preventDefault();
+        const nextStyled = parseStyledBlock(nextBlock.source);
+        const nextTaskMatch = nextStyled.content.match(TASK_LINE);
+        const nextContent = nextTaskMatch ? (nextTaskMatch[3] ?? "").trim() : nextStyled.content;
+        pushHistory();
+        const caretInMerged = source.length - visibleOffset;
+        const merged = nextContent ? source + nextContent : source;
+        const remaining = blocks.filter((item) => item.id !== nextBlock.id);
+        const next = remaining.map((item) => item.id === block.id
+          ? { ...item, source: withBlockStyle(merged, parseStyledBlock(block.source).style) }
+          : item);
+        commit(next);
+        requestAnimationFrame(() => {
+          textarea.focus();
+          textarea.setSelectionRange(caretInMerged, caretInMerged);
+        });
+        return true;
+      }
     }
 
     // Inline wrapping shortcuts.
@@ -543,6 +775,22 @@ export function MarkdownBlockEditor({
     const lineEnd = lineEndIndex === -1 ? source.length : lineEndIndex;
     const line = source.slice(lineStart, lineEnd);
     const relCaret = caret - lineStart;
+
+    // Notion-style shortcut: typing `[]` (with optional trailing space) on
+    // an otherwise empty line and pressing space turns the line into a todo
+    // task, mirroring how `- ` does the same for a bullet.
+    if (/^\s*\[\]\s*$/.test(line)) {
+      event.preventDefault();
+      pushHistory();
+      const replacement = `${source.slice(0, lineStart)}- [ ] ${source.slice(lineEnd)}`;
+      updateBlockContent(block, replacement);
+      requestAnimationFrame(() => {
+        textarea.focus();
+        const caretAt = lineStart + "- [ ] ".length - visibleOffset;
+        textarea.setSelectionRange(caretAt, caretAt);
+      });
+      return true;
+    }
 
     // ``` + Enter opens a fenced code block.
     if (line.trim() === "```") {
@@ -783,6 +1031,8 @@ export function MarkdownBlockEditor({
             {renderIndicator(index)}
             <article
               data-markdown-block-id={block.id}
+              data-global-select-id={block.id}
+              data-global-select-kind="markdown-block"
               data-block-kind={kind}
               data-block-color={styled.style.color}
               data-block-background={styled.style.background}
@@ -874,22 +1124,55 @@ export function MarkdownBlockEditor({
                       className="markdown-block-input markdown-task-input kind-task"
                       aria-label={zh ? "編輯待辦內容" : "Edit task content"}
                       placeholder={zh ? "輸入待辦內容" : "Type task content"}
-                      onChange={(event) => updateBlockContent(block, `${singleTaskMatch[1]}[${singleTaskMatch[2]}] ${event.target.value}`)}
+                      onChange={(event) => {
+                        updateBlockContent(block, `${singleTaskMatch[1]}[${singleTaskMatch[2]}] ${event.target.value}`);
+                      }}
                       onBlur={(event) => {
                         if (event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) return;
                         finishEditing(block.id);
                       }}
-                      ref={(element) => {
-                        if (!element) return;
-                        element.style.height = "auto";
-                        element.style.height = `${element.scrollHeight}px`;
-                      }}
+                      ref={bindTextareaRef(block.id)}
                       onKeyDown={(event) => {
-                        if (event.nativeEvent.isComposing || (event.nativeEvent as { keyCode?: number }).keyCode === 229) return;
-                        if (event.key === "Backspace" && !singleTaskMatch[3]!.trim() && event.currentTarget.selectionStart === 0) {
-                          event.preventDefault();
-                          pushHistory();
-                          updateBlockContent(block, "");
+                        const ime = imeEnterDisposition(event);
+                        if (ime !== false) {
+                          // "confirm": the IME owns this key — stay out of its
+                          // way entirely. "echo": cancel so it neither splits
+                          // the block nor drops a literal newline.
+                          if (ime === "echo") event.preventDefault();
+                          return;
+                        }
+                        const taskTextarea = event.currentTarget;
+                        if (event.key === "Backspace" && taskTextarea.selectionStart === 0 && taskTextarea.selectionEnd === 0) {
+                          const previousIndex = blocks.findIndex((item) => item.id === block.id) - 1;
+                          const previousBlock = previousIndex >= 0 ? blocks[previousIndex] : undefined;
+                          if (previousBlock) {
+                            // Notion-style merge upward: the previous line's
+                            // text joins this one (its own todo/bullet marker
+                            // never travels with it) and the caret lands at
+                            // the junction, so further Backspaces keep
+                            // deleting the previous line's characters.
+                            event.preventDefault();
+                            const previousStyled = parseStyledBlock(previousBlock.source);
+                            const previousBody = previousStyled.content.includes("\n")
+                              ? previousStyled.content
+                              : stripBlockPrefix(previousStyled.content);
+                            pushHistory();
+                            const remaining = blocks.filter((item) => item.id !== previousBlock.id);
+                            const merged = `${singleTaskMatch[1]}[${singleTaskMatch[2]}] ${previousBody}${singleTaskMatch[3]!.trimStart()}`;
+                            const next = remaining.map((item) => item.id === block.id
+                              ? { ...item, source: withBlockStyle(merged, parseStyledBlock(block.source).style) }
+                              : item);
+                            commit(next);
+                            requestAnimationFrame(() => {
+                              taskTextarea.focus({ preventScroll: true });
+                              taskTextarea.setSelectionRange(previousBody.length, previousBody.length);
+                            });
+                          } else if (!singleTaskMatch[3]!.trim()) {
+                            // First block on the canvas: drop the marker.
+                            event.preventDefault();
+                            pushHistory();
+                            updateBlockContent(block, "");
+                          }
                         } else if (event.key === "Enter" && !event.shiftKey) {
                           event.preventDefault();
                           pushHistory();
@@ -901,6 +1184,32 @@ export function MarkdownBlockEditor({
                           const created = { id: newBlockId(), source: "- [ ] " };
                           commit(blocks.flatMap((item) => item.id === block.id ? [item, created] : [item]));
                           setEditingId(created.id);
+                        } else if (event.key === "Delete" && event.currentTarget.selectionStart === event.currentTarget.selectionEnd && event.currentTarget.selectionEnd === singleTaskMatch[3]!.trimStart().length) {
+                          // Notion-style merge: at the end of a task, Delete
+                          // folds the next block's TEXT into the current task
+                          // line. The next block's own `- [ ] ` marker never
+                          // travels with it, and an empty todo below simply
+                          // disappears instead of leaving marker debris.
+                          const currentIndex = blocks.findIndex((item) => item.id === block.id);
+                          const nextBlock = currentIndex >= 0 ? blocks[currentIndex + 1] : undefined;
+                          if (nextBlock) {
+                            event.preventDefault();
+                            const nextStyled = parseStyledBlock(nextBlock.source);
+                            const nextTaskMatch = nextStyled.content.match(TASK_LINE);
+                            const nextBody = nextTaskMatch ? (nextTaskMatch[3] ?? "").trim() : nextStyled.content;
+                            pushHistory();
+                            const remaining = blocks.filter((item) => item.id !== nextBlock.id);
+                            const merged = `${singleTaskMatch[1]}[${singleTaskMatch[2]}] ${(singleTaskMatch[3] ?? "").trimStart()}${nextBody}`;
+                            const next = remaining.map((item) => item.id === block.id
+                              ? { ...item, source: withBlockStyle(merged, parseStyledBlock(block.source).style) }
+                              : item);
+                            commit(next);
+                            requestAnimationFrame(() => {
+                              const ta = event.currentTarget;
+                              ta.focus();
+                              ta.setSelectionRange(singleTaskMatch[3]!.trimStart().length, singleTaskMatch[3]!.trimStart().length);
+                            });
+                          }
                         } else if (event.key === "Escape" || (event.ctrlKey && event.key === "Enter")) {
                           event.preventDefault();
                           event.currentTarget.blur();
@@ -918,14 +1227,18 @@ export function MarkdownBlockEditor({
                       className={`markdown-block-input ${kindClass}`}
                       aria-label={zh ? "編輯 Markdown 區塊" : "Edit Markdown block"}
                       placeholder={zh ? "輸入文字，或輸入 / 使用指令" : "Type text, or press / for commands"}
-                      onChange={(event) => { setActiveCommand(0); updateTypedBlock(block, presentation.sourcePrefix + event.target.value); }}
-                      onBlur={() => finishEditing(block.id)}
-                      ref={(element) => {
-                        if (!element) return;
-                        element.style.height = "auto";
-                        element.style.height = `${element.scrollHeight}px`;
+                      onChange={(event) => {
+                        setActiveCommand(0);
+                        updateTypedBlock(block, presentation.sourcePrefix + event.target.value);
                       }}
+                      onBlur={() => finishEditing(block.id)}
+                      ref={bindTextareaRef(block.id)}
                       onKeyDown={(event) => {
+                        const ime = imeEnterDisposition(event);
+                        if (ime !== false) {
+                          if (ime === "echo") event.preventDefault();
+                          return;
+                        }
                         if (handleTextKeydown(event, block, presentation.sourcePrefix.length)) return;
                         if (event.key === "Escape" || (event.ctrlKey && event.key === "Enter")) {
                           event.preventDefault();
@@ -934,19 +1247,61 @@ export function MarkdownBlockEditor({
                       }}
                     />
                   </div>
+                ) : (kind === "bullet" || kind === "ordered" || kind === "quote" || kind === "heading") ? (
+                  // Render the same row layout as edit mode so the marker chip
+                  // never jumps when the user clicks into the block.
+                  <div
+                    className="markdown-structural-edit-row"
+                    onClick={(event) => {
+                      if ((event.target as HTMLElement).closest("a,button,input,textarea")) return;
+                      setEditingId(block.id);
+                    }}
+                  >
+                    {presentation.marker && <span aria-hidden="true">{presentation.marker}</span>}
+                    <div
+                      className={`markdown-block-static ${kindClass}`}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setEditingId(block.id);
+                        }
+                      }}
+                    >
+                      {styled.content.split("\n").map((line, index) => (
+                        <div key={index} className="markdown-block-static-line">{stripBlockPrefixForPreview(line, kind)}</div>
+                      ))}
+                    </div>
+                  </div>
                 ) : kind === "task" ? (
-                  <div className="markdown-task-block">
+                  <div
+                    className="markdown-task-block"
+                    onClick={(event) => {
+                      // Clicking the text portion enters edit mode; clicking
+                      // the checkbox toggles completion. Putting the checkbox
+                      // outside the <label> keeps the focus on editing instead
+                      // of toggling completion by accident.
+                      if (!(event.target as HTMLElement).closest("input[type=checkbox]")) {
+                        setEditingId(block.id);
+                      }
+                    }}
+                  >
                     {styled.content.split("\n").map((line, lineIndex) => {
                       const match = line.match(TASK_LINE)!;
                       return (
-                        <label key={`${block.id}:${lineIndex}`}>
+                        <div key={`${block.id}:${lineIndex}`} className="markdown-task-block-row">
                           <input
                             type="checkbox"
                             checked={match[2]!.toLowerCase() === "x"}
                             onChange={(event) => toggleTask(block.id, lineIndex, event.currentTarget.checked)}
+                            onClick={(event) => event.stopPropagation()}
+                            aria-label={match[2]!.toLowerCase() === "x" ? (zh ? "重新開啟" : "Reopen") : (zh ? "標記完成" : "Mark complete")}
                           />
-                          <button type="button" onClick={() => setEditingId(block.id)}>{match[3]!.trim()}</button>
-                        </label>
+                          <button type="button" onClick={(event) => { event.stopPropagation(); setEditingId(block.id); }}>
+                            {match[3]!.trim() || (zh ? "輸入待辦內容" : "Type task content")}
+                          </button>
+                        </div>
                       );
                     })}
                   </div>

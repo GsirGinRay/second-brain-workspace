@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Archive,
   CalendarDays,
@@ -78,7 +78,7 @@ import {
   type NativeAdapter,
 } from "./ipc";
 import { SyncEngine, type SyncResult } from "./sync-engine";
-import { GlobalShiftMarquee, getGlobalSelectedIds } from "./global-shift-marquee";
+import { GlobalShiftMarquee, GLOBAL_SELECTION_DELETE_EVENT, consumeGlobalMarqueeClick, getGlobalSelectedIds, getSelectedIdsOfKind } from "./global-shift-marquee";
 import { deleteTaskLocalFirst } from "./task-deletion";
 import {
   applyTaskPriority,
@@ -136,7 +136,7 @@ import {
 } from "./undo-history";
 import {
   reorderDisplayed,
-  reorderTodayTray,
+  reorderTodayTrayBatch,
   todayTraySegmentKey,
   withReassignedRanks,
 } from "./task-reorder";
@@ -371,6 +371,19 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     setImportPromptsOpen(false);
   };
   const syncRunningRef = useRef(false);
+  // Serialize every local write. A multi-task drag followed quickly by
+  // another drag (or any other onSave) would otherwise dispatch two writes
+  // against the same stale `files` snapshot, where the second one trips
+  // HashPrecondition because the first has already moved the file. The
+  // promise chain makes the second call wait for the first to finish, then
+  // re-reads `files` and `tasks` against the freshest state.
+  const pendingPersistRef = useRef<Promise<boolean> | null>(null);
+  // `files` is a React state, which means a second onSave chained on the
+  // first still reads the *pre-first-write* array. Mirror the latest scan
+  // into a ref so chained writes always see the freshest file hashes without
+  // waiting for a React re-render between them.
+  const latestFilesRef = useRef<LocalMarkdownFile[]>([]);
+  useEffect(() => { latestFilesRef.current = files; }, [files]);
   const cloudEtagRef = useRef<string | null>(null);
   const routineTemplateRef = useRef(routineTemplate);
   const allowCloseRef = useRef(false);
@@ -897,7 +910,16 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setStatus("已暫存在這台裝置；關閉前請選擇 Markdown 資料夾");
       return true;
     }
-    const changes = applyDesiredSnapshot(files, {
+    // Always re-read the file snapshot right before computing the diff so
+    // chained writes (e.g. dragging multiple groups in quick succession)
+    // never trip HashPrecondition on a file a previous batch has already
+    // touched but `files` has not yet picked up. We mirror the latest scan
+    // into a ref so a quick second drag reads the post-first-write hashes
+    // even before React has had a chance to re-render.
+    const snapshot = await reloadLocal();
+    if (snapshot?.files) latestFilesRef.current = snapshot.files;
+    const currentFiles = snapshot?.files ?? latestFilesRef.current;
+    const changes = applyDesiredSnapshot(currentFiles, {
       schemaVersion: 6,
       tasks: nextTasks,
       projects: nextProjects,
@@ -964,7 +986,13 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     nextCollections = collections,
   ): Promise<boolean> {
     const previous: WorkspaceSnapshot = { tasks, projects, collections };
-    const ok = await applyPersistLocal(nextTasks, nextProjects, nextCollections);
+    // Chain on the previous write so two rapid drags don't race on the same
+    // pre-write `files` snapshot. The later call sees the freshly persisted
+    // state by the time it actually runs.
+    const tail = pendingPersistRef.current ?? Promise.resolve(true);
+    const next = tail.catch(() => true).then(() => applyPersistLocal(nextTasks, nextProjects, nextCollections));
+    pendingPersistRef.current = next;
+    const ok = await next;
     if (ok) {
       undoRef.current = recordUndo(undoRef.current, previous);
       syncUndoCounts();
@@ -2191,6 +2219,24 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
       ? { ...item, projectId: project?.id ?? null, projectName: project?.name ?? null }
       : item));
   };
+  // Batch delete shared by the Delete key and the global marquee event. After
+  // a box-selection the keyboard focus usually sits on <body>, outside the
+  // React tree, so the Today view listens for the marquee's delete event.
+  const removeSelectedTasks = (ids: readonly string[]) => {
+    const targets = new Set(ids);
+    if (targets.size === 0) return;
+    setNotice(preferences.language === "zh-TW" ? `已刪除 ${targets.size} 項任務` : `Removed ${targets.size} tasks`);
+    onSave(tasks.filter((task) => task.id ? !targets.has(task.id) : true));
+  };
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ ids: string[]; kind: string }>).detail;
+      if (!detail || detail.kind !== "task") return;
+      removeSelectedTasks(detail.ids);
+    };
+    window.addEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
+    return () => window.removeEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
+  });
   return <section className="command-center">
     <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
@@ -2236,12 +2282,16 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
         onStar={(taskId) => onSave(toggleMostImportant(tasks, taskId, today))}
         onPickProject={pickProject}
         onDelete={onDelete}
+        onDeleteBatch={(selectedTasks) => removeSelectedTasks(selectedTasks.flatMap((task) => task.id ? [task.id] : []))}
         onComplete={(task) => complete(task)}
         onResize={(taskId, durationMinutes) => onSave(tasks.map((item) => item.id === taskId ? { ...item, durationMinutes } : item))}
-        onReorderTray={({ draggedId, targetId, place }) => {
-          // A vertical drop reorders inside the task's own priority/date group;
-          // ranks of just that group are rewritten so the order persists to Markdown.
-          const ordered = reorderTodayTray(trayTasks, today, draggedId, targetId, place);
+        onReorderTray={({ draggedId, targetId, place, draggedIds }) => {
+          // A vertical drop reorders inside the dragged task's priority/date
+          // group; ranks of just that group are rewritten so the order
+          // persists to Markdown. With a marquee selection the whole group
+          // travels as one batch (inside the dragged task's own group).
+          const ids = draggedIds?.length ? draggedIds : [draggedId];
+          const ordered = reorderTodayTrayBatch(trayTasks, today, ids, targetId, place);
           if (!ordered) return;
           const dragged = tasks.find((item) => item.id === draggedId);
           if (!dragged) return;
@@ -2569,6 +2619,9 @@ function QuickAddModal({
   tasks,
   projects,
   templates = [],
+  initialDate,
+  initialStartTime,
+  forceDate,
   onClose,
   onSave,
   onCreateProject,
@@ -2576,6 +2629,10 @@ function QuickAddModal({
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
   templates?: { name: string; body: string }[];
+  initialDate?: string;
+  initialStartTime?: string;
+  /** When true the date input is locked to `initialDate` (e.g. calendar quick add). */
+  forceDate?: boolean;
   onClose: () => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void;
   /** Inline “new project” straight from the capture dialog. */
@@ -2586,8 +2643,8 @@ function QuickAddModal({
   const [body, setBody] = useState("");
   const [projectId, setProjectId] = useState("");
   const [ideaInbox, setIdeaInbox] = useState(false);
-  const [taskDate, setTaskDate] = useState(taipeiDateKey());
-  const [startTime, setStartTime] = useState("");
+  const [taskDate, setTaskDate] = useState(initialDate ?? taipeiDateKey());
+  const [startTime, setStartTime] = useState(initialStartTime ?? "");
   const [durationMinutes, setDurationMinutes] = useState(30);
   const [important, setImportant] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -2708,7 +2765,7 @@ function QuickAddModal({
             {t("task.field.date")}
             <input
               type="date"
-              disabled={ideaInbox}
+              disabled={ideaInbox || forceDate}
               value={ideaInbox ? "" : taskDate}
               onChange={(event) => setTaskDate(event.target.value)}
             />
@@ -3131,9 +3188,16 @@ export function Calendar({
   const [selected, setSelected] = useState(today);
   const [sideOpen, setSideOpen] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
   const [dragOriginDate, setDragOriginDate] = useState<string | null>(null);
   const [dropTargetDate, setDropTargetDate] = useState<string | null>(null);
+  // Ids travelling with an active calendar drag, so every selected chip lifts
+  // together instead of only the grabbed one.
+  const [dragBatchIds, setDragBatchIds] = useState<string[]>([]);
+  // Live pointer position while a calendar drag is active, so a floating
+  // stack of the selected tasks can follow the cursor (Notion-style).
+  const [dragPointer, setDragPointer] = useState<{ x: number; y: number } | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [ideasExpanded, setIdeasExpanded] = useState(false);
   const [ideaContextMenu, setIdeaContextMenu] = useState<{
@@ -3168,6 +3232,28 @@ export function Calendar({
     .filter((task) => boardLane(task) === "idea")
     .sort((a, b) => a.rank.localeCompare(b.rank));
   const visibleIdeas = ideasExpanded ? ideas : ideas.slice(0, 8);
+  // Every time the calendar tree re-renders, React wipes the
+  // `global-shift-selected` class that the marquee painted onto each
+  // chip. Reapply it after every render so the class stays in sync with
+  // the (module-level) selection state.
+  useEffect(() => {
+    const ids = getSelectedIdsOfKind("task");
+    if (ids.length === 0) return;
+    const selected = new Set(ids);
+    const escape = (value: string) =>
+      typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(value) : value;
+    const apply = () => {
+      for (const id of selected) {
+        const elements = document.querySelectorAll<HTMLElement>(`[data-global-select-id="${escape(id)}"]`);
+        for (const element of elements) {
+          if (element.closest(".calendar-task-title, .week-task-list article, [data-idea-card-id]")) {
+            element.classList.add("global-shift-selected");
+          }
+        }
+      }
+    };
+    apply();
+  });
   useEffect(() => {
     if (!ideaContextMenu) return;
     const close = () => setIdeaContextMenu(null);
@@ -3197,6 +3283,8 @@ export function Calendar({
     setDragTaskId(null);
     setDragOriginDate(null);
     setDropTargetDate(null);
+    setDragBatchIds([]);
+    setDragPointer(null);
     setIdeaDropHint(null);
   };
   const openTask = (id: string | null) => {
@@ -3214,6 +3302,12 @@ export function Calendar({
       calendarDragMoved.current = true;
       setDragTaskId(calendarDragCandidate.current?.id ?? null);
       setDragOriginDate(calendarDragCandidate.current?.originDate ?? null);
+      // Every id travelling with the drag lifts together for the batch visual.
+      setDragBatchIds(calendarDragCandidate.current?.ids ?? []);
+    }
+    if (calendarDragMoved.current) {
+      // The floating stack of selected tasks chases the cursor.
+      setDragPointer({ x: event.clientX, y: event.clientY });
     }
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
     const date = target?.closest<HTMLElement>("[data-calendar-date]")?.dataset.calendarDate;
@@ -3298,6 +3392,39 @@ export function Calendar({
       ),
     );
   const remove = onDelete;
+  // Delete every selected calendar task in one go (Shift+marquee picks up
+  // the group, Delete/Backspace on a calendar chip removes them together).
+  const removeSelection = (ids: readonly string[]) => {
+    const targets = new Set(ids);
+    if (targets.size === 0) return;
+    flashNotice(preferences.language === "zh-TW" ? `已刪除 ${targets.size} 項任務` : `Removed ${targets.size} tasks`);
+    void onSave(tasks.filter((task) => task.id ? !targets.has(task.id) : true));
+  };
+  // Window-level Delete/Backspace: after a Shift/plain marquee the keyboard
+  // focus usually sits on <body>, outside the React tree, so the keydown the
+  // marquee dispatches is the only reliable way to delete the selection.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ ids: string[]; kind: string }>).detail;
+      if (!detail || detail.kind !== "task") return;
+      removeSelection(detail.ids);
+    };
+    window.addEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
+    return () => window.removeEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
+  });
+  const handleCalendarKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Delete" && event.key !== "Backspace") return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const target = event.target as HTMLElement;
+    // Skip when the user is typing in an input/textarea (e.g. the agenda
+    // date input or the quick-add composer) — those keep their native
+    // delete behaviour.
+    if (target.closest("input, textarea, [contenteditable=\"true\"]")) return;
+    const selectedIds = getSelectedIdsOfKind("task");
+    if (selectedIds.length === 0) return;
+    event.preventDefault();
+    removeSelection(selectedIds);
+  };
   const finishPointerDrag = (event: ReactPointerEvent<HTMLElement>, taskId: string | null) => {
     if (!taskId) return;
     const draggedIds = calendarDragCandidate.current?.ids ?? [taskId];
@@ -3365,6 +3492,7 @@ export function Calendar({
     <div
       className={`calendar-layout ${sideOpen ? "" : "side-closed"} ${fullscreen ? "fullscreen" : ""}`}
       data-global-marquee-scope="calendar"
+      onKeyDown={handleCalendarKeyDown}
     >
       <section className="calendar-card">
         <header className="calendar-toolbar">
@@ -3434,7 +3562,7 @@ export function Calendar({
             <button onClick={() => setNotice(null)} aria-label="關閉提示">×</button>
           </div>
         )}
-        <div className="calendar-stage">
+        <div className="calendar-stage" data-plain-marquee-scope>
         {mode === "schedule" ? (
           <DaySchedule
             date={selected}
@@ -3463,6 +3591,7 @@ export function Calendar({
             onOpenTask={openTask}
             onPriority={(taskId, priority) => void onSave(applyTaskPriority(tasks, taskId, priority, selected))}
             onDelete={remove}
+            onDeleteBatch={(selectedTasks) => removeSelection(selectedTasks.flatMap((task) => task.id ? [task.id] : []))}
             onComplete={(task) => complete(task.id)}
             onResize={(taskId, durationMinutes) => void onSave(tasks.map((item) => item.id === taskId ? { ...item, durationMinutes } : item))}
           />
@@ -3482,6 +3611,10 @@ export function Calendar({
                     className={`calendar-day ${cell.currentMonth ? "" : "muted"} ${selected === cell.date ? "selected" : ""} ${cell.date === today ? "today" : ""} ${dragTaskId && dragOriginDate === cell.date ? "drag-origin" : ""} ${dragTaskId && dropTargetDate === cell.date && dragOriginDate !== cell.date ? "drop-target" : ""}`}
                     data-calendar-date={cell.date}
                     onClick={() => {
+                      // The click the browser synthesizes after a plain
+                      // box-drag must not select the cell under the release
+                      // point.
+                      if (consumeGlobalMarqueeClick()) return;
                       setSelected(cell.date);
                       setSideOpen(true);
                     }}
@@ -3490,6 +3623,19 @@ export function Calendar({
                     <span className="day-number">
                       {Number(cell.date.slice(8))}
                     </span>
+                    <button
+                      type="button"
+                      className="calendar-day-add"
+                      aria-label={`${t("app.quickAdd")} · ${cell.date}`}
+                      title={`${t("app.quickAdd")} · ${cell.date}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelected(cell.date);
+                        setQuickAddOpen(true);
+                      }}
+                    >
+                      <Plus aria-hidden="true" />
+                    </button>
                     <div className="calendar-task-list">
                       {dayEntries.slice(0, 4).map((entry) => (
                         <span
@@ -3514,12 +3660,34 @@ export function Calendar({
                           }}
                           style={taskProjectStyle(entry.task)}
                           key={`${entry.task.id}:${entry.date}`}
-                          className={`calendar-task-title ${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragTaskId === entry.task.id ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
+                          className={`calendar-task-title ${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragBatchIds.includes(entry.task.id ?? "") ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
                         >
-                          <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
+                          <button
+                            type="button"
+                            className="calendar-task-drag-handle"
+                            data-drag-handle
+                            aria-label={`拖曳 ${entry.task.title}`}
+                            title="拖曳到其他日期（已選取時會一次拖全部）"
+                            onPointerDown={(event) => {
+                              if (event.button !== 0 || !entry.task.id) return;
+                              event.stopPropagation();
+                              beginDrag(entry.task.id, entry.date, event.clientX, event.clientY);
+                              event.currentTarget.setPointerCapture(event.pointerId);
+                            }}
+                            onPointerMove={(event) => trackCalendarDrag(event)}
+                            onPointerUp={(event) => finishPointerDrag(event, entry.task.id)}
+                            onPointerCancel={resetDrag}
+                            onLostPointerCapture={() => {
+                              if (calendarDragCandidate.current?.id === entry.task.id || dragTaskId === entry.task.id) resetDrag();
+                            }}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <GripVertical aria-hidden="true" />
+                          </button>
                           <button type="button" className={`calendar-quick-check ${entry.task.status === "done" ? "done" : ""}`} aria-label={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} title={entry.task.status === "done" ? t("task.action.reopen") : t("task.action.complete")} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); complete(entry.task.id); }}>{entry.task.status === "done" ? "✓" : ""}</button>
                           {entry.task.status === "done" && <span className="task-done-check">✓</span>}
                           <span className="calendar-task-text">{entry.task.title}</span>
+                          {dragTaskId === entry.task.id && dragBatchIds.length > 1 && <span className="calendar-drag-count" aria-hidden="true">{dragBatchIds.length}</span>}
                         </span>
                       ))}
                       {dayEntries.length > 4 && (
@@ -3561,6 +3729,19 @@ export function Calendar({
                     </button>
                     <button
                       type="button"
+                      className="week-day-add"
+                      aria-label={`${t("app.quickAdd")} · ${date}`}
+                      title={`${t("app.quickAdd")} · ${date}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelected(date);
+                        setQuickAddOpen(true);
+                      }}
+                    >
+                      <Plus aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
                       className="week-plan-button"
                       aria-label={t("calendar.planTimes")}
                       title={t("calendar.planTimes")}
@@ -3592,11 +3773,32 @@ export function Calendar({
                            openTask(entry.task.id);
                         }}
                         style={taskProjectStyle(entry.task)}
-                        className={`${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragTaskId === entry.task.id ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
+                        className={`${activeTaskId === entry.task.id ? "selected-task" : ""} ${dragBatchIds.includes(entry.task.id ?? "") ? "dragging" : ""} ${entry.task.priority === "highest" ? "most-important" : ""} ${entry.task.status === "done" ? "completed-task" : ""}`}
                         key={`${entry.task.id}:${entry.date}`}
                       >
                         <div className="task-title-row">
-                          <GripVertical className="calendar-task-drag-handle" aria-hidden="true" />
+                          <button
+                            type="button"
+                            className="calendar-task-drag-handle"
+                            data-drag-handle
+                            aria-label={`拖曳 ${entry.task.title}`}
+                            title="拖曳到其他日期（已選取時會一次拖全部）"
+                            onPointerDown={(event) => {
+                              if (event.button !== 0 || !entry.task.id) return;
+                              event.stopPropagation();
+                              beginDrag(entry.task.id, entry.date, event.clientX, event.clientY);
+                              event.currentTarget.setPointerCapture(event.pointerId);
+                            }}
+                            onPointerMove={(event) => trackCalendarDrag(event)}
+                            onPointerUp={(event) => finishPointerDrag(event, entry.task.id)}
+                            onPointerCancel={resetDrag}
+                            onLostPointerCapture={() => {
+                              if (calendarDragCandidate.current?.id === entry.task.id || dragTaskId === entry.task.id) resetDrag();
+                            }}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <GripVertical aria-hidden="true" />
+                          </button>
                           <strong>
                             {entry.task.status === "done" ? "✓ " : ""}
                             {entry.task.title}
@@ -3794,6 +3996,43 @@ export function Calendar({
           </div>
         )}
       </section>
+      {dragTaskId && dragPointer && dragBatchIds.length > 0 && (
+        (() => {
+          const stackTasks = dragBatchIds
+            .map((id) => tasks.find((item) => item.id === id))
+            .filter((item): item is BrainTaskSnapshot => Boolean(item));
+          if (stackTasks.length === 0) return null;
+          return (
+            <div
+              className="calendar-drag-stack"
+              data-calendar-drag-stack
+              style={{ left: dragPointer.x + 16, top: dragPointer.y + 12 }}
+              aria-hidden="true"
+            >
+              {stackTasks.slice(0, 4).map((task, index) => (
+                <span
+                  key={task.id ?? index}
+                  className="calendar-drag-chip"
+                  data-calendar-drag-chip
+                  style={{ ...taskProjectStyle(task), transform: `translate(${index * 8}px, ${index * 4}px)`, zIndex: 40 - index }}
+                >
+                  {task.title}
+                </span>
+              ))}
+              {stackTasks.length > 4 && (
+                <span className="calendar-drag-chip calendar-drag-chip-more" data-calendar-drag-chip style={{ transform: `translate(32px, 16px)` }}>
+                  +{stackTasks.length - 4}
+                </span>
+              )}
+              {stackTasks.length > 1 && (
+                <span className="calendar-drag-stack-count">
+                  {preferences.language === "zh-TW" ? `${stackTasks.length} 項一起移動` : `${stackTasks.length} moving together`}
+                </span>
+              )}
+            </div>
+          );
+        })()
+      )}
       {sideOpen && (
         <aside className="agenda">
           <div className="agenda-header">
@@ -3907,6 +4146,19 @@ export function Calendar({
             ))
           )}
         </aside>
+      )}
+      {quickAddOpen && (
+        <QuickAddModal
+          tasks={tasks}
+          projects={projects}
+          initialDate={selected}
+          forceDate
+          onClose={() => setQuickAddOpen(false)}
+          onSave={(next) => {
+            setQuickAddOpen(false);
+            onSave(next);
+          }}
+        />
       )}
     </div>
   );

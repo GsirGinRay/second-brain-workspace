@@ -98,12 +98,16 @@ function replaceLine(source: string, lineIndex: number, replacement: string): st
 
 function removeLine(source: string, lineIndex: number): string {
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
-  const trailing = source.endsWith("\r\n") || source.endsWith("\n");
   const lines = splitLines(source);
-  if (trailing) lines.pop();
+  // `findTaskLineIndex` walks the same array without dropping the trailing
+  // empty line, so its index is always relative to the un-popped array.
   if (lineIndex < 0 || lineIndex >= lines.length) throw new Error("TASK_LINE_NOT_FOUND");
   lines.splice(lineIndex, 1);
-  return lines.join(newline) + (trailing && lines.length > 0 ? newline : "");
+  // Re-detect a trailing newline from the (post-splice) array so the
+  // original terminator is preserved.
+  const hasTrailing = lines.length > 0 && lines[lines.length - 1] === "";
+  if (hasTrailing) lines.pop();
+  return lines.join(newline) + (hasTrailing ? newline : "");
 }
 
 function makeChange(file: LocalMarkdownFile, replacement: string): MarkdownChange {
@@ -402,6 +406,10 @@ export function applyDesiredSnapshot(
   const findTaskLineIndex = (relativePath: string, taskId: string): number => {
     const source = currentSources.get(relativePath);
     if (!source) return -1;
+    return findTaskLineIndexFromSource(source, taskId, relativePath);
+  };
+
+  const findTaskLineIndexFromSource = (source: string, taskId: string, relativePath = ""): number => {
     const lines = splitLines(source);
     const inCodeFence = createCodeFenceTracker();
     for (let index = 0; index < lines.length; index += 1) {
@@ -434,11 +442,19 @@ export function applyDesiredSnapshot(
   for (const [relativePath, ids] of removedByPath) {
     let source = currentSources.get(relativePath)!;
     for (const id of ids) {
-      const lineIndex = findTaskLineIndex(relativePath, id);
-      if (lineIndex >= 0) source = removeLine(source, lineIndex);
-      source = patchTaskMarkdownContent(source, id, "");
+      // Re-derive the line index from the latest source so a previous
+      // removeLine (which shrinks `source`) doesn't leave us with an
+      // out-of-range index on the next iteration.
+      const liveSource = currentSources.get(relativePath) ?? source;
+      const lineIndex = findTaskLineIndexFromSource(liveSource, id);
+      if (lineIndex >= 0) {
+        source = removeLine(liveSource, lineIndex);
+        currentSources.set(relativePath, source);
+      } else {
+        source = patchTaskMarkdownContent(liveSource, id, "");
+        currentSources.set(relativePath, source);
+      }
     }
-    currentSources.set(relativePath, source);
     changed.add(relativePath);
   }
 

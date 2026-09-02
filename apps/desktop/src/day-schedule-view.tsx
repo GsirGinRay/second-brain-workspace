@@ -18,7 +18,7 @@ import { ProjectPicker } from "./project-picker";
 import { DangerConfirmButton } from "./danger-confirm";
 import type { DropPosition } from "./task-reorder";
 import type { UiLanguage } from "./ui-preferences";
-import { clearGlobalSelection, getGlobalSelectedIds } from "./global-shift-marquee";
+import { getGlobalSelectedIds, setSelectionOfKind } from "./global-shift-marquee";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
@@ -52,6 +52,11 @@ export interface TrayReorderDrop {
   draggedId: string;
   targetId: string;
   place: DropPosition;
+  /**
+   * Every id travelling with the dragged card: a marquee selection dragged by
+   * its six-dot grip reorders as one batch. Absent for a single-card drag.
+   */
+  draggedIds?: string[];
 }
 
 export function DaySchedule({
@@ -73,6 +78,7 @@ export function DaySchedule({
   onStar,
   onPickProject,
   onDelete,
+  onDeleteBatch,
   onComplete,
   onResize,
   onReorderTray,
@@ -101,6 +107,8 @@ export function DaySchedule({
   /** Inline project re-association straight from the row. */
   onPickProject?: (taskId: string, projectId: string | null) => void;
   onDelete?: (task: BrainTaskSnapshot) => void;
+  /** Removes every selected task in one undoable step (Delete/Backspace on a marquee selection). */
+  onDeleteBatch?: (tasks: BrainTaskSnapshot[]) => void;
   onComplete?: (task: BrainTaskSnapshot) => void;
   onResize?: (taskId: string, durationMinutes: number) => void;
   /** Vertical drag inside the unscheduled tray reorders tasks instead of rescheduling. */
@@ -115,6 +123,11 @@ export function DaySchedule({
   const selectionAnchorId = useRef<string | null>(null);
   const [marqueeBox, setMarqueeBox] = useState<MarqueeBox | null>(null);
   const marqueeOrigin = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  // A marquee armed without Shift only engages after the pointer moves, so a
+  // plain click on the canvas keeps its normal behaviour (composer, date…).
+  const marqueePlainRef = useRef(false);
+  const marqueeEngagedRef = useRef(false);
+  const [marqueeArmed, setMarqueeArmed] = useState(false);
   const [previewTop, setPreviewTop] = useState<number | null>(null);
   const [previewHeight, setPreviewHeight] = useState<number | null>(null);
   const [previewTime, setPreviewTime] = useState<string | null>(null);
@@ -167,6 +180,14 @@ export function DaySchedule({
   const isToday = Boolean(now);
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
 
+  // The day schedule paints its selection with the internal `selected` class;
+  // mirror the id list into the app-wide selection module (without painting)
+  // so window-level Delete/Backspace and cross-surface helpers see the same
+  // selection no matter where the keyboard focus sits.
+  useEffect(() => {
+    setSelectionOfKind("task", selectedTaskIds);
+  }, [selectedTaskIds]);
+
   useEffect(() => {
     const availableIds = new Set([...trayTasks, ...timedTasks, ...allDayTasks].flatMap((task) => task.id ? [task.id] : []));
     if (selectionAnchorId.current && !availableIds.has(selectionAnchorId.current)) {
@@ -197,7 +218,7 @@ export function DaySchedule({
   const clearTaskSelection = () => {
     selectionAnchorId.current = null;
     setSelectedTaskIds([]);
-    clearGlobalSelection();
+    setSelectionOfKind("task", []);
   };
 
   const taskIdsForDrag = (taskId: string) => selectedTaskIdSet.has(taskId)
@@ -220,22 +241,47 @@ export function DaySchedule({
       const intersects = rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom;
       return intersects && card.dataset.selectableTaskId ? [card.dataset.selectableTaskId] : [];
     });
+    // Re-assert the module mirror here (not just through the state effect) so
+    // window-level Delete sees the selection immediately after the drag.
+    setSelectionOfKind("task", selectedIds);
     setSelectedTaskIds(selectedIds);
   };
 
   const beginMarqueeSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!event.shiftKey || event.button !== 0) return;
-    event.preventDefault();
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    // Shift+drag starts anywhere (classic behaviour). Without Shift only an
+    // empty-canvas press arms the marquee — Notion-style — so a plain click
+    // on a task, button or composer keeps working.
+    const plainCanvas = !event.shiftKey && !target.closest(
+      "button, input, textarea, select, a, [contenteditable=\"true\"], [data-selectable-task-id], [data-resize-handle], .day-schedule-composer, .priority-menu, .project-picker-menu, .danger-confirm",
+    );
+    if (!event.shiftKey && !plainCanvas) return;
+    if (event.shiftKey) event.preventDefault();
     event.stopPropagation();
     selectionAnchorId.current = null;
     marqueeOrigin.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
-    setSelectedTaskIds([]);
-    setMarqueeBox({ left: event.clientX, top: event.clientY, width: 0, height: 0 });
-    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
+    marqueePlainRef.current = !event.shiftKey;
+    marqueeEngagedRef.current = !event.shiftKey;
+    setMarqueeArmed(true);
+    if (event.shiftKey) {
+      setSelectedTaskIds([]);
+      setMarqueeBox({ left: event.clientX, top: event.clientY, width: 0, height: 0 });
+      try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
+    }
   };
 
   const moveMarqueeSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!marqueeOrigin.current) return;
+    if (marqueePlainRef.current && !marqueeEngagedRef.current) {
+      const dx = Math.abs(event.clientX - marqueeOrigin.current.x);
+      const dy = Math.abs(event.clientY - marqueeOrigin.current.y);
+      // Below the drag threshold this is still a click: stay out of its way.
+      if (Math.max(dx, dy) <= 3) return;
+      marqueeEngagedRef.current = true;
+      setSelectedTaskIds([]);
+      setMarqueeBox({ left: marqueeOrigin.current.x, top: marqueeOrigin.current.y, width: 0, height: 0 });
+    }
     event.preventDefault();
     updateMarqueeSelection(event.clientX, event.clientY);
   };
@@ -243,10 +289,22 @@ export function DaySchedule({
   const endMarqueeSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
     const origin = marqueeOrigin.current;
     if (!origin) return;
+    if (marqueePlainRef.current && !marqueeEngagedRef.current) {
+      // A plain click, not a drag. Notion semantics: the click keeps its own
+      // behaviour (composer, tray…) and the canvas click deselects.
+      marqueeOrigin.current = null;
+      marqueePlainRef.current = false;
+      setMarqueeArmed(false);
+      clearTaskSelection();
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     updateMarqueeSelection(event.clientX, event.clientY);
     marqueeOrigin.current = null;
+    marqueePlainRef.current = false;
+    marqueeEngagedRef.current = false;
+    setMarqueeArmed(false);
     setMarqueeBox(null);
     suppressClickUntil.current = performance.now() + 300;
     try { event.currentTarget.releasePointerCapture(origin.pointerId); } catch { /* already released */ }
@@ -255,10 +313,37 @@ export function DaySchedule({
   const cancelMarqueeSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!marqueeOrigin.current) return;
     marqueeOrigin.current = null;
+    marqueePlainRef.current = false;
+    marqueeEngagedRef.current = false;
+    setMarqueeArmed(false);
     setMarqueeBox(null);
     suppressClickUntil.current = performance.now() + 300;
     try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* already released */ }
   };
+
+  // A plain marquee does not capture the pointer (capturing would retarget
+  // the trailing click away from the canvas), so a drag that leaves the
+  // schedule needs this window-level finisher to reset the armed state.
+  useEffect(() => {
+    if (!marqueeArmed) return;
+    const finishOutside = (event: PointerEvent) => {
+      const root = scheduleRootRef.current;
+      const origin = marqueeOrigin.current;
+      if (!root || !origin || event.pointerId !== origin.pointerId) return;
+      if (root.contains(event.target as Node | null)) return;
+      marqueeOrigin.current = null;
+      marqueePlainRef.current = false;
+      marqueeEngagedRef.current = false;
+      setMarqueeArmed(false);
+      setMarqueeBox(null);
+    };
+    window.addEventListener("pointerup", finishOutside, true);
+    window.addEventListener("pointercancel", finishOutside, true);
+    return () => {
+      window.removeEventListener("pointerup", finishOutside, true);
+      window.removeEventListener("pointercancel", finishOutside, true);
+    };
+  }, [marqueeArmed]);
 
   useEffect(() => {
     const grid = gridRef.current;
@@ -352,10 +437,12 @@ export function DaySchedule({
   };
 
   /** Where over the tray the pointer is, as a sibling id plus before/after. */
-  const trayDropAt = (clientX: number, clientY: number, draggedId: string): TrayReorderDrop | null => {
+  const trayDropAt = (clientX: number, clientY: number, draggedId: string, excludeIds?: readonly string[]): TrayReorderDrop | null => {
     const card = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-tray-card-id]");
     const targetId = card?.dataset.trayCardId;
     if (!targetId || targetId === draggedId) return null;
+    // A group never reorders around one of its own members.
+    if (excludeIds?.includes(targetId)) return null;
     const rect = card!.getBoundingClientRect();
     return { draggedId, targetId, place: clientY <= rect.top + rect.height / 2 ? "before" : "after" };
   };
@@ -393,18 +480,22 @@ export function DaySchedule({
       return;
     }
     if (target?.closest("[data-unscheduled-tray]")) {
-      // Releasing a tray card back onto the tray reorders it; a card that came
-      // from the time grid still unschedules (existing behaviour).
+      // Releasing a tray card back onto the tray reorders it (a marquee
+      // selection reorders as one batch); a card that came from the time
+      // grid still unschedules (existing behaviour) — also as a batch.
       if (origin.fromTray && onReorderTray) {
-        const drop = trayDropAt(clientX, clientY, taskId);
-        if (drop) onReorderTray(drop);
+        const batchIds = origin.taskIds.length > 1 ? origin.taskIds : undefined;
+        const drop = trayDropAt(clientX, clientY, taskId, batchIds);
+        if (drop) onReorderTray(batchIds ? { ...drop, draggedIds: batchIds } : drop);
         return;
       }
-      onClearTime?.(taskId);
+      if (origin.taskIds.length > 1 && onClearTimeBatch) onClearTimeBatch(origin.taskIds);
+      else onClearTime?.(taskId);
       return;
     }
     if (target?.closest("[data-schedule-all-day]")) {
-      onClearTime?.(taskId);
+      if (origin.taskIds.length > 1 && onClearTimeBatch) onClearTimeBatch(origin.taskIds);
+      else onClearTime?.(taskId);
       return;
     }
     const grid = gridRef.current;
@@ -578,7 +669,8 @@ export function DaySchedule({
     }
     const overTray = Boolean(document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-unscheduled-tray]"));
     if (dragOrigin.current.fromTray && onReorderTray && overTray) {
-      const drop = trayDropAt(event.clientX, event.clientY, dragOrigin.current.id);
+      const batchIds = dragOrigin.current.taskIds.length > 1 ? dragOrigin.current.taskIds : undefined;
+      const drop = trayDropAt(event.clientX, event.clientY, dragOrigin.current.id, batchIds);
       setTrayHint(drop ? { id: drop.targetId, place: drop.place } : null);
     } else {
       setTrayHint(null);
@@ -670,6 +762,20 @@ export function DaySchedule({
       onKeyDown={(event) => {
         if (event.key === "Escape" && selectedTaskIds.length > 0) {
           event.preventDefault();
+          clearTaskSelection();
+          return;
+        }
+        if ((event.key === "Delete" || event.key === "Backspace") && selectedTaskIds.length > 0) {
+          const target = event.target as HTMLElement;
+          // Typing surfaces keep their native delete behaviour.
+          if (target.closest("input, textarea, select, [contenteditable=\"true\"]")) return;
+          if (!onDeleteBatch) return;
+          const selectedTasks = [...trayTasks, ...timedTasks, ...allDayTasks]
+            .filter((task) => task.id ? selectedTaskIdSet.has(task.id) : false);
+          if (selectedTasks.length === 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          onDeleteBatch(selectedTasks);
           clearTaskSelection();
         }
       }}
@@ -833,7 +939,7 @@ export function DaySchedule({
                 key={task.id ?? task.title}
                 data-selectable-task-id={task.id ?? undefined}
                 data-global-select-id={task.id ?? undefined}
-                className={`all-day-chip ${task.id && selectedTaskIdSet.has(task.id) ? "selected" : ""} ${dragId === task.id ? "dragging" : ""}`}
+                className={`all-day-chip ${task.id && selectedTaskIdSet.has(task.id) ? "selected" : ""} ${dragId && (dragId === task.id || (task.id ? dragOrigin.current?.taskIds.includes(task.id) : false)) ? "dragging" : ""}`}
                 onPointerDown={(event) => {
                   if (event.button !== 0 || !task.id) return;
                   moved.current = false;
@@ -925,16 +1031,35 @@ export function DaySchedule({
             if (!task.id) return null;
             const layout = layoutById.get(task.id);
             if (!layout) return null;
-            const top = dragId === task.id && previewTop != null ? previewTop : layout.top;
+            // While a timed task drags, every selected task in the batch
+            // slides by the same delta so the group visibly moves as one.
+            const dragOriginCurrent = dragOrigin.current;
+            const timedBatch = dragId && dragOriginCurrent && dragOriginCurrent.kind === "timed" && dragId === dragOriginCurrent.id && previewTop != null
+              ? {
+                  ids: new Set(dragOriginCurrent.taskIds),
+                  deltaTop: previewTop - (layoutById.get(dragOriginCurrent.id)?.top ?? 0),
+                }
+              : null;
+            const batchMember = Boolean(timedBatch?.ids.has(task.id));
+            const top = dragId === task.id && previewTop != null
+              ? previewTop
+              : batchMember && timedBatch
+                ? Math.max(0, layout.top + timedBatch.deltaTop)
+                : layout.top;
             const height = dragId === task.id && previewHeight != null ? previewHeight : layout.height;
             const width = `calc((100% - 58px) / ${layout.columns})`;
             const left = `calc(58px + ((100% - 58px) / ${layout.columns}) * ${layout.column})`;
+            const startTimeLabel = dragId === task.id && previewTime
+              ? previewTime
+              : batchMember && timedBatch && task.startTime
+                ? formatMinutesAsTime(Math.max(0, (parseTimeToMinutes(task.startTime) ?? 0) + Math.round((timedBatch.deltaTop / PX_PER_HOUR) * 60)))
+                : task.startTime;
             return (
               <article
                 key={task.id}
                 data-selectable-task-id={task.id}
                 data-global-select-id={task.id}
-                className={`timed-block ${selectedTaskIdSet.has(task.id) ? "selected" : ""} ${dragId === task.id ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
+                className={`timed-block ${selectedTaskIdSet.has(task.id) ? "selected" : ""} ${dragId && (dragId === task.id || batchMember) ? "dragging" : ""} ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
                 style={{ top, height, left, width }}
                 tabIndex={0}
                 onPointerDown={(event) => beginTimedDrag(event, task)}
@@ -1001,7 +1126,7 @@ export function DaySchedule({
                   </span>
                 </div>
                 <small>
-                  {dragId === task.id && previewTime ? previewTime : task.startTime}
+                  {startTimeLabel}
                   {task.durationMinutes ? ` · ${task.durationMinutes}m` : ""}
                 </small>
                 {onResize && (
