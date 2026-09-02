@@ -771,12 +771,13 @@ test("the timed block keeps star, complete and armed delete inline in its head",
   click(actions!.querySelector<HTMLButtonElement>(".tray-star")!);
   assert.deepEqual(starred, ["t1"]);
   const danger = actions!.querySelector<HTMLButtonElement>(".danger-confirm")!;
-  assert.ok(danger, "an armed two-step delete replaces window.confirm");
+  assert.ok(danger, "delete opens a confirmation dialog");
   click(danger);
-  assert.equal(deleted.length, 0, "first click only arms");
-  assert.ok(danger.className.includes("armed"));
-  click(danger);
-  assert.deepEqual(deleted, ["t1"], "second click deletes");
+  assert.equal(deleted.length, 0, "opening the dialog does not delete");
+  const accept = document.querySelector<HTMLButtonElement>(".delete-confirm-accept");
+  assert.ok(accept, "the dialog asks for an explicit confirm");
+  click(accept!);
+  assert.deepEqual(deleted, ["t1"], "confirming the dialog deletes");
 });
 
 test("tray meta shows the start time beside complete and armed delete", () => {
@@ -794,10 +795,10 @@ test("tray meta shows the start time beside complete and armed delete", () => {
   assert.ok(actions.querySelector('button:not(.danger-confirm)'), "complete stays an inline icon button");
   const danger = actions.querySelector<HTMLButtonElement>(".danger-confirm")!;
   click(danger);
-  assert.equal(deleted.length, 0, "delete waits for the confirming second click");
-  click(danger);
+  assert.equal(deleted.length, 0, "delete waits for the confirmation dialog");
+  click(document.querySelector<HTMLButtonElement>(".delete-confirm-accept")!);
   assert.equal(deleted.at(-1)?.id, "a");
-  assert.equal(completed.length, 0, "arming never completes the task");
+  assert.equal(completed.length, 0, "opening delete never completes the task");
 });
 
 test("the tray project picker switches a task between projects in place", () => {

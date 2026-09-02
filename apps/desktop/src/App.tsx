@@ -2,7 +2,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   Archive,
   CalendarDays,
-  Check,
   CheckCircle2,
   Clock,
   Columns3,
@@ -936,7 +935,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     setError("");
     try {
       await native.applyMarkdownChanges(changes);
-      setStatus("已儲存在本機 · 等待同步");
+      setStatus(devicePaired ? "已儲存在本機 · 等待同步" : "已寫入本機 Markdown 資料夾");
       await reloadLocal();
       if (devicePaired) {
         window.setTimeout(() => void runSync({ background: true }), 50);
@@ -961,7 +960,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             });
             if (retryChanges.length > 0) {
               await native.applyMarkdownChanges(retryChanges);
-              setStatus("已儲存在本機 · 等待同步");
+              setStatus(devicePaired ? "已儲存在本機 · 等待同步" : "已寫入本機 Markdown 資料夾");
               await reloadLocal();
               if (devicePaired) {
                 window.setTimeout(() => void runSync({ background: true }), 50);
@@ -1102,8 +1101,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   }
 
   async function permanentlyDeleteProject(project: BrainProjectSnapshot): Promise<void> {
-    // Confirmation happens in place via the armed delete button that triggered
-    // this call; no extra system dialog stands in the way.
+    // The delete control that invoked this already confirmed in a dialog.
     if (!project.id) return;
     setWorking(true);
     setError("");
@@ -1136,9 +1134,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
 
   async function permanentlyDeleteCollection(collection: BrainCollectionSnapshot): Promise<void> {
     if (!collection.id) return;
-    if (!window.confirm(
-      `永久刪除收藏「${collection.name}」？\n\n這會刪除收藏 Markdown，無法在 App 內復原。${collection.sourcePath ? `\n來源：${collection.sourcePath}` : ""}`,
-    )) return;
     setWorking(true);
     setError("");
     try {
@@ -1180,8 +1175,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   }
 
   async function permanentlyDeleteTask(task: BrainTaskSnapshot) {
-    // The armed delete button that invoked this already confirmed in place, so
-    // deletion starts immediately (Ctrl+Z still restores it locally).
+    // The delete control that invoked this already confirmed in a dialog.
+    // Ctrl+Z still restores the task locally.
     setWorking(true);
     setError("");
     const outcome = await deleteTaskLocalFirst({
@@ -1572,6 +1567,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             >
               {preferences.theme === "light" ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
             </button>
+            {diagnostics?.syncEnabled && (
             <div className="sync-state">
               <span className="visually-hidden">
                 {lastSync
@@ -1597,6 +1593,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
                       : t("sync.first")}
               </button>
             </div>
+            )}
           </div>
         </header>
         {error && (
@@ -1656,7 +1653,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             { label: preferences.language === "zh-TW" ? "新增專案" : "New project", run: () => setCreateEntity("project") },
             { label: preferences.language === "zh-TW" ? "新增收藏" : "New collection", run: () => setCreateEntity("collection") },
             { label: preferences.language === "zh-TW" ? "建立知識架構" : "Build architecture", run: () => setArchitectureOpen(true) },
-            { label: preferences.language === "zh-TW" ? "前往同步與設定" : "Go to sync & settings", run: () => setView("sync") },
+            { label: t("search.goSettings"), run: () => setView("sync") },
           ]}
         />
       )}
@@ -1860,7 +1857,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         <div className="modal-backdrop">
           <section className="modal onboarding-modal" role="dialog" aria-modal="true" aria-label={preferences.language === "zh-TW" ? "開始使用" : "Getting started"}>
             <div className="modal-header"><div><span className="eyebrow">SECOND BRAIN · LOCAL-FIRST</span><h2>{preferences.language === "zh-TW" ? "你的第二大腦，歡迎" : "Welcome to your second brain"}</h2></div></div>
-            <p>{preferences.language === "zh-TW" ? "先「新建」選一套知識架構，讓 AI 一進資料夾就能讀懂你、快速開始專案與任務。" : "Start with “New” to build a knowledge architecture that any AI can read instantly."}</p>
+            <p>{preferences.language === "zh-TW" ? "先「新建」選一套知識架構，讓 AI 一進資料夾就能讀懂你的專案、知識與任務完成度。之後你在工作台的修改會直接寫進所選的電腦資料夾。" : "Start with “New” to build a knowledge architecture that any AI can read. Edits in this app write directly to the Markdown folder you choose."}</p>
             <div className="onboarding-cta">
               <button className="primary onboarding-primary" onClick={() => void startArchitectureOnboarding()}>
                 <Plus aria-hidden="true" />{preferences.language === "zh-TW" ? "建立知識架構" : "New — build architecture"}
@@ -2326,58 +2323,38 @@ function TaskDateInput({
   className?: string;
   onCommit: (next: string | null) => void;
 }) {
-  const [draft, setDraft] = useState(value ?? "");
-  const [invalid, setInvalid] = useState(false);
-  useEffect(() => {
-    setDraft(value ?? "");
-    setInvalid(false);
-  }, [value]);
-  const DATE_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
-  const commit = () => {
-    const trimmed = draft.trim();
-    if (trimmed === "") {
-      setInvalid(false);
-      if ((value ?? null) !== null) onCommit(null);
-      return;
+  const { t } = useUiPreferences();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const openPicker = (event: { stopPropagation: () => void; currentTarget?: EventTarget | null }) => {
+    event.stopPropagation();
+    const input = inputRef.current ?? (event.currentTarget instanceof HTMLInputElement ? event.currentTarget : null);
+    if (!input) return;
+    try {
+      (input as HTMLInputElement & { showPicker?: () => void }).showPicker?.();
+    } catch {
+      input.focus();
     }
-    if (!DATE_RE.test(trimmed)) {
-      setInvalid(true);
-      return;
-    }
-    const parsed = new Date(`${trimmed}T00:00:00Z`);
-    const normalized = parsed.toISOString().slice(0, 10);
-    if (normalized !== trimmed || Number.isNaN(parsed.getTime())) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    if (normalized !== (value ?? null)) onCommit(normalized);
   };
   return (
-    <input
-      className={className}
-      aria-label={ariaLabel}
-      type="text"
-      inputMode="numeric"
-      placeholder="YYYY-MM-DD"
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        if (invalid) setInvalid(false);
-      }}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          commit();
-        }
-        if (event.key === "Escape") {
-          setDraft(value ?? "");
-          setInvalid(false);
-        }
-      }}
-      style={invalid ? { outline: "2px solid #e5484d" } : undefined}
-    />
+    <div
+      className={["task-date-field", className].filter(Boolean).join(" ")}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={openPicker}
+    >
+      <input
+        ref={inputRef}
+        className="task-date-text"
+        aria-label={ariaLabel}
+        title={t("task.date.pick")}
+        type="date"
+        value={value ?? ""}
+        onClick={openPicker}
+        onChange={(event) => {
+          const next = event.target.value || null;
+          if (next !== (value ?? null)) onCommit(next);
+        }}
+      />
+    </div>
   );
 }
 
@@ -3071,24 +3048,33 @@ function Board({
                       <button type="button" className="board-drag-handle" data-drag-handle aria-label={`拖曳 ${task.title}`} onClick={(event) => event.stopPropagation()}>
                         <GripVertical aria-hidden="true" />
                       </button>
+                      <button
+                        type="button"
+                        className={`clear-check ${task.status === "done" ? "done" : ""}`}
+                        aria-label={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                        title={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          moveToLane(task.id, task.status === "done" ? "todo" : "done");
+                        }}
+                      >{task.status === "done" ? "✓" : ""}</button>
                       <PriorityControl
                         priority={task.priority}
                         compact
                         locale={preferences.language}
                         onChange={(priority) => task.id && void onSave(applyTaskPriority(tasks, task.id, priority, task.taskDate ?? today))}
                       />
-                      <strong className="board-inline-title">{task.status === "done" ? "✓ " : ""}{task.title}</strong>
+                      <strong className="board-inline-title">{task.title}</strong>
                     </div>
                     {task.projectName && <small>{task.projectName}</small>}
-                    <label className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
-                      <CalendarDays aria-hidden="true" />
+                    <div className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
                       <TaskDateInput
                         className="board-date-input"
                         ariaLabel={`修改 ${task.title} 日期`}
                         value={task.taskDate ?? null}
                         onCommit={(next) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, taskDate: next } : item))}
                       />
-                    </label>
+                    </div>
                     {task.id && (
                       <div
                         className="board-card-inline-actions"
@@ -3124,19 +3110,6 @@ function Board({
                           onClick={() => moveWithinColumn(task.id, 1)}
                         >
                           ↓
-                        </button>
-                        <button
-                          type="button"
-                          className="board-card-complete"
-                          aria-label={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
-                          title={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            moveToLane(task.id, task.status === "done" ? "todo" : "done");
-                          }}
-                        >
-                          <Check aria-hidden="true" />
-                          <span>{task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}</span>
                         </button>
                         <DangerConfirmButton
                           armLabel={t("task.action.delete")}
@@ -3973,19 +3946,16 @@ export function Calendar({
               <CalendarDays aria-hidden="true" />
               {t("task.action.scheduleToday")}
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="danger"
-              onClick={() => {
+            <DangerConfirmButton
+              className="danger has-label"
+              armLabel={preferences.language === "zh-TW" ? `永久刪除想法「${ideaContextMenu.task.title}」` : `Delete idea “${ideaContextMenu.task.title}” permanently`}
+              confirmLabel={t("confirm.deleteAgain")}
+              onConfirm={() => {
                 const task = ideaContextMenu.task;
                 setIdeaContextMenu(null);
                 void remove(task);
               }}
-            >
-              <Trash2 aria-hidden="true" />
-              永久刪除想法
-            </button>
+            >{preferences.language === "zh-TW" ? "永久刪除想法" : t("task.action.delete")}</DangerConfirmButton>
           </div>
         )}
       </section>
@@ -4313,7 +4283,7 @@ function ProjectEditor({
             <button className="secondary-button icon-action" aria-label={t("project.action.complete")} title={t("project.action.complete")} onClick={onComplete}><CheckCircle2 aria-hidden="true" /></button>
           )}
           {value.status !== "archived" && <button className="archive-button icon-action" aria-label={t("project.action.archive")} title={t("project.action.archive")} onClick={onArchive}><Archive aria-hidden="true" /></button>}
-          <button className="danger icon-action" aria-label={t("project.action.delete")} title={t("project.action.delete")} onClick={onDelete}><Trash2 aria-hidden="true" /></button>
+          <DangerConfirmButton className="danger icon-action" armLabel={t("project.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={onDelete} />
         </div>
       </div>
       <MarkdownEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} minRows={8} />
@@ -4539,7 +4509,7 @@ function CollectionEditor({
         <button className="secondary-button action-with-icon" onClick={openFill}>◆ {t("collection.fillCopy")}</button>
       )}
       <button className="primary action-with-icon" disabled={!value.name.trim()} onClick={save}><Save aria-hidden="true" />{t("app.save")}</button>
-      <button className="danger icon-action" aria-label={t("collection.action.delete")} title={t("collection.action.delete")} onClick={() => onDelete(value)}><Trash2 aria-hidden="true" /></button>
+      <DangerConfirmButton className="danger icon-action" armLabel={t("collection.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={() => onDelete(value)} />
     </div>
     {fillOpen && (
       <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setFillOpen(false); }}>
@@ -4654,6 +4624,7 @@ function SyncSettings({
   onOpenArchitecture: () => void;
 }) {
   const { preferences, setPreferences, t } = useUiPreferences();
+  const cloudEnabled = diagnostics?.syncEnabled === true;
   const detailSurfaces = [
     { id: "dialog" as const, label: t("settings.detailSurface.dialog"), hint: t("settings.detailSurface.dialogHint") },
     { id: "panel" as const, label: t("settings.detailSurface.panel"), hint: t("settings.detailSurface.panelHint") },
@@ -4681,11 +4652,18 @@ function SyncSettings({
       </section>
       <section className="settings-card">
         <span className="step">★</span>
-        <h2>建立知識架構</h2>
-        <p>產生 .ai 委任檔、自動索引、範本與提示詞庫，讓任何 AI 一進入資料夾就能快速讀懂你的第二大腦。可自由勾選需要的模板包。</p>
+        <h2>{preferences.language === "zh-TW" ? "建立知識架構" : "Build knowledge architecture"}</h2>
+        <p>{preferences.language === "zh-TW"
+          ? "產生 .ai 委任檔、自動索引、範本與提示詞庫。之後你在工作台打勾或改任務，.ai/INDEX.md 會跟著更新，讓任何 AI 一進資料夾就能找到專案、知識與完成度。"
+          : "Create the .ai handoff, automatic index, templates, and prompt library. Checking off work here refreshes .ai/INDEX.md so any AI can find projects, knowledge, and completion status."}</p>
         <button className="primary wide" onClick={onOpenArchitecture}>
-          新建架構模板
+          {preferences.language === "zh-TW" ? "新建架構模板" : "New architecture templates"}
         </button>
+      </section>
+      <section className="settings-card">
+        <h2>{t("settings.localTitle")}</h2>
+        <p>{t("settings.localHelp")}</p>
+        <code>{diagnostics?.selectedVault ?? t("sync.notSelected")}</code>
       </section>
       <section className="settings-card">
         <span className="step">1</span>
@@ -4717,7 +4695,7 @@ function SyncSettings({
           </div>
         </details>
       </section>
-      <section className="settings-card">
+      {cloudEnabled && <section className="settings-card">
         <span className="step">2</span>
         <h2>{t("sync.cloud")}</h2>
         <p>{t("sync.cloudHelp")}</p>
@@ -4732,14 +4710,12 @@ function SyncSettings({
             {t("sync.save")}
           </button>
         </div>
-        {diagnostics?.syncEnabled && (
-          <div className="paired-ok">
-            <strong>Publisher 同步已啟用</strong>
-            <small>私人 build 已鎖定允許的 Publisher origin</small>
-          </div>
-        )}
-      </section>
-      <section className="settings-card">
+        <div className="paired-ok">
+          <strong>Publisher 同步已啟用</strong>
+          <small>私人 build 已鎖定允許的 Publisher origin</small>
+        </div>
+      </section>}
+      {cloudEnabled && <section className="settings-card">
         <span className="step">3</span>
         <h2>{t("sync.pairing")}</h2>
         <p>{t("sync.pairingHelp")}</p>
@@ -4768,46 +4744,49 @@ function SyncSettings({
             {t("sync.startPairing")}
           </button>
         )}
-      </section>
+      </section>}
       <section className="settings-card">
-        <span className="step">4</span>
+        <span className="step">{cloudEnabled ? "4" : "2"}</span>
         <h2>{t("sync.recovery")}</h2>
-        <p>{t("sync.recoveryHelp")}</p>
-        {!writeApproved && devicePaired && (
+        <p>{cloudEnabled ? t("sync.recoveryHelp") : t("settings.recoveryLocalHelp")}</p>
+        {cloudEnabled && !writeApproved && devicePaired && (
           <div className="first-sync-hint">
             <strong>{t("sync.firstConfirm")}</strong>
             <span>{t("sync.firstConfirmHelp")}</span>
           </div>
         )}
         <div className="diagnostic-list">
+          {cloudEnabled && (
           <span>
             模式 <b>{writeApproved ? "Write Alpha" : "Shadow 預覽"}</b>
           </span>
+          )}
           <span>
             Watcher <b>{diagnostics?.watcherStatus ?? "stopped"}</b>
           </span>
           <span>
             Recovery <b>{diagnostics?.recoveryStatus ?? "none"}</b>
           </span>
-          <span>
-            Key <b>{diagnostics?.keyBackend ?? "—"}</b>
-          </span>
         </div>
-        <button
-          className="primary wide"
-          disabled={working || !devicePaired}
-          onClick={onSync}
-        >
-          {!devicePaired
-            ? t("sync.pairFirst")
-            : writeApproved
-              ? t("sync.full")
-              : t("sync.first")}
-        </button>
-        {writeApproved && (
-          <button className="secondary-button wide" onClick={onShadow}>
-            {t("sync.shadow")}
-          </button>
+        {cloudEnabled && (
+          <>
+            <button
+              className="primary wide"
+              disabled={working || !devicePaired}
+              onClick={onSync}
+            >
+              {!devicePaired
+                ? t("sync.pairFirst")
+                : writeApproved
+                  ? t("sync.full")
+                  : t("sync.first")}
+            </button>
+            {writeApproved && (
+              <button className="secondary-button wide" onClick={onShadow}>
+                {t("sync.shadow")}
+              </button>
+            )}
+          </>
         )}
       </section>
     </div>

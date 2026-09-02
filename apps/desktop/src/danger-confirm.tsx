@@ -1,10 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Trash2 } from "lucide-react";
+import { translate, type UiLanguage } from "./ui-preferences";
+
+function currentLanguage(): UiLanguage {
+  return document.documentElement.lang === "en" ? "en" : "zh-TW";
+}
 
 /**
- * A destructive action that confirms itself in place. The first click arms the
- * fixed-size button, then the second click deletes. Arming expires after a few
- * seconds, on Escape, or on any pointer-down outside the button itself.
+ * Permanent delete asks in a dialog so a first click never looks like it
+ * already worked. The compact trash control stays in the list; confirmation
+ * happens in a modal that names the action and mentions Ctrl+Z undo.
  */
 export function DangerConfirmButton({
   onConfirm,
@@ -15,81 +21,100 @@ export function DangerConfirmButton({
   children,
 }: {
   onConfirm: () => void;
-  /** Label while idle (e.g.「永久刪除」）. */
+  /** Idle control label (e.g.「永久刪除」), also used as the dialog title. */
   armLabel: string;
-  /** Label while armed（e.g.「再點一次以永久刪除」）. */
+  /** Dialog confirm button (e.g.「確定永久刪除」). */
   confirmLabel: string;
   className?: string;
   disabled?: boolean;
   /** Optional text rendered beside the status icon (footer-style buttons). */
   children?: ReactNode;
 }) {
-  const [armed, setArmed] = useState(false);
-  const timerRef = useRef<number | null>(null);
-
-  const disarm = useCallback(() => {
-    setArmed(false);
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => () => disarm(), [disarm]);
+  const [open, setOpen] = useState(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
+  const language = currentLanguage();
+  const message = translate(language, "confirm.deleteMessage");
+  const cancelLabel = translate(language, "app.cancel");
 
   useEffect(() => {
-    if (!armed) return;
-    const cancel = () => disarm();
-    function onEscape(event: KeyboardEvent) {
+    if (!open) return;
+    cancelRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         event.stopPropagation();
-        cancel();
+        setOpen(false);
       }
-    }
-    function onOutside(event: MouseEvent) {
-      // The same button is the only valid target: anything else disarms.
-      if (!(event.target instanceof Element) || !event.target.closest("button.danger-confirm.armed")) cancel();
-    }
-    window.addEventListener("keydown", onEscape);
-    document.addEventListener("mousedown", onOutside);
-    return () => {
-      window.removeEventListener("keydown", onEscape);
-      document.removeEventListener("mousedown", onOutside);
     };
-  }, [armed, disarm]);
-
-  const click = () => {
-    if (disabled) return;
-    if (!armed) {
-      setArmed(true);
-      timerRef.current = window.setTimeout(disarm, 5000);
-      return;
-    }
-    disarm();
-    onConfirm();
-  };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]);
 
   const hasLabel = Boolean(children);
   return (
-    <button
-      type="button"
-      className={[
-        "danger-confirm",
-        armed ? "armed" : "",
-        hasLabel ? "has-label" : "",
-        className,
-      ].filter(Boolean).join(" ")}
-      aria-label={armed ? confirmLabel : armLabel}
-      aria-pressed={armed}
-      title={armed ? confirmLabel : armLabel}
-      onClick={(event) => {
-        event.stopPropagation();
-        click();
-      }}
-      disabled={disabled}
-    >
-      <Trash2 aria-hidden="true" />
-      {children}
-    </button>
+    <>
+      <button
+        type="button"
+        className={["danger-confirm", hasLabel ? "has-label" : "", className].filter(Boolean).join(" ")}
+        aria-label={armLabel}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={armLabel}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (disabled) return;
+          setOpen(true);
+        }}
+        disabled={disabled}
+      >
+        <Trash2 aria-hidden="true" />
+        {children}
+      </button>
+      {open && createPortal(
+        <div
+          className="modal-backdrop delete-confirm-backdrop"
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            if (event.target === event.currentTarget) setOpen(false);
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <section
+            className="modal delete-confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            aria-describedby={descriptionId}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id={titleId}>{armLabel}</h2>
+            <p id={descriptionId}>{message}</p>
+            <div className="modal-actions">
+              <button
+                ref={cancelRef}
+                type="button"
+                className="secondary-button"
+                onClick={() => setOpen(false)}
+              >
+                {cancelLabel}
+              </button>
+              <button
+                type="button"
+                className="danger delete-confirm-accept"
+                onClick={() => {
+                  setOpen(false);
+                  onConfirm();
+                }}
+              >
+                {confirmLabel}
+              </button>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }

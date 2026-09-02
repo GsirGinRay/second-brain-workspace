@@ -1,16 +1,13 @@
-# Optional Cloud Sync
+# Cloud Sync (private builds only)
 
-Local mode is the default. Leave the server field empty to keep all activity on
-the computer.
+The public Windows app is local-only. Settings explain that edits write to the
+selected Markdown folder, and that a phone should open that same folder through
+OneDrive, Dropbox, Google Drive, or Obsidian Sync. Cloud pairing, server origin,
+and sync buttons are hidden unless a private Publisher profile is compiled in.
 
-The first open-source extraction keeps remote cloud sync disabled and only
-permits a localhost development adapter. This avoids granting a desktop WebView
-permission to contact arbitrary Internet origins. A future compatible server
-adapter will use an explicit origin allowlist, signed device requests and
-three-way merge. It will receive structured task/project data, relative paths
-and hashes; complete Markdown files and unrelated notes will stay on the
-computer.
+Private builds still use an explicit origin allowlist, signed device requests
+and three-way merge. They receive structured task/project data, relative paths
+and hashes; complete Markdown files and unrelated notes stay on the computer.
 
-A public reference server is intentionally not bundled in the first extraction.
-The protocol boundary is retained so a self-hosted adapter can be added without
-changing the Markdown core or desktop UI.
+A public reference server is not bundled. The protocol boundary remains so a
+self-hosted adapter can be added without changing the Markdown core.

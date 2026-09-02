@@ -1,22 +1,21 @@
 # Architecture
 
 ```text
-Any Markdown editor
-        ↕
-Second Brain Workspace Desktop
-        ↕ optional structured sync
-Compatible cloud adapter
-        ↕
-Phone or browser UI
+Any Markdown editor  ↔  the same folder on disk  ↔  Second Brain Workspace Desktop
 ```
 
-The desktop application and Markdown workflow are complete without a server.
-Cloud sync is an optional capability, not the product foundation.
+The public desktop application is local-first. Choosing a Markdown folder makes
+that folder the source of truth: checking a task, changing a date, or deleting
+something writes those files on the computer. There is no separate database.
+
+To use the same files on a phone, put the folder in OneDrive, Dropbox, Google
+Drive, or Obsidian Sync and open it with a Markdown app. The public build does
+not include built-in cloud sync.
 
 `brain-core` owns the durable Markdown format and merge rules. `brain-ui` owns
 portable calendar and repository contracts. The desktop app owns native file
-access, backups, watchers, device keys and recovery.
+access, backups, watchers and recovery. `.ai/INDEX.md` is regenerated from the
+vault so an AI can find projects, knowledge, and task completion.
 
-Publisher is one private deployment that can implement the cloud protocol. It
-is not part of this open-source repository and is not required by the desktop
-application.
+A private Publisher build can still embed one exact HTTPS origin. That adapter
+is not part of the public product and is not required to use the desktop app.

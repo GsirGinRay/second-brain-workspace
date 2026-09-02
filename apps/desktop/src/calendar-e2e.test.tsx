@@ -244,11 +244,11 @@ test("end-to-end: agenda date input is bound to the task's planned date", async 
       clickEvent(cell!, "click");
     });
     await waitFor(
-      () => container.querySelector<HTMLInputElement>("input[placeholder='YYYY-MM-DD']") !== null,
+      () => container.querySelector<HTMLInputElement>("input[type='date']") !== null,
       3000,
       "agenda date input",
     );
-    const input = container.querySelector<HTMLInputElement>("input[placeholder='YYYY-MM-DD']")!;
+    const input = container.querySelector<HTMLInputElement>("input[type='date']")!;
     assert.equal(input.value, "2026-08-15");
     // happy-dom does not deliver native input events to React's synthetic
     // onChange, so the input save round-trip is covered by the drag tests

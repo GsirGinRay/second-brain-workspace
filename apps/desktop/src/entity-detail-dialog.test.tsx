@@ -175,7 +175,7 @@ test("clicking outside auto-saves dirty task edits instead of discarding them", 
   }
 });
 
-test("the task detail delete button arms in place before deleting", () => {
+test("the task detail delete button asks in a dialog before deleting", () => {
   let deleted = 0;
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -193,12 +193,13 @@ test("the task detail delete button arms in place before deleting", () => {
       />,
     ));
     const danger = [...container.querySelectorAll<HTMLButtonElement>(".danger-confirm")].find((button) => button.textContent?.includes("task.action.delete"))!;
-    assert.ok(danger, "an armed two-step delete button is rendered");
+    assert.ok(danger, "a delete control is rendered");
     flushSync(() => danger.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
-    assert.equal(deleted, 0, "the first click only arms");
-    assert.ok(danger.className.includes("armed"));
-    flushSync(() => danger.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
-    assert.equal(deleted, 1, "the second click deletes");
+    assert.equal(deleted, 0, "opening the dialog does not delete");
+    const accept = document.querySelector<HTMLButtonElement>(".delete-confirm-accept");
+    assert.ok(accept, "the dialog asks for an explicit confirm");
+    flushSync(() => accept!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    assert.equal(deleted, 1, "confirming the dialog deletes");
   } finally {
     root.unmount();
     container.remove();

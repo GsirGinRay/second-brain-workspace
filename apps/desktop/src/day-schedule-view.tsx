@@ -44,7 +44,7 @@ export interface DayScheduleLabels {
   resize: string;
   /** Star toggle label（今日最重要）. */
   important?: string;
-  /** Confirm step of the armed delete button. */
+  /** Confirm button in the permanent-delete dialog. */
   deleteAgain?: string;
 }
 

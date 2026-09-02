@@ -135,6 +135,7 @@ function DetailDialog({
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target as Element | null;
       if (!target || dialogRef.current?.contains(target)) return;
+      if (target.closest(".delete-confirm-backdrop, .delete-confirm-dialog")) return;
       event.preventDefault();
       event.stopPropagation();
       if (forwardingOutsideClickRef.current) return;

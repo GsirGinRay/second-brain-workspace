@@ -2,7 +2,7 @@
 
 一個以本地為優先（local-first）的桌面工作區，用於管理任務、成果專案（outcome projects）與參考收藏（reference collections），全部以一般的 Markdown 檔案儲存。可搭配 Obsidian、VS Code、Typora、Notepad++ 或任何編輯器使用。
 
-## 不需要伺服器也能使用的功能
+## 公開版本提供的功能
 
 - Windows 桌面應用程式
 - 今日、月/週行事曆、任務看板、專案清單/狀態檢視、本機收藏
@@ -14,8 +14,9 @@
 - Markdown 資料夾掃描與檔案監看
 - 本機備份、原子寫入與當機復原日誌
 - 可離線使用
+- 自動產生 `.ai/INDEX.md`，讓 AI 能快速找到專案、知識與任務完成度
 
-雲端同步是可選的。只有在你想從手機或瀏覽器檢視/編輯同一份任務鏡像時，才需要設定相容的 HTTPS 伺服器。
+你在工作台打勾、改日期或刪除任務，都會直接寫進你選擇的電腦資料夾，沒有另外一份資料庫。若要在手機上看同一份資料，把該資料夾放到 OneDrive、Dropbox、Google 雲端硬碟或 Obsidian Sync，再用手機上的 Markdown App 開啟即可。公開版本沒有內建雲端同步。
 
 ## 安裝
 
@@ -93,8 +94,7 @@ Markdown 檔案格式是長期的真相來源（source of truth），設計上�
 
 ## 隱私
 
-本應用程式不會上傳 Markdown 內文。啟用雲端配接器時，只會收到結構化的任務/專案欄位、相對來源路徑與雜湊值。
-收藏的 Markdown 內文僅在本機建立索引，不會加入雲端同步計畫。
+公開版本不會上傳 Markdown。讀寫都只發生在你選擇的電腦資料夾。收藏的 Markdown 內文僅在本機建立索引。
 
 專案使用 `type: project`，並有有限的生命週期（`planning`、`active`、`paused`、`done` 或 `archived`）。
 長期保存的提示與參考筆記使用 `type: collection`，可選擇性帶有 `category` 與 `importance` 前置資料（frontmatter）。

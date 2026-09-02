@@ -272,12 +272,13 @@ test("deleting a today task arms in place and deletes on the second click", () =
   );
   try {
     const danger = rendered.container.querySelector<HTMLButtonElement>(".schedule-tray-actions .danger-confirm");
-    assert.ok(danger, "the tray card carries the armed two-step delete");
+    assert.ok(danger, "the tray card carries a delete control");
     flushSync(() => clickEvent(danger!, "click"));
-    assert.equal(deleted.length, 0, "the first click only arms the button");
-    assert.ok(danger!.className.includes("armed"), "the armed state is visible on the button itself");
-    flushSync(() => clickEvent(danger!, "click"));
-    assert.deepEqual(deleted.map((task) => task.id), ["delete-me"], "the second click deletes exactly once");
+    assert.equal(deleted.length, 0, "opening the dialog does not delete");
+    const accept = document.querySelector<HTMLButtonElement>(".delete-confirm-accept");
+    assert.ok(accept, "a confirmation dialog is shown");
+    flushSync(() => clickEvent(accept!, "click"));
+    assert.deepEqual(deleted.map((task) => task.id), ["delete-me"], "confirming the dialog deletes exactly once");
   } finally {
     rendered.container.remove();
   }

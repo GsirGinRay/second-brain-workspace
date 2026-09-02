@@ -116,7 +116,7 @@ test("agenda shows the selected day's tasks with a date input bound to the task 
     flushSync(() => {
       clickEvent(cell!, "click");
     });
-    const input = rendered.container.querySelector<HTMLInputElement>("input[placeholder='YYYY-MM-DD']");
+    const input = rendered.container.querySelector<HTMLInputElement>("input[type='date']");
     assert.ok(input, "agenda date input exists");
     assert.equal(input!.value, "2026-08-15", "input reflects the task's planned date");
     // Note: happy-dom does not deliver native input/change events to React's

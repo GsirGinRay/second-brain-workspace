@@ -67,12 +67,26 @@ test("board and calendar expose direct date editing and task-level drag feedback
   const source = app();
   const styles = css();
   assert.match(source, /className="board-date-input"/);
+  assert.match(source, /className="task-date-text"/);
+  assert.match(source, /type="date"/);
+  assert.match(source, /showPicker/);
   assert.match(source, /className="calendar-task-drag-handle"/);
   // Batch drags lift every selected chip, not only the grabbed one.
   assert.match(source, /dragBatchIds\.includes\(entry\.task\.id \?\? ""\) \? "dragging"/);
   assert.match(source, /event\.stopPropagation\(\)/);
   assert.match(styles, /\.calendar-task-title\.dragging/);
   assert.match(styles, /\.week-task-list article\.dragging/);
+});
+
+test("public settings hide cloud sync, write to the local folder, and complete board tasks with a checkbox", () => {
+  const source = app();
+  assert.match(source, /const cloudEnabled = diagnostics\?\.syncEnabled === true/);
+  assert.match(source, /settings\.localHelp/);
+  assert.doesNotMatch(source, /settings\.phoneHelp/);
+  assert.match(source, /diagnostics\?\.syncEnabled && \(/);
+  assert.match(source, /board-card[\s\S]{0,1200}className=\{`clear-check/);
+  assert.doesNotMatch(source, /className="board-card-complete"/);
+  assert.doesNotMatch(source, /<span>\{task\.status === "done" \? t\("task\.action\.reopen"\) : t\("task\.action\.complete"\)\}<\/span>/);
 });
 
 test("Windows task drag uses pointer events because HTML5 drag is unreliable in the WebView", () => {
@@ -247,9 +261,10 @@ test("projects navigate to an id-filtered board and expose planning, filters and
   assert.match(source, /value="planning">\{t\("project\.status\.planning"\)\}/);
   assert.match(source, /second-brain\.projectView/);
   assert.match(source, /buildProjectDeleteChanges/);
-  // Deletion is confirmed by the in-place armed button, not a detached
-  // window.confirm dialog standing between the user and the control.
+  // Permanent delete is confirmed in a dialog so a first click never looks
+  // like it already worked.
   assert.doesNotMatch(source, /window\.confirm\([^)]*解除專案連結/s);
+  assert.match(source, /DangerConfirmButton/);
   assert.match(source, /onDelete=\{\(\) => \{ void permanentlyDeleteProject\(selectedProjectDetail\); if \(activeDetailKey\) closeDetail\(activeDetailKey\); \}\}/);
 });
 
@@ -370,7 +385,7 @@ test("project actions use accessible icon-only controls while state labels remai
   for (const icon of ["Save", "CheckCircle2", "Archive", "Trash2"]) {
     assert.match(source, new RegExp(`<${icon}\\b`));
   }
-  assert.match(source, /aria-label=\{t\("project\.action\.delete"\)\}/);
+  assert.match(source, /armLabel=\{t\("project\.action\.delete"\)\}/);
   assert.match(source, /task\.status\.waitingHelp/);
 });
 
@@ -458,8 +473,8 @@ test("today's focus panel widens the tray and surfaces star, time and delete inl
   // and a draggable splitter lives between the two so the user can resize.
   assert.match(styles, /\.day-schedule\.has-tray\{[^}]*grid-template-columns:var\(--tray-width,340px\) 6px minmax\(0,1fr\)/);
   assert.match(styles, /\.day-schedule-resizer\{[^}]*cursor:col-resize/);
-  assert.match(styles, /\.danger-confirm\.armed[^}]*#b42318/);
-  assert.doesNotMatch(styles, /\.danger-confirm\.armed\{[^}]*(?:width:auto|padding:6px 12px)/);
+  assert.match(styles, /\.delete-confirm-dialog/);
+  assert.match(styles, /\.delete-confirm-accept[^}]*#b42318/);
   assert.doesNotMatch(styles, /\.clear-check\{[^}]*width:\s*40px/);
   assert.match(styles, /\.inline-task-card\{[^}]*26px minmax\(0,1fr\)/);
 });

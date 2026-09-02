@@ -5,7 +5,7 @@
 A local-first desktop workspace for tasks, outcome projects, and reference collections stored in ordinary
 Markdown files. Use it with Obsidian, VS Code, Typora, Notepad++, or any editor.
 
-## What works without a server
+## What the public app does
 
 - Windows desktop application
 - Today, month/week calendar, task board, project list/status views, and local collections
@@ -17,9 +17,12 @@ Markdown files. Use it with Obsidian, VS Code, Typora, Notepad++, or any editor.
 - Markdown folder scanning and file watching
 - Local backup, atomic writes and crash-recovery journal
 - Offline use
+- Automatic `.ai/INDEX.md` so an AI can find projects, knowledge, and task completion
 
-Cloud sync is optional. Configure a compatible HTTPS server only when you want
-to view or edit the same task mirror from a phone or browser.
+Edits in the app write directly to the Markdown folder you select. There is no
+separate database. To use the same files on a phone, put that folder in OneDrive,
+Dropbox, Google Drive, or Obsidian Sync and open it with a Markdown app. The
+public build does not include built-in cloud sync.
 
 ## Development
 
@@ -131,9 +134,9 @@ See [docs/architecture.md](docs/architecture.md) and
 
 ## Privacy
 
-The application does not upload Markdown bodies. A cloud adapter, when enabled,
-receives only structured task/project fields, relative source paths and hashes.
-Collection Markdown bodies are indexed locally and are not added to cloud sync plans.
+The public application does not upload Markdown. All reading and writing stays
+in the folder you select on this computer. Collection Markdown bodies are
+indexed locally.
 
 Projects use `type: project` and have a finite lifecycle (`planning`, `active`,
 `paused`, `done`, or `archived`). Long-lived prompts and reference notes use
