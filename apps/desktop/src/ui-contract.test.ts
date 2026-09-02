@@ -112,7 +112,7 @@ test("calendar drag feedback dims the source day, raises the task, and marks the
 
 test("week calendar and idea inbox use compact responsive cards", () => {
   const styles = css();
-  assert.match(styles, /\.idea-grid\{display:grid/);
+  assert.match(styles, /\.idea-grid\{[^}]*display:grid/);
   assert.match(styles, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.match(styles, /\.week-task-list article[^}]*min-height:0/);
   assert.doesNotMatch(styles, /\.idea-drawer article[^}]*min-width:220px/);
@@ -299,7 +299,9 @@ test("today and calendar share a full-day schedule surface", () => {
   assert.match(source, /calendar\.schedule/);
   assert.match(source, /openSchedule/);
   assert.match(source, /<Maximize2\b/);
-  assert.match(styles, /\.day-schedule\{display:grid/);
+  // Match the declaration anywhere in the rule: pinning it to the first position turns
+  // "the surface is a grid" into "display must be declared first".
+  assert.match(styles, /\.day-schedule\{[^}]*display:grid/);
   assert.match(styles, /\.calendar-stage/);
   assert.match(styles, /\.week-grid\{[^}]*height:min\(52vh,520px\)/);
 });
@@ -454,7 +456,7 @@ test("today's focus panel widens the tray and surfaces star, time and delete inl
   assert.match(schedule, /schedule-tray-inline|timed-block-head/);
   // The tray lane is now the wide column; the timeline narrows accordingly,
   // and a draggable splitter lives between the two so the user can resize.
-  assert.match(styles, /\.day-schedule\.has-tray\{grid-template-columns:var\(--tray-width,340px\) 6px minmax\(0,1fr\)\}/);
+  assert.match(styles, /\.day-schedule\.has-tray\{[^}]*grid-template-columns:var\(--tray-width,340px\) 6px minmax\(0,1fr\)/);
   assert.match(styles, /\.day-schedule-resizer\{[^}]*cursor:col-resize/);
   assert.match(styles, /\.danger-confirm\.armed[^}]*#b42318/);
   assert.doesNotMatch(styles, /\.danger-confirm\.armed\{[^}]*(?:width:auto|padding:6px 12px)/);
