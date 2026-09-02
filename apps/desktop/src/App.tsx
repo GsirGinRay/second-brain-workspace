@@ -4042,7 +4042,7 @@ export function Calendar({
             </div>
             <div>
               <button
-                className="secondary-button"
+                className="secondary-button action-with-icon"
                 onClick={() => openSchedule(selected)}
               >
                 <Clock aria-hidden="true" />
