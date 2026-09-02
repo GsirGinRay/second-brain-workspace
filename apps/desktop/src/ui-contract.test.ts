@@ -334,7 +334,8 @@ test("global language and light-dark theme controls are persisted and accessible
   const styles = css();
   assert.match(source, /UI_PREFERENCES_KEY/);
   assert.match(source, /data-theme=\{preferences\.theme\}/);
-  assert.match(source, /aria-label=\{t\("app\.language"\)\}/);
+  assert.match(source, /settings\.language/);
+  assert.match(source, /settings\.theme/);
   assert.match(source, /aria-label=\{t\("app\.theme"\)\}/);
   assert.match(styles, /\[data-theme="dark"\]/);
   assert.match(styles, /color-scheme:\s*dark/);
@@ -367,6 +368,7 @@ test("beginner workflow supports Markdown drafts, onboarding and close-time fold
   assert.match(source, /loadDraftWorkspace/);
   assert.match(source, /onCloseRequested/);
   assert.match(source, /onboardingOpen/);
+  assert.match(source, /onboarding\.chooseFolder/);
   assert.match(source, /flushDraftsToSelectedVault/);
 });
 
@@ -374,7 +376,7 @@ test("Windows installer keeps a stable upgrade identity", () => {
   const config = tauriConfig();
   assert.equal(config.productName, "Second Brain Workspace");
   assert.equal(config.identifier, "app.secondbrain.workspace");
-  assert.equal(config.version, "0.4.1");
+  assert.equal(config.version, "0.5.0");
   assert.equal(config.bundle?.windows?.nsis?.installMode, "currentUser");
   assert.equal(config.bundle?.windows?.allowDowngrades, false);
 });

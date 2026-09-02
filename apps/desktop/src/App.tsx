@@ -10,7 +10,6 @@ import {
   Library,
   GripVertical,
   Home,
-  Languages,
   List,
   Maximize2,
   Menu,
@@ -565,13 +564,21 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     [native],
   );
 
-  const startArchitectureOnboarding = async () => {
+  const finishOnboarding = () => {
     localStorage.setItem("second-brain.onboardingCompleted", "true");
     setOnboardingOpen(false);
+  };
+  const startWithFolder = async () => {
+    const ok = await browseVault();
+    if (!ok) return;
+    finishOnboarding();
+  };
+  const startArchitectureOnboarding = async () => {
     if (!diagnostics?.selectedVault) {
       const ok = await browseVault();
-      if (!ok) return; // user cancelled folder selection; they can build later from settings
+      if (!ok) return;
     }
+    finishOnboarding();
     setArchitectureOpen(true);
   };
 
@@ -1552,15 +1559,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             </button>
             <button
               className="icon-button top-icon-action"
-              aria-label={t("app.language")}
-              title={t("app.language")}
-              onClick={() => setPreferences((value) => ({ ...value, language: value.language === "zh-TW" ? "en" : "zh-TW" }))}
-            >
-              <Languages aria-hidden="true" />
-              <small aria-hidden="true">{preferences.language === "zh-TW" ? "中" : "EN"}</small>
-            </button>
-            <button
-              className="icon-button top-icon-action"
               aria-label={t("app.theme")}
               title={preferences.theme === "light" ? t("app.theme.dark") : t("app.theme.light")}
               onClick={() => setPreferences((value) => ({ ...value, theme: value.theme === "light" ? "dark" : "light" }))}
@@ -1855,18 +1853,25 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       )}
       {onboardingOpen && (
         <div className="modal-backdrop">
-          <section className="modal onboarding-modal" role="dialog" aria-modal="true" aria-label={preferences.language === "zh-TW" ? "開始使用" : "Getting started"}>
-            <div className="modal-header"><div><span className="eyebrow">SECOND BRAIN · LOCAL-FIRST</span><h2>{preferences.language === "zh-TW" ? "你的第二大腦，歡迎" : "Welcome to your second brain"}</h2></div></div>
-            <p>{preferences.language === "zh-TW" ? "先「新建」選一套知識架構，讓 AI 一進資料夾就能讀懂你的專案、知識與任務完成度。之後你在工作台的修改會直接寫進所選的電腦資料夾。" : "Start with “New” to build a knowledge architecture that any AI can read. Edits in this app write directly to the Markdown folder you choose."}</p>
+          <section className="modal onboarding-modal" role="dialog" aria-modal="true" aria-label={t("onboarding.title")}>
+            <div className="modal-header"><div><span className="eyebrow">{t("app.name")}</span><h2>{t("onboarding.title")}</h2></div></div>
+            <p>{t("onboarding.body")}</p>
+            <ul className="onboarding-kinds">
+              <li>{t("onboarding.task")}</li>
+              <li>{t("onboarding.project")}</li>
+              <li>{t("onboarding.collection")}</li>
+            </ul>
             <div className="onboarding-cta">
-              <button className="primary onboarding-primary" onClick={() => void startArchitectureOnboarding()}>
-                <Plus aria-hidden="true" />{preferences.language === "zh-TW" ? "建立知識架構" : "New — build architecture"}
+              <button className="primary onboarding-primary" onClick={() => void startWithFolder()}>
+                {t("onboarding.chooseFolder")}
               </button>
-              <span className="eyebrow">{preferences.language === "zh-TW" ? "可自由勾選：專案、知識庫、提示詞、AI 委任、模板" : "Pick & choose packs: projects, library, prompts, AI handoff, templates"}</span>
+              <button className="secondary-button wide" onClick={() => void startArchitectureOnboarding()}>
+                {t("onboarding.architecture")}
+              </button>
             </div>
             <hr className="modal-divider" />
-            <button className="text-button" onClick={() => { localStorage.setItem("second-brain.onboardingCompleted", "true"); setOnboardingOpen(false); }}>
-              {preferences.language === "zh-TW" ? "先記下來，稍後再建立架構" : "Capture first, build architecture later"}
+            <button className="text-button" onClick={finishOnboarding}>
+              {t("onboarding.skip")}
             </button>
           </section>
         </div>
@@ -2235,7 +2240,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     return () => window.removeEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
   });
   return <section className="command-center">
-    <header className="command-hero"><div><span className="eyebrow">COMMAND CENTER · {today}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
+    <header className="command-hero"><div><span className="eyebrow">{t("today.eyebrow", { date: today })}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
     <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article></div>
     {templateOpen && <section className="routine-editor"><header><div><span className="eyebrow">DAILY ROUTINE</span><input aria-label="模板名稱" value={routineTemplate.name} onChange={(event) => onRoutineTemplateChange({ ...routineTemplate, name: event.target.value })} /></div><button onClick={() => setTemplateOpen(false)} aria-label="關閉模板"><X /></button></header><div className="routine-items">{routineTemplate.items.map((item) => <article key={item.id} data-global-select-id={item.id} data-global-select-kind="routine" draggable={dragHandleId === item.id} onDragStart={() => { setDraggedItem(item.id); draggedItems.current = getGlobalSelectedIds(item.id, "routine"); }} onDragEnd={() => { setDragHandleId(null); draggedItems.current = []; }} onMouseUp={() => setDragHandleId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropItem(item.id)}><GripVertical onMouseDown={() => setDragHandleId(item.id)} /><input type="checkbox" aria-label={`${item.title}啟用`} checked={item.enabled} onChange={(event) => updateItem(item.id, { enabled: event.target.checked })} /><input aria-label="例行任務名稱" value={item.title} onChange={(event) => updateItem(item.id, { title: event.target.value })} /><select aria-label="例行任務專案" value={item.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); updateItem(item.id, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><select aria-label="例行任務優先度" value={item.priority} onChange={(event) => updateItem(item.id, { priority: event.target.value as RoutineTemplateItem["priority"] })}>{(["highest","high","medium","normal","low"] as const).map((value) => <option key={value} value={value}>{priorityDisplay(value).code}</option>)}</select><input aria-label="開始時間" type="time" value={item.startTime ?? ""} onChange={(event) => updateItem(item.id, { startTime: event.target.value || null, durationMinutes: event.target.value ? item.durationMinutes ?? 30 : null })} /><select aria-label="持續時間" disabled={!item.startTime} value={item.durationMinutes ?? 30} onChange={(event) => updateItem(item.id, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select><button className="danger-icon" aria-label={`刪除${item.title}`} onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.filter((value) => value.id !== item.id) })}><Trash2 /></button></article>)}</div><button className="secondary" onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: [...routineTemplate.items, { id: crypto.randomUUID(), title: "新的例行任務", enabled: true, projectId: null, projectName: null, priority: "normal", startTime: null, durationMinutes: null, rank: rankForIndex(routineTemplate.items.length) }] })}><Plus />新增模板項目</button></section>}
@@ -4000,7 +4005,7 @@ export function Calendar({
         <aside className="agenda">
           <div className="agenda-header">
             <div>
-              <span className="eyebrow">DAY PLAN</span>
+              <span className="eyebrow">{t("calendar.dayPlan")}</span>
               <h3>{selected}</h3>
               <small>
                 {
@@ -4024,7 +4029,7 @@ export function Calendar({
             </div>
           </div>
           {selectedTasks.length === 0 ? (
-            <Empty text="這天沒有任務。" />
+            <Empty text={t("calendar.emptyDay")} actionLabel={t("calendar.emptyDayAction")} onAction={() => setQuickAddOpen(true)} />
           ) : (
             selectedTasks.map(({ task, date }) => (
               <article
@@ -4625,12 +4630,56 @@ function SyncSettings({
 }) {
   const { preferences, setPreferences, t } = useUiPreferences();
   const cloudEnabled = diagnostics?.syncEnabled === true;
+  const languages = [
+    { id: "zh-TW" as const, label: t("settings.language.zh") },
+    { id: "en" as const, label: t("settings.language.en") },
+  ];
+  const themes = [
+    { id: "light" as const, label: t("settings.theme.light") },
+    { id: "dark" as const, label: t("settings.theme.dark") },
+  ];
   const detailSurfaces = [
     { id: "dialog" as const, label: t("settings.detailSurface.dialog"), hint: t("settings.detailSurface.dialogHint") },
     { id: "panel" as const, label: t("settings.detailSurface.panel"), hint: t("settings.detailSurface.panelHint") },
   ];
   return (
     <div className="settings-grid">
+      <section className="settings-card">
+        <h2>{t("settings.language")}</h2>
+        <p>{t("settings.language.hint")}</p>
+        <div className="surface-choice" role="radiogroup" aria-label={t("settings.language")}>
+          {languages.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={preferences.language === option.id}
+              className={preferences.language === option.id ? "active" : ""}
+              onClick={() => setPreferences((value) => ({ ...value, language: option.id }))}
+            >
+              <strong>{option.label}</strong>
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="settings-card">
+        <h2>{t("settings.theme")}</h2>
+        <p>{t("settings.theme.hint")}</p>
+        <div className="surface-choice" role="radiogroup" aria-label={t("settings.theme")}>
+          {themes.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={preferences.theme === option.id}
+              className={preferences.theme === option.id ? "active" : ""}
+              onClick={() => setPreferences((value) => ({ ...value, theme: option.id }))}
+            >
+              <strong>{option.label}</strong>
+            </button>
+          ))}
+        </div>
+      </section>
       <section className="settings-card detail-surface-settings">
         <h2>{t("settings.detailSurface")}</h2>
         <p>{t("settings.detailSurface.hint")}</p>
@@ -4661,13 +4710,9 @@ function SyncSettings({
         </button>
       </section>
       <section className="settings-card">
-        <h2>{t("settings.localTitle")}</h2>
-        <p>{t("settings.localHelp")}</p>
-        <code>{diagnostics?.selectedVault ?? t("sync.notSelected")}</code>
-      </section>
-      <section className="settings-card">
         <span className="step">1</span>
         <h2>{t("sync.folder")}</h2>
+        <p>{t("settings.localHelp")}</p>
         <p>{t("sync.folderHelp")}</p>
         <code>{diagnostics?.selectedVault ?? t("sync.notSelected")}</code>
         <button
