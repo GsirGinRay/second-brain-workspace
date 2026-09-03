@@ -319,19 +319,37 @@ export function MarkdownBlockEditor({
   //   made line breaks feel like they needed four presses.
   const IME_ECHO_WINDOW_MS = 100;
   const imeCompositionEndedAtRef = useRef(0);
-  // Composition timing is a DOM-level concern, so compositionend is recorded
-  // through a native listener (attached with the textarea ref) instead of a
-  // React prop: the timestamp is then guaranteed to be in place before any
-  // following keydown is dispatched, independent of React's event delegation.
-  const imeEndListeners = new WeakMap<HTMLTextAreaElement, (event: CompositionEvent) => void>();
+  const imeComposingRef = useRef(false);
+  // Composition timing is a DOM-level concern, so compositionstart/end are
+  // recorded through native listeners (attached with the textarea ref) instead
+  // of React props: the flags are then in place before any following keydown
+  // or delayed caret snap, independent of React's event delegation.
+  const imeListeners = new WeakMap<HTMLTextAreaElement, { start: () => void; end: (event: CompositionEvent) => void }>();
   const bindImeEndListener = (element: HTMLTextAreaElement) => {
-    const previous = imeEndListeners.get(element);
-    if (previous) element.removeEventListener("compositionend", previous);
-    const listener = (event: CompositionEvent) => {
+    const previous = imeListeners.get(element);
+    if (previous) {
+      element.removeEventListener("compositionstart", previous.start);
+      element.removeEventListener("compositionend", previous.end);
+    }
+    const start = () => {
+      imeComposingRef.current = true;
+    };
+    const end = (event: CompositionEvent) => {
+      imeComposingRef.current = false;
       imeCompositionEndedAtRef.current = event.timeStamp;
     };
-    imeEndListeners.set(element, listener);
-    element.addEventListener("compositionend", listener);
+    imeListeners.set(element, { start, end });
+    element.addEventListener("compositionstart", start);
+    element.addEventListener("compositionend", end);
+  };
+  const placeCaretAtEndIfIdle = (element: HTMLTextAreaElement) => {
+    // Moving the caret during 注音/IME composition commits the composing
+    // character (a bopomofo letter) and some IMEs then echo Enter, which
+    // splits the block. A second click works because composition is idle.
+    if (imeComposingRef.current) return;
+    try { element.focus({ preventScroll: true }); } catch { return; }
+    if (imeComposingRef.current) return;
+    try { element.setSelectionRange(element.value.length, element.value.length); } catch { /* unmounted */ }
   };
   const imeEnterDisposition = (event: ReactKeyboardEvent<HTMLTextAreaElement>): "confirm" | "echo" | false => {
     if (event.key !== "Enter" && event.key !== "Process") return false;
@@ -356,11 +374,7 @@ export function MarkdownBlockEditor({
       lastFocusedBlockRef.current = blockId;
       // Defer past React's autoFocus commit so the caret lands after focus,
       // not before (Chromium otherwise resets the selection to 0).
-      const focus = () => {
-        try { element.focus({ preventScroll: true }); } catch { /* element unmounted */ }
-        const end = element.value.length;
-        try { element.setSelectionRange(end, end); } catch { /* element unmounted */ }
-      };
+      const focus = () => placeCaretAtEndIfIdle(element);
       // Two animation frames are safer than one: the first waits for
       // React to commit, the second waits for Chromium to settle the
       // selection that autoFocus inserted.
@@ -378,15 +392,14 @@ export function MarkdownBlockEditor({
   // re-focused — which means the previous selection (or default 0) leaks
   // into the freshly mounted textarea.
   useEffect(() => {
+    imeComposingRef.current = false;
     if (!editingId) return;
     const escape = (value: string) =>
       typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(value) : value;
     const placeCaretAtEnd = () => {
       const element = listRef.current?.querySelector<HTMLTextAreaElement>(`[data-markdown-block-id="${escape(editingId)}"] .markdown-block-input`);
       if (!element) return;
-      try { element.focus({ preventScroll: true }); } catch { /* ignore */ }
-      const end = element.value.length;
-      try { element.setSelectionRange(end, end); } catch { /* ignore */ }
+      placeCaretAtEndIfIdle(element);
     };
     // Wait a frame for the value to settle (React commit + the value
     // attribute write) before measuring the length, otherwise the caret
@@ -1185,8 +1198,11 @@ export function MarkdownBlockEditor({
                               : item);
                             commit(next);
                             requestAnimationFrame(() => {
-                              taskTextarea.focus({ preventScroll: true });
-                              taskTextarea.setSelectionRange(previousBody.length, previousBody.length);
+                              if (!taskTextarea.isConnected) return;
+                              try {
+                                taskTextarea.focus({ preventScroll: true });
+                                taskTextarea.setSelectionRange(previousBody.length, previousBody.length);
+                              } catch { /* unmounted */ }
                             });
                           } else if (!singleTaskMatch[3]!.trim()) {
                             // First block on the canvas: drop the marker.
@@ -1227,8 +1243,11 @@ export function MarkdownBlockEditor({
                             commit(next);
                             requestAnimationFrame(() => {
                               const ta = event.currentTarget;
-                              ta.focus();
-                              ta.setSelectionRange(singleTaskMatch[3]!.trimStart().length, singleTaskMatch[3]!.trimStart().length);
+                              if (!ta?.isConnected) return;
+                              try {
+                                ta.focus();
+                                ta.setSelectionRange(singleTaskMatch[3]!.trimStart().length, singleTaskMatch[3]!.trimStart().length);
+                              } catch { /* unmounted */ }
                             });
                           }
                         } else if (event.key === "Escape" || (event.ctrlKey && event.key === "Enter")) {

@@ -1041,7 +1041,7 @@ export function extractTaskMarkdownContent(source: string, id: string): string {
     if (indented.includes(comment)) return indented;
     if (comment.includes(indented)) return comment;
     const newline = source.includes("\r\n") ? "\r\n" : "\n";
-    return indented + newline + newline + comment;
+    return indented + newline + comment;
   }
   return indented || comment;
 }

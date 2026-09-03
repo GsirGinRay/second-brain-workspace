@@ -555,6 +555,22 @@ test("the Enter after IME confirmation creates the next todo in one press", () =
   }
 });
 
+test("caret snap does not run during IME composition", async () => {
+  const rendered = renderEditor("第一段文字");
+  try {
+    const preview = rendered.container.querySelector<HTMLElement>(".markdown-block-preview")!;
+    flushSync(() => preview.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    const textarea = rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input");
+    assert.ok(textarea);
+    flushSync(() => textarea!.dispatchEvent(new window.Event("compositionstart", { bubbles: true }) as unknown as Event));
+    textarea!.setSelectionRange(0, 0);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(textarea!.selectionStart, 0, "IME caret is not stolen by the delayed snap-to-end");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
 test("the 注音 echo Enter immediately after compositionend is swallowed", () => {
   const rendered = renderEditor("- [ ] 撰寫初稿");
   try {

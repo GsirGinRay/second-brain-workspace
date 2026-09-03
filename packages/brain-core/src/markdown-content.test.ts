@@ -65,5 +65,6 @@ test("notes parked in a trailing HTML comment join the outline under the same ta
   const next = patchTaskMarkdownContent(source, taskId, extractTaskMarkdownContent(source, taskId));
   assert.doesNotMatch(next, /second-brain-task-content/);
   assert.match(next, /#task Draft[\s\S]*keep this outline item[\s\S]*test123[\s\S]*#task Next/);
-  assert.match(next, /  test123/);
+  assert.match(next, /keep this outline item\r\n  test123/);
+  assert.doesNotMatch(next, /keep this outline item\r\n  \r\n  test123/);
 });
