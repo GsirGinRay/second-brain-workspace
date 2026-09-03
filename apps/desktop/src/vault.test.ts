@@ -240,6 +240,22 @@ test("indented task notes are not adopted as extra tasks", () => {
   assert.match(scanned.snapshot.tasks[0]?.body ?? "", /Example only/);
 });
 
+test("scan moves trailing HTML comment notes under the task without dropping its outline", () => {
+  const line = formatTaskLine({
+    id: taskId, title: "M09", status: "todo", taskDate: null, priority: "normal",
+    projectId: null, projectName: null, rank: "a", sourcePath: "project.md",
+    sourceHeading: null, completedAt: null,
+  });
+  const source = `${line}\r\n\r\n  - [ ] keep outline\r\n- [ ] #task Next <!-- publisher-task:{\"id\":\"22222222-2222-4222-8222-222222222222\",\"status\":\"todo\",\"rank\":\"b\"} -->\r\n<!-- second-brain-task-content:${taskId}:start -->\r\ntest123\r\n<!-- second-brain-task-content:${taskId}:end -->\r\n`;
+  const scanned = scanStructuredVault([file("project.md", source)]);
+  assert.equal(scanned.snapshot.tasks.length, 2);
+  assert.match(scanned.snapshot.tasks[0]?.body ?? "", /keep outline/);
+  assert.match(scanned.snapshot.tasks[0]?.body ?? "", /test123/);
+  const migrated = base64ToText(scanned.bootstrapChanges[0]!.replacementBase64);
+  assert.doesNotMatch(migrated, /second-brain-task-content/);
+  assert.match(migrated, /#task M09[\s\S]*keep outline[\s\S]*test123[\s\S]*#task Next/);
+});
+
 test("scan migrates JSON-only startTime onto visible ⏰ ⏱ tokens", () => {
   const source = `- [ ] #task Timed <!-- publisher-task:{"id":"${taskId}","status":"todo","rank":"a","startTime":"09:30","durationMinutes":45,"timeZone":"Asia/Taipei"} -->\r\n`;
   const scanned = scanStructuredVault([file("tasks.md", source)]);

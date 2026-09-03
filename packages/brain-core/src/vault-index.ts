@@ -55,10 +55,12 @@ Everything is ordinary Markdown in the vault. The four entity kinds:
     ...
   \`\`\`
 
-  Optional fields ride the line (priority/date/time/project). Richer task notes
-  are ordinary Markdown indented under the list item so Obsidian and AI can
-  read them. Legacy HTML comment blocks are still read, then rewritten as
-  indented notes on the next save.
+  Optional fields ride the line (priority/date/time/project). Everything
+  indented under that list item — checklists, paragraphs, headings — belongs
+  to the same task until the next unindented \`- [ ] #task\` line. That is how
+  Obsidian and AI group a project task with its notes. Do not park notes at
+  the bottom of the file. Legacy HTML comment blocks are still read, then
+  rewritten as indented notes on the next save.
 
   The trailing \`publisher-task:{...}\` token is a data-format compatibility
   marker only, not a product dependency.

@@ -1030,15 +1030,20 @@ function replaceIndentedTaskBody(
 }
 
 export function extractTaskMarkdownContent(source: string, id: string): string {
-  // A foreign or malformed id must not abort a whole vault scan. Indented notes
-  // are located by the task line; legacy HTML comment blocks still require a
-  // managed UUID because the delimiter embeds the id.
+  // Notes live with the task: ordinary Markdown indented under the list item.
+  // Legacy HTML comment blocks (often parked at the end of the file) are still
+  // read and merged, so a project outline under the task is not discarded when
+  // older writes hid extra notes in comments.
   const lineIndex = findTaskLineIndexById(source, id);
-  if (lineIndex >= 0) {
-    const indented = extractIndentedTaskBody(source, lineIndex);
-    if (indented) return indented;
+  const indented = lineIndex >= 0 ? extractIndentedTaskBody(source, lineIndex) : "";
+  const comment = extractLegacyTaskComment(source, id);
+  if (indented && comment) {
+    if (indented.includes(comment)) return indented;
+    if (comment.includes(indented)) return comment;
+    const newline = source.includes("\r\n") ? "\r\n" : "\n";
+    return indented + newline + newline + comment;
   }
-  return extractLegacyTaskComment(source, id);
+  return indented || comment;
 }
 
 export function patchTaskMarkdownContent(source: string, id: string, body: string): string {

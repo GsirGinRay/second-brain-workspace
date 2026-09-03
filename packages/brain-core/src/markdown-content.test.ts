@@ -47,3 +47,23 @@ test("indented task notes keep nested #task examples inside the parent body", ()
   assert.match(next, /  - \[ \] #task Example only/);
   assert.equal(extractTaskMarkdownContent(next, taskId), "- [ ] #task Example only");
 });
+
+test("notes parked in a trailing HTML comment join the outline under the same task", () => {
+  const source = [
+    `# Project`,
+    taskLine,
+    ``,
+    `  - [ ] keep this outline item`,
+    `- [ ] #task Next <!-- publisher-task:{\"id\":\"22222222-2222-4222-8222-222222222222\"} -->`,
+    `<!-- second-brain-task-content:${taskId}:start -->`,
+    `test123`,
+    `<!-- second-brain-task-content:${taskId}:end -->`,
+    ``,
+  ].join("\r\n");
+  assert.match(extractTaskMarkdownContent(source, taskId), /keep this outline item/);
+  assert.match(extractTaskMarkdownContent(source, taskId), /test123/);
+  const next = patchTaskMarkdownContent(source, taskId, extractTaskMarkdownContent(source, taskId));
+  assert.doesNotMatch(next, /second-brain-task-content/);
+  assert.match(next, /#task Draft[\s\S]*keep this outline item[\s\S]*test123[\s\S]*#task Next/);
+  assert.match(next, /  test123/);
+});
