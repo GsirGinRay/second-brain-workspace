@@ -349,6 +349,7 @@ test("an empty body does not show instructional copy", () => {
     assert.doesNotMatch(rendered.container.textContent ?? "", /尚無詳細內容|No detail yet/);
     assert.equal(rendered.container.querySelectorAll(".markdown-block").length, 1, "an editable blank block is ready immediately");
     assert.equal(rendered.container.querySelector(".markdown-block-input"), null, "the blank block is not auto-focused");
+    assert.doesNotMatch(rendered.container.querySelector(".markdown-block-preview")?.textContent ?? "", /—/);
     const textarea = openTextarea(rendered.container, 0);
     assert.match(textarea.placeholder ?? "", /輸入文字/);
   } finally {

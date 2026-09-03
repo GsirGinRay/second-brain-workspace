@@ -1399,7 +1399,9 @@ export function MarkdownBlockEditor({
                       }
                     }}
                   >
-                    <MarkdownPreview value={styled.content} locale={locale} />
+                    {styled.content.trim()
+                      ? <MarkdownPreview value={styled.content} locale={locale} />
+                      : <span className="markdown-block-preview-empty">{zh ? "輸入文字，或輸入 / 使用指令" : "Type text, or press / for commands"}</span>}
                   </div>
                 )}
                 {showSlashMenu && (

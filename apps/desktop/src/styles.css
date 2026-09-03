@@ -484,6 +484,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .markdown-block.kind-divider{padding:8px 0}
 .markdown-block-divider{height:0;border:0;border-top:1px solid #c8c8c4;margin:6px 0;cursor:text}
 .markdown-block-preview{display:block;width:100%;border:0;background:transparent;color:var(--ink);padding:0;text-align:left;cursor:text}
+.markdown-block-preview-empty{display:block;min-height:24px;padding:2px 6px;color:var(--muted,#9a9a96);font-size:15px;line-height:1.55}
 .markdown-block-preview,.markdown-block-preview .markdown-preview,.markdown-block-preview .markdown-preview :is(p,h1,h2,h3,h4,h5,h6,li,blockquote),.markdown-task-block button{color:var(--block-text)}
 .markdown-block-preview .markdown-preview{min-height:0;padding:2px 6px;overflow:visible;font-size:15px;line-height:1.55}
 .markdown-block-preview .markdown-preview :is(p,h1,h2,h3,h4,h5,h6,li,blockquote,ul,ol){font-size:15px;line-height:1.55;margin:0}
