@@ -4,7 +4,7 @@ import React, { act } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
-import { blockMenuPlacement, deriveBlockKind, MarkdownBlockEditor, parseStyledBlock } from "./markdown-block-editor";
+import { blockMenuPlacement, deriveBlockKind, MarkdownBlockEditor, parseStyledBlock, splitTaskAwareBlocks } from "./markdown-block-editor";
 
 const window = new Window({ url: "http://localhost/" });
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -24,6 +24,13 @@ test("Markdown markers identify their visual block type immediately", () => {
   assert.deepEqual(deriveBlockKind("> "), { kind: "quote" });
   assert.deepEqual(deriveBlockKind("---"), { kind: "divider" });
   assert.deepEqual(deriveBlockKind("```"), { kind: "code" });
+});
+
+test("tight task notes split each checkbox line into its own block", () => {
+  assert.deepEqual(
+    splitTaskAwareBlocks("- [ ] 移植營收\n- [ ] 完成 worker\ntest123"),
+    ["- [ ] 移植營收", "- [ ] 完成 worker", "test123"],
+  );
 });
 
 test("the block menu stays inside a narrow side panel viewport and flips above the row", () => {
@@ -102,8 +109,9 @@ test("a todo checkbox updates its Markdown in the single block canvas", () => {
   try {
     const checkbox = rendered.container.querySelector<HTMLInputElement>('input[type="checkbox"]');
     assert.ok(checkbox, "todo checkbox is interactive");
+    assert.equal(rendered.container.querySelectorAll(".markdown-task-block").length, 2, "each checkbox line is its own block");
     flushSync(() => checkbox!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
-    assert.equal(rendered.changes.at(-1), "- [x] 撰寫初稿\n- [x] 發布\n\n## 備註");
+    assert.equal(rendered.changes.at(-1), "- [x] 撰寫初稿\n\n- [x] 發布\n\n## 備註");
   } finally {
     rendered.container.remove();
   }

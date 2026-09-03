@@ -98,15 +98,44 @@ export function splitMarkdownBlocks(value: string): string[] {
   return blocks;
 }
 
+/** Task-note bodies are stored tightly (no blank lines) so Obsidian shows one
+ *  unit. Lift each `- [ ]` line into its own block so the canvas uses the
+ *  checkbox UI instead of rendering a Markdown list dash on top of it. */
+export function splitTaskAwareBlocks(value: string): string[] {
+  const out: string[] = [];
+  for (const block of splitMarkdownBlocks(value)) {
+    const trimmed = block.trim();
+    if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+      out.push(block);
+      continue;
+    }
+    const buffer: string[] = [];
+    const flush = () => {
+      if (buffer.length > 0) out.push(buffer.join("\n"));
+      buffer.length = 0;
+    };
+    for (const line of block.split("\n")) {
+      if (TASK_LINE.test(line)) {
+        flush();
+        out.push(line);
+      } else {
+        buffer.push(line);
+      }
+    }
+    flush();
+  }
+  return out;
+}
+
 function createBlocks(value: string): MarkdownBlock[] {
-  const created = splitMarkdownBlocks(value).map((source) => ({ id: newBlockId(), source }));
+  const created = splitTaskAwareBlocks(value).map((source) => ({ id: newBlockId(), source }));
   return created.length > 0 ? created : [{ id: newBlockId(), source: "" }];
 }
 
 /** Reuse existing block ids when an external `value` matches current sources, so a
  *  parent re-render never remounts the textarea mid-stroke (Notion-like typing). */
 function syncBlocks(previous: MarkdownBlock[], value: string): MarkdownBlock[] {
-  const sources = splitMarkdownBlocks(value);
+  const sources = splitTaskAwareBlocks(value);
   if (sources.length === 0) {
     const empty = previous.find((block) => !block.source.trim()) ?? previous[0];
     return [{ id: empty?.id ?? newBlockId(), source: "" }];
