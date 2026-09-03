@@ -3,7 +3,7 @@ import type {
   BrainProjectSnapshot,
   BrainTaskSnapshot,
 } from "./types";
-import { getTodayTasks, splitTodayTasks } from "./today";
+import { getTodayTasks } from "./today";
 
 /**
  * AI-facing, machine-maintained index of the vault.
@@ -15,6 +15,9 @@ import { getTodayTasks, splitTodayTasks } from "./today";
  * changes, so machines maintain it without ever touching the user-owned
  * `.ai/INSTRUCTIONS.md` canonical handoff file.
  */
+
+/** Max unscheduled ideas listed in `.ai/INDEX.md` so the file stays bounded. */
+export const VAULT_INDEX_UNSCHEDULED_LIMIT = 50;
 
 export interface VaultIndexInput {
   /** Taipei date key (YYYY-MM-DD) used for the "today / overdue" summary. */
@@ -164,6 +167,85 @@ function approach(value: string | null | undefined): string {
   return value == null || value === "" ? "—" : value;
 }
 
+function isOpenTask(task: BrainTaskSnapshot): boolean {
+  return task.status !== "done";
+}
+
+function compareIndexTasks(
+  left: BrainTaskSnapshot,
+  right: BrainTaskSnapshot,
+): number {
+  return (
+    (left.taskDate ?? "9999-99-99").localeCompare(right.taskDate ?? "9999-99-99") ||
+    (left.startTime ?? "99:99").localeCompare(right.startTime ?? "99:99") ||
+    left.rank.localeCompare(right.rank) ||
+    left.title.localeCompare(right.title) ||
+    (left.sourcePath ?? "").localeCompare(right.sourcePath ?? "") ||
+    (left.id ?? "").localeCompare(right.id ?? "")
+  );
+}
+
+function sortedOpen(
+  tasks: readonly BrainTaskSnapshot[],
+  predicate: (task: BrainTaskSnapshot) => boolean,
+): BrainTaskSnapshot[] {
+  return tasks
+    .filter((task) => isOpenTask(task) && predicate(task))
+    .sort(compareIndexTasks);
+}
+
+function todayIndexTasks(
+  tasks: readonly BrainTaskSnapshot[],
+  today: string,
+): BrainTaskSnapshot[] {
+  return sortedOpen(tasks, (task) => task.taskDate === today);
+}
+
+function overdueIndexTasks(
+  tasks: readonly BrainTaskSnapshot[],
+  today: string,
+): BrainTaskSnapshot[] {
+  return sortedOpen(
+    tasks,
+    (task) => Boolean(task.taskDate && task.taskDate < today),
+  );
+}
+
+function unscheduledIndexTasks(
+  tasks: readonly BrainTaskSnapshot[],
+): BrainTaskSnapshot[] {
+  return sortedOpen(tasks, (task) => !task.taskDate);
+}
+
+function formatVisibleSchedule(task: BrainTaskSnapshot): string {
+  const parts: string[] = [];
+  if (task.taskDate) parts.push(`⏳ ${task.taskDate}`);
+  if (task.startTime) parts.push(`⏰ ${task.startTime}`);
+  if (task.durationMinutes != null) parts.push(`⏱ ${task.durationMinutes}m`);
+  return parts.join(" ");
+}
+
+function scheduledTaskRows(tasks: BrainTaskSnapshot[]): string[][] {
+  return tasks.map((item) => [
+    item.title,
+    formatVisibleSchedule(item),
+    item.projectName,
+    item.sourcePath,
+  ]);
+}
+
+function ideaRows(tasks: BrainTaskSnapshot[]): string[][] {
+  return tasks.map((item) => [item.title, item.sourcePath]);
+}
+
+function renderTaskTable(
+  headers: string[],
+  rows: string[][],
+  empty: string,
+): string {
+  return rows.length === 0 ? empty : toMarkdownTable(headers, rows);
+}
+
 function taskSummary(
   tasks: BrainTaskSnapshot[],
   projects: BrainProjectSnapshot[],
@@ -172,11 +254,9 @@ function taskSummary(
   const open = tasks.filter((task) => task.status !== "done");
   const byStatus = (status: string) =>
     open.filter((task) => task.status === status).length;
-  const { overdue, today: todayTasks } = splitTodayTasks(
-    tasks,
-    projects,
-    today,
-  );
+  const overdue = overdueIndexTasks(tasks, today);
+  const todayTasks = todayIndexTasks(tasks, today);
+  const unscheduled = unscheduledIndexTasks(tasks);
   const important =
     [...getTodayTasks(tasks, projects, today)].find(
       (task) => task.priority === "highest",
@@ -191,11 +271,52 @@ function taskSummary(
     `- 完成 done: ${tasks.filter((task) => task.status === "done").length}`,
     `- 逾期 overdue（${today}）: ${overdue.length}`,
     `- 今日 today（${today}）: ${todayTasks.length}`,
+    `- 未排程 unscheduled: ${unscheduled.length}`,
     important
       ? `- 今日最重要 most-important: ${inlineCell(important.title)}`
       : "- 今日最重要 most-important: 尚未選定",
     "",
   ];
+  return lines.join("\n");
+}
+
+function taskDirectories(tasks: BrainTaskSnapshot[], today: string): string {
+  const todayTasks = todayIndexTasks(tasks, today);
+  const overdue = overdueIndexTasks(tasks, today);
+  const ideas = unscheduledIndexTasks(tasks);
+  const shownIdeas = ideas.slice(0, VAULT_INDEX_UNSCHEDULED_LIMIT);
+  const hidden = ideas.length - shownIdeas.length;
+  const scheduledHeaders = ["標題", "時間", "專案", "路徑"];
+  const ideaHeaders = ["標題", "路徑"];
+  const lines = [
+    `## Today's tasks 今日任務（${today}）`,
+    "",
+    renderTaskTable(
+      scheduledHeaders,
+      scheduledTaskRows(todayTasks),
+      "_No tasks scheduled for today._",
+    ),
+    "",
+    "## Overdue tasks 逾期任務",
+    "",
+    renderTaskTable(
+      scheduledHeaders,
+      scheduledTaskRows(overdue),
+      "_No overdue tasks._",
+    ),
+    "",
+    "## Unscheduled ideas 未排程想法",
+    "",
+    renderTaskTable(
+      ideaHeaders,
+      ideaRows(shownIdeas),
+      "_No unscheduled ideas._",
+    ),
+  ];
+  if (hidden > 0) {
+    lines.push("", `_…and ${hidden} more unscheduled ideas not listed._`);
+  }
+  lines.push("");
   return lines.join("\n");
 }
 
@@ -281,6 +402,8 @@ export function renderVaultIndex(input: VaultIndexInput): string {
           .join("\n"),
     "",
     taskSummary(input.tasks, input.projects, input.today),
+    "",
+    taskDirectories(input.tasks, input.today),
     "",
     aiInstructions(),
     "",

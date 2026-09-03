@@ -15,7 +15,8 @@ not include built-in cloud sync.
 `brain-core` owns the durable Markdown format and merge rules. `brain-ui` owns
 portable calendar and repository contracts. The desktop app owns native file
 access, backups, watchers and recovery. `.ai/INDEX.md` is regenerated from the
-vault so an AI can find projects, knowledge, and task completion.
+vault so an AI can find projects, knowledge, today's and overdue tasks with
+file paths, and unscheduled ideas.
 
 A private Publisher build can still embed one exact HTTPS origin. That adapter
 is not part of the public product and is not required to use the desktop app.

@@ -17,7 +17,7 @@ Markdown files. Use it with Obsidian, VS Code, Typora, Notepad++, or any editor.
 - Markdown folder scanning and file watching
 - Local backup, atomic writes and crash-recovery journal
 - Offline use
-- Automatic `.ai/INDEX.md` so an AI can find projects, knowledge, and task completion
+- Automatic `.ai/INDEX.md` so an AI can find projects, knowledge, today's and overdue tasks with file paths, and unscheduled ideas
 
 Edits in the app write directly to the Markdown folder you select. There is no
 separate database. To use the same files on a phone, put that folder in OneDrive,

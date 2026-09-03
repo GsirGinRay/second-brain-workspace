@@ -74,7 +74,7 @@ export {
 } from "./routine";
 export { projectColor } from "./visuals";
 export type { ProjectColor } from "./visuals";
-export { renderVaultIndex } from "./vault-index";
+export { renderVaultIndex, VAULT_INDEX_UNSCHEDULED_LIMIT } from "./vault-index";
 export type { VaultIndexInput } from "./vault-index";
 export {
   instantiateTemplate,

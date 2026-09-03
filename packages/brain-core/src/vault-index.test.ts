@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  parseTaskLine,
   renderVaultIndex,
+  VAULT_INDEX_UNSCHEDULED_LIMIT,
   type BrainCollectionSnapshot,
   type BrainProjectSnapshot,
   type BrainTaskSnapshot,
@@ -114,4 +116,161 @@ test("renderVaultIndex flags today's most-important task", () => {
   ];
   const out = renderVaultIndex(inferred);
   assert.match(out, /寫第一份報告/);
+});
+
+function section(out: string, heading: string, nextHeading: string): string {
+  const start = out.indexOf(heading);
+  assert.ok(start >= 0, `missing heading ${heading}`);
+  const end = out.indexOf(nextHeading, start + heading.length);
+  assert.ok(end >= 0, `missing following heading ${nextHeading}`);
+  return out.slice(start, end);
+}
+
+function task(overrides: Partial<BrainTaskSnapshot>): BrainTaskSnapshot {
+  return { ...baseTask, ...overrides };
+}
+
+test("renderVaultIndex lists today's tasks with title, time, project and sourcePath", () => {
+  const out = renderVaultIndex(input());
+  const today = section(out, "## Today's tasks", "## Overdue tasks");
+  assert.match(today, /今日任務/);
+  assert.match(today, /寫第一份報告/);
+  assert.match(today, /⏰ 09:30/);
+  assert.match(today, /⏱ 30m/);
+  assert.match(today, /開源發布/);
+  assert.match(today, /10-收件匣\/待辦收件匣\.md/);
+});
+
+test("renderVaultIndex lists overdue tasks separately from today", () => {
+  const out = renderVaultIndex({
+    ...input(),
+    tasks: [
+      task({ id: "today", title: "今天的事", taskDate: "2026-08-15" }),
+      task({
+        id: "late",
+        title: "過期的事",
+        taskDate: "2026-08-10",
+        startTime: "14:00",
+        durationMinutes: 45,
+        sourcePath: "Projects/開源發布.md",
+      }),
+    ],
+  });
+  const today = section(out, "## Today's tasks", "## Overdue tasks");
+  const overdue = section(out, "## Overdue tasks", "## Unscheduled ideas");
+  assert.match(today, /今天的事/);
+  assert.ok(!today.includes("過期的事"));
+  assert.match(overdue, /逾期任務/);
+  assert.match(overdue, /過期的事/);
+  assert.match(overdue, /⏳ 2026-08-10/);
+  assert.match(overdue, /⏰ 14:00/);
+  assert.match(overdue, /⏱ 45m/);
+  assert.match(overdue, /開源發布/);
+  assert.match(overdue, /Projects\/開源發布\.md/);
+  assert.ok(!overdue.includes("今天的事"));
+});
+
+test("renderVaultIndex lists unscheduled ideas with title and path", () => {
+  const out = renderVaultIndex({
+    ...input(),
+    tasks: [
+      task({
+        id: "idea",
+        title: "還沒排的想法",
+        taskDate: null,
+        startTime: null,
+        durationMinutes: null,
+        projectName: null,
+        sourcePath: "10-收件匣/待辦收件匣.md",
+      }),
+    ],
+  });
+  const ideas = section(out, "## Unscheduled ideas", "## Operating instructions");
+  assert.match(ideas, /未排程想法/);
+  assert.match(ideas, /還沒排的想法/);
+  assert.match(ideas, /10-收件匣\/待辦收件匣\.md/);
+  const today = section(out, "## Today's tasks", "## Overdue tasks");
+  const overdue = section(out, "## Overdue tasks", "## Unscheduled ideas");
+  assert.ok(!today.includes("還沒排的想法"));
+  assert.ok(!overdue.includes("還沒排的想法"));
+});
+
+test("renderVaultIndex omits completed and future-dated tasks from the three lists", () => {
+  const out = renderVaultIndex({
+    ...input(),
+    tasks: [
+      task({ id: "done", title: "已完成", status: "done", completedAt: "2026-08-15" }),
+      task({
+        id: "future",
+        title: "以後再做",
+        taskDate: "2026-08-20",
+        startTime: null,
+        durationMinutes: null,
+      }),
+    ],
+  });
+  const today = section(out, "## Today's tasks", "## Overdue tasks");
+  const overdue = section(out, "## Overdue tasks", "## Unscheduled ideas");
+  const ideas = section(out, "## Unscheduled ideas", "## Operating instructions");
+  assert.ok(!today.includes("已完成") && !today.includes("以後再做"));
+  assert.ok(!overdue.includes("已完成") && !overdue.includes("以後再做"));
+  assert.ok(!ideas.includes("已完成") && !ideas.includes("以後再做"));
+});
+
+test("renderVaultIndex caps unscheduled ideas so the file stays bounded", () => {
+  const limit = VAULT_INDEX_UNSCHEDULED_LIMIT;
+  const tasks = Array.from({ length: limit + 10 }, (_, index) =>
+    task({
+      id: `idea-${index}`,
+      title: `想法 ${String(index).padStart(2, "0")}`,
+      taskDate: null,
+      startTime: null,
+      durationMinutes: null,
+      rank: String(index).padStart(8, "0"),
+      sourcePath: "10-收件匣/待辦收件匣.md",
+    }),
+  );
+  const out = renderVaultIndex({ ...input(), tasks });
+  const ideas = section(out, "## Unscheduled ideas", "## Operating instructions");
+  assert.match(ideas, /想法 00/);
+  assert.match(ideas, new RegExp(`想法 ${String(limit - 1).padStart(2, "0")}`));
+  assert.ok(!ideas.includes(`想法 ${String(limit).padStart(2, "0")}`));
+  assert.match(ideas, /10 more unscheduled ideas/);
+});
+
+test("renderVaultIndex uses empty placeholders when a list has no rows", () => {
+  const out = renderVaultIndex({
+    today: "2026-08-15",
+    generatedAt: "2026-08-15T00:00:00.000Z",
+    tasks: [],
+    projects: [],
+    collections: [],
+  });
+  assert.match(out, /No tasks scheduled for today/);
+  assert.match(out, /No overdue tasks/);
+  assert.match(out, /No unscheduled ideas/);
+});
+
+test("renderVaultIndex escapes pipes in task titles", () => {
+  const out = renderVaultIndex({
+    ...input(),
+    tasks: [task({ title: "含 | 管道符號" })],
+  });
+  const today = section(out, "## Today's tasks", "## Overdue tasks");
+  assert.match(today, /含 \\\| 管道符號/);
+});
+
+test("INDEX encoding example is visible Markdown the parser can read", () => {
+  const out = renderVaultIndex(input());
+  assert.match(out, /⏰ <HH:MM>/);
+  assert.match(out, /⏱ <minutes>m/);
+  assert.match(out, /indented/);
+  assert.match(out, /do not invent `publisher_id`/);
+  const example = out.match(/- \[ \] #task [^\n]+⏰ [^\n]+/);
+  assert.ok(example, "encoding spec includes a visible task line");
+  const parsed = parseTaskLine(example[0].trim(), "example.md", 0);
+  assert.ok(parsed);
+  assert.equal(parsed.startTime, "09:30");
+  assert.equal(parsed.durationMinutes, 30);
+  assert.equal(parsed.taskDate, "2026-08-15");
 });
