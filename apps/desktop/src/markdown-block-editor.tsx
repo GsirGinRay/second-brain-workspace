@@ -284,7 +284,7 @@ export function MarkdownBlockEditor({
 }) {
   const zh = locale === "zh-TW";
   const [blocks, setBlocks] = useState<MarkdownBlock[]>(() => createBlocks(value));
-  const [editingId, setEditingId] = useState<string | null>(() => value.trim() ? null : blocks[0]?.id ?? null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([]);
   const [marqueeBox, setMarqueeBox] = useState<MarqueeBox | null>(null);
@@ -317,7 +317,7 @@ export function MarkdownBlockEditor({
   //   (the one that creates the following todo) instant: one press, like
   //   Notion. The old 1.5s dark window swallowed 1-2 legitimate Enters and
   //   made line breaks feel like they needed four presses.
-  const IME_ECHO_WINDOW_MS = 100;
+  const IME_ECHO_WINDOW_MS = 300;
   const imeCompositionEndedAtRef = useRef(0);
   const imeComposingRef = useRef(false);
   // Composition timing is a DOM-level concern, so compositionstart/end are
@@ -1047,7 +1047,7 @@ export function MarkdownBlockEditor({
           const derived = deriveBlockKind(styled.content);
           const { kind, level } = derived;
           const presentation = editablePresentation(styled.content, derived);
-          const isEditing = editingId === block.id || !styled.content.trim();
+          const isEditing = editingId === block.id;
           const singleTaskMatch = styled.content.includes("\n") ? null : styled.content.match(TASK_LINE);
           const kindClass = `kind-${kind}${level ? `-h${level}` : ""}`;
           const currentTurnValue = kind === "heading" ? `h${level}`

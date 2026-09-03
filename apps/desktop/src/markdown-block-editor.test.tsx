@@ -312,7 +312,6 @@ test("Delete inside a textarea with no text selection batch-deletes the selected
     });
     assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 3, "every block inside the marquee turns blue");
 
-    const firstTextarea = rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")!;
     flushSync(() => {
       section.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "Delete" }) as unknown as Event);
     });
@@ -341,7 +340,9 @@ test("an empty body does not show instructional copy", () => {
     assert.equal(rendered.container.querySelector(".markdown-block-empty"), null);
     assert.doesNotMatch(rendered.container.textContent ?? "", /尚無詳細內容|No detail yet/);
     assert.equal(rendered.container.querySelectorAll(".markdown-block").length, 1, "an editable blank block is ready immediately");
-    assert.match(rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")?.placeholder ?? "", /輸入文字/);
+    assert.equal(rendered.container.querySelector(".markdown-block-input"), null, "the blank block is not auto-focused");
+    const textarea = openTextarea(rendered.container, 0);
+    assert.match(textarea.placeholder ?? "", /輸入文字/);
   } finally {
     rendered.container.remove();
   }

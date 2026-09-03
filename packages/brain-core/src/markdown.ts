@@ -1019,8 +1019,13 @@ function replaceIndentedTaskBody(
   const end = endIndexOfTaskBody(lines, taskLineIndex);
   const next = lines.slice(0, taskLineIndex + 1);
   if (body.trim()) {
-    const normalized = body.replace(/\r?\n/g, newline).replace(/^\r?\n+|\r?\n+$/g, "");
-    next.push("");
+    const normalized = body
+      .replace(/\r?\n/g, newline)
+      .replace(/^\r?\n+|\r?\n+$/g, "")
+      .split(new RegExp(`(?:${newline}){2,}`))
+      .map((part) => part.replace(/[ \t]+$/gm, "").trimEnd())
+      .filter(Boolean)
+      .join(newline);
     for (const line of normalized.split(newline)) {
       next.push(line.length ? TASK_BODY_INDENT + line : TASK_BODY_INDENT);
     }

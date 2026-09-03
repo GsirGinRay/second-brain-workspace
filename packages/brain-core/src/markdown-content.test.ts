@@ -27,8 +27,8 @@ test("task Markdown content round-trips as indented notes under the list item", 
   const source = `# Tasks\r\n${taskLine}\r\n`;
   const body = "## Notes\r\n\r\n- Preserve **Markdown**";
   const next = patchTaskMarkdownContent(source, taskId, body);
-  assert.equal(extractTaskMarkdownContent(next, taskId), body);
-  assert.match(next, /\r\n\r\n  ## Notes\r\n  \r\n  - Preserve \*\*Markdown\*\*\r\n/);
+  assert.equal(extractTaskMarkdownContent(next, taskId), "## Notes\r\n- Preserve **Markdown**");
+  assert.match(next, /\r\n  ## Notes\r\n  - Preserve \*\*Markdown\*\*\r\n/);
   assert.doesNotMatch(next, /second-brain-task-content/);
   assert.equal(patchTaskMarkdownContent(next, taskId, ""), source);
 });
@@ -38,7 +38,7 @@ test("task Markdown content still reads a legacy HTML comment block", () => {
   assert.equal(extractTaskMarkdownContent(source, taskId), "## Notes\r\n\r\nlegacy");
   const next = patchTaskMarkdownContent(source, taskId, "## Notes\r\n\r\nlegacy");
   assert.doesNotMatch(next, /second-brain-task-content/);
-  assert.match(next, /  ## Notes\r\n  \r\n  legacy\r\n/);
+  assert.match(next, /  ## Notes\r\n  legacy\r\n/);
 });
 
 test("indented task notes keep nested #task examples inside the parent body", () => {
