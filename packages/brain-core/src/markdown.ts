@@ -14,7 +14,9 @@ export type TaskTokenKind =
   | "plannedDate"
   | "completedAt"
   | "priority"
-  | "project";
+  | "project"
+  | "startTime"
+  | "duration";
 
 export interface TaskTokenSpan {
   kind: TaskTokenKind;
@@ -191,6 +193,48 @@ function findDateSpans(
   return spans;
 }
 
+function findTimeSpans(
+  body: string,
+  bodyStart: number,
+): TaskTokenSpan[] {
+  const spans: TaskTokenSpan[] = [];
+  const expression = /⏰\s*((?:[01]\d|2[0-3]):[0-5]\d)(?=\s|$)/gu;
+  for (const match of body.matchAll(expression)) {
+    const start = match.index ?? 0;
+    const valueOffset = match[0].indexOf(match[1]!);
+    spans.push({
+      kind: "startTime",
+      start: bodyStart + start,
+      end: bodyStart + start + match[0].length,
+      valueStart: bodyStart + start + valueOffset,
+      valueEnd: bodyStart + start + valueOffset + match[1]!.length,
+      value: match[1],
+    });
+  }
+  return spans;
+}
+
+function findDurationSpans(
+  body: string,
+  bodyStart: number,
+): TaskTokenSpan[] {
+  const spans: TaskTokenSpan[] = [];
+  const expression = /⏱\s*(\d{1,4})m(?=\s|$)/gu;
+  for (const match of body.matchAll(expression)) {
+    const start = match.index ?? 0;
+    const valueOffset = match[0].indexOf(match[1]!);
+    spans.push({
+      kind: "duration",
+      start: bodyStart + start,
+      end: bodyStart + start + match[0].length,
+      valueStart: bodyStart + start + valueOffset,
+      valueEnd: bodyStart + start + valueOffset + match[1]!.length,
+      value: match[1],
+    });
+  }
+  return spans;
+}
+
 function analyzeTaskLine(rawLine: string): TaskLineAnalysis | null {
   const bomOffset = rawLine.startsWith("\uFEFF") ? 1 : 0;
   const normalizedLine = rawLine.slice(bomOffset);
@@ -206,6 +250,8 @@ function analyzeTaskLine(rawLine: string): TaskLineAnalysis | null {
     ...findDateSpans(body, bodyStart, "\u{1F4C5}", "dueDate"),
     ...findDateSpans(body, bodyStart, "\u{23F3}", "plannedDate"),
     ...findDateSpans(body, bodyStart, "\u2705", "completedAt"),
+    ...findTimeSpans(body, bodyStart),
+    ...findDurationSpans(body, bodyStart),
   ];
 
   const priorityEntries = Object.entries(TOKEN_TO_PRIORITY);
@@ -353,6 +399,14 @@ function parsedTaskFromAnalysis(
       : markerValues.status ?? "todo";
   const dateValue = (kind: TaskTokenKind) =>
     analysis.tokenSpans.find((span) => span.kind === kind)?.value ?? null;
+  const visibleStart = dateValue("startTime");
+  const visibleDuration = dateValue("duration");
+  const parsedDuration = visibleDuration ? Number(visibleDuration) : NaN;
+  const durationFromToken =
+    Number.isInteger(parsedDuration) && parsedDuration >= 5 && parsedDuration <= 1440
+      ? parsedDuration
+      : null;
+  const startTime = visibleStart ?? markerValues.startTime ?? null;
   const rawMarkerId = analysis.marker?.value.id;
   const markerIssue: ParsedMarkdownTask["markerIssue"] = analysis.marker
     ? analysis.marker.parseFailed
@@ -374,9 +428,9 @@ function parsedTaskFromAnalysis(
     sourcePath,
     sourceHeading: null,
     completedAt: dateValue("completedAt"),
-    startTime: markerValues.startTime ?? null,
-    durationMinutes: markerValues.startTime
-      ? (markerValues.durationMinutes ?? 30)
+    startTime,
+    durationMinutes: startTime
+      ? (durationFromToken ?? markerValues.durationMinutes ?? 30)
       : null,
     timeZone: markerValues.timeZone ?? "Asia/Taipei",
     lineIndex,
@@ -403,6 +457,10 @@ export function formatTaskLine(task: TaskLineInput): string {
   if (priority) parts.push(priority);
   const taskDate = task.taskDate ?? task.plannedDate ?? task.dueDate ?? null;
   if (taskDate) parts.push("\u{23F3} " + taskDate);
+  if (task.startTime) {
+    parts.push("\u{23F0} " + task.startTime);
+    parts.push("\u{23F1} " + (task.durationMinutes ?? 30) + "m");
+  }
   if (task.status === "done" && task.completedAt) {
     parts.push("\u2705 " + task.completedAt);
   }
@@ -457,6 +515,64 @@ function addTokenEdit(
   const prefix = before && !/\s/u.test(before) ? " " : "";
   const suffix = after && !/\s/u.test(after) ? " " : "";
   return { start, end: start, replacement: prefix + token + suffix };
+}
+
+function scheduleTokenEdits(
+  rawLine: string,
+  analysis: TaskLineAnalysis,
+  startTime: string | null,
+  durationMinutes: number | null,
+): Edit[] {
+  const edits: Edit[] = [];
+  const timeSpan = findSpan(analysis, "startTime");
+  const durationSpan = findSpan(analysis, "duration");
+  if (!startTime) {
+    if (timeSpan) edits.push(removeSpan(rawLine, timeSpan));
+    if (durationSpan) edits.push(removeSpan(rawLine, durationSpan));
+    return edits;
+  }
+  const duration = durationMinutes ?? 30;
+  if (!timeSpan && !durationSpan) {
+    edits.push(addTokenEdit(rawLine, analysis, `\u{23F0} ${startTime} \u{23F1} ${duration}m`));
+    return edits;
+  }
+  if (timeSpan) {
+    if (timeSpan.value !== startTime) {
+      edits.push({
+        start: timeSpan.valueStart,
+        end: timeSpan.valueEnd,
+        replacement: startTime,
+      });
+    }
+  } else {
+    edits.push(addTokenEdit(rawLine, analysis, `\u{23F0} ${startTime}`));
+  }
+  const durationText = String(duration);
+  if (durationSpan) {
+    if (durationSpan.value !== durationText) {
+      edits.push({
+        start: durationSpan.valueStart,
+        end: durationSpan.valueEnd,
+        replacement: durationText,
+      });
+    }
+  } else {
+    edits.push(addTokenEdit(rawLine, analysis, `\u{23F1} ${duration}m`));
+  }
+  return edits;
+}
+
+/** Add visible ⏰ / ⏱ tokens when JSON still holds the schedule. Does not strip dates. */
+export function withVisibleScheduleTokens(
+  rawLine: string,
+  startTime: string | null,
+  durationMinutes: number | null,
+): string {
+  if (!startTime) return rawLine;
+  const analysis = analyzeTaskLine(rawLine);
+  if (!analysis) return rawLine;
+  const edits = scheduleTokenEdits(rawLine, analysis, startTime, durationMinutes);
+  return edits.length ? applyEdits(rawLine, edits) : rawLine;
 }
 
 function markerFieldEdit(
@@ -636,6 +752,15 @@ export function patchTaskLine(
     }
   }
 
+  edits.push(
+    ...scheduleTokenEdits(
+      rawLine,
+      analysis,
+      desired.startTime ?? null,
+      desired.startTime ? (desired.durationMinutes ?? 30) : null,
+    ),
+  );
+
   edits.push(...patchMarker(rawLine, analysis, current, desired));
 
   if (desired.title !== current.title) {
@@ -728,6 +853,9 @@ export function parseProjectFrontmatter(
 }
 
 const TASK_CONTENT_PREFIX = "second-brain-task-content";
+const TASK_BODY_INDENT = "  ";
+const LEGACY_TASK_CONTENT_MARKER =
+  /^\s*<!--\s*second-brain-task-content:[^:]+:(?:start|end)\s*-->\s*$/i;
 
 function taskContentMarkers(id: string): { start: string; end: string } {
   if (!isManagedTaskId(id)) throw new Error("TASK_ID_INVALID");
@@ -737,9 +865,111 @@ function taskContentMarkers(id: string): { start: string; end: string } {
   };
 }
 
-export function extractTaskMarkdownContent(source: string, id: string): string {
-  // Bodies exist only for app-minted ids, and reading one is best-effort:
-  // a foreign or malformed id must not abort a whole vault scan.
+function looksLikeTaskLine(rawLine: string): boolean {
+  const line = rawLine.startsWith("\uFEFF") ? rawLine.slice(1) : rawLine;
+  if (isBodyContinuation(line)) return false;
+  return /^\s*-\s*\[[ xX]\]\s+#task\b/.test(line);
+}
+
+function isBodyContinuation(line: string): boolean {
+  return line.startsWith("  ") || line.startsWith("\t");
+}
+
+function unindentBodyLine(line: string): string {
+  if (line.startsWith("\t")) return line.slice(1);
+  if (line.startsWith("  ")) return line.slice(2);
+  return line;
+}
+
+function splitSourceLines(source: string): string[] {
+  return source.split(/\r?\n/);
+}
+
+/** First line index after the indented notes that belong to the task at `taskLineIndex`. */
+export function endIndexOfTaskBody(
+  lines: readonly string[],
+  taskLineIndex: number,
+): number {
+  let index = taskLineIndex + 1;
+  if (index >= lines.length) return index;
+  if (lines[index]!.trim() === "") {
+    let peek = index + 1;
+    while (peek < lines.length && lines[peek]!.trim() === "") peek += 1;
+    if (
+      peek >= lines.length
+      || !isBodyContinuation(lines[peek]!)
+      || looksLikeTaskLine(lines[peek]!)
+      || LEGACY_TASK_CONTENT_MARKER.test(lines[peek]!)
+    ) {
+      return taskLineIndex + 1;
+    }
+  } else if (
+    !isBodyContinuation(lines[index]!)
+    || looksLikeTaskLine(lines[index]!)
+    || LEGACY_TASK_CONTENT_MARKER.test(lines[index]!)
+  ) {
+    return taskLineIndex + 1;
+  }
+  while (index < lines.length) {
+    const line = lines[index]!;
+    if (LEGACY_TASK_CONTENT_MARKER.test(line)) break;
+    if (isBodyContinuation(line)) {
+      index += 1;
+      continue;
+    }
+    if (line.trim() === "") {
+      let peek = index + 1;
+      while (peek < lines.length && lines[peek]!.trim() === "") peek += 1;
+      if (
+        peek < lines.length
+        && isBodyContinuation(lines[peek]!)
+        && !looksLikeTaskLine(lines[peek]!)
+      ) {
+        index += 1;
+        continue;
+      }
+      break;
+    }
+    if (looksLikeTaskLine(line)) break;
+    break;
+  }
+  return index;
+}
+
+function extractIndentedTaskBody(source: string, taskLineIndex: number): string {
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  const lines = splitSourceLines(source);
+  const end = endIndexOfTaskBody(lines, taskLineIndex);
+  const raw = lines.slice(taskLineIndex + 1, end);
+  while (raw.length > 0 && raw[0]!.trim() === "") raw.shift();
+  while (raw.length > 0 && raw[raw.length - 1]!.trim() === "") raw.pop();
+  if (raw.length === 0) return "";
+  return raw.map(unindentBodyLine).join(newline);
+}
+
+function findTaskLineIndexById(source: string, id: string): number {
+  const lines = splitSourceLines(source);
+  const inCodeFence = createCodeFenceTracker();
+  let insideComment = false;
+  let skipUntil = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (inCodeFence(line)) continue;
+    if (LEGACY_TASK_CONTENT_MARKER.test(line)) {
+      insideComment = /:start\s*-->\s*$/i.test(line);
+      continue;
+    }
+    if (insideComment) continue;
+    if (index < skipUntil) continue;
+    const parsed = parseTaskLine(line, "", index);
+    if (!parsed) continue;
+    skipUntil = endIndexOfTaskBody(lines, index);
+    if (parsed.id === id) return index;
+  }
+  return -1;
+}
+
+function extractLegacyTaskComment(source: string, id: string): string {
   if (!isManagedTaskId(id)) return "";
   const markers = taskContentMarkers(id);
   const start = source.indexOf(markers.start);
@@ -750,30 +980,78 @@ export function extractTaskMarkdownContent(source: string, id: string): string {
   return source.slice(bodyStart, end).replace(/^\r?\n/, "").replace(/\r?\n$/, "");
 }
 
-export function patchTaskMarkdownContent(source: string, id: string, body: string): string {
-  if (body.length > 2_000_000) throw new Error("TASK_BODY_TOO_LARGE");
-  // Refuse to write against an id we did not mint, but leave the file untouched
-  // rather than throwing: one bad marker must not fail the whole batch.
+function removeLegacyTaskComment(source: string, id: string): string {
   if (!isManagedTaskId(id)) return source;
   const markers = taskContentMarkers(id);
-  if (body.includes(`<!-- ${TASK_CONTENT_PREFIX}:`)) throw new Error("TASK_BODY_MARKER_CONFLICT");
-  const newline = source.includes("\r\n") ? "\r\n" : "\n";
   const start = source.indexOf(markers.start);
-  if (start >= 0) {
-    const end = source.indexOf(markers.end, start + markers.start.length);
-    if (end < 0) throw new Error("TASK_BODY_MARKER_INVALID");
-    const blockEnd = end + markers.end.length;
-    if (!body.trim()) {
-      const removeStart = start;
-      let removeEnd = blockEnd;
-      if (source.slice(removeEnd, removeEnd + newline.length) === newline) removeEnd += newline.length;
-      return source.slice(0, removeStart) + source.slice(removeEnd);
-    }
-    return source.slice(0, start) + markers.start + newline + body + newline + markers.end + source.slice(blockEnd);
+  if (start < 0) return source;
+  const end = source.indexOf(markers.end, start + markers.start.length);
+  if (end < 0) throw new Error("TASK_BODY_MARKER_INVALID");
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  let removeStart = start;
+  let removeEnd = end + markers.end.length;
+  if (source.slice(removeEnd, removeEnd + newline.length) === newline) {
+    removeEnd += newline.length;
   }
-  if (!body.trim()) return source;
-  const trailing = source.endsWith("\n");
-  return source + (trailing ? "" : newline) + markers.start + newline + body + newline + markers.end + newline;
+  if (
+    removeStart >= newline.length
+    && source.slice(removeStart - newline.length, removeStart) === newline
+  ) {
+    removeStart -= newline.length;
+  }
+  const next = source.slice(0, removeStart) + source.slice(removeEnd);
+  if ((source.endsWith("\r\n") || source.endsWith("\n")) && !next.endsWith("\n")) {
+    return next + newline;
+  }
+  return next;
+}
+
+function replaceIndentedTaskBody(
+  source: string,
+  taskLineIndex: number,
+  body: string,
+): string {
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  const trailing = source.endsWith("\r\n") || source.endsWith("\n");
+  const lines = splitSourceLines(source);
+  if (trailing) lines.pop();
+  if (taskLineIndex < 0 || taskLineIndex >= lines.length) return source;
+  const end = endIndexOfTaskBody(lines, taskLineIndex);
+  const next = lines.slice(0, taskLineIndex + 1);
+  if (body.trim()) {
+    const normalized = body.replace(/\r?\n/g, newline).replace(/^\r?\n+|\r?\n+$/g, "");
+    next.push("");
+    for (const line of normalized.split(newline)) {
+      next.push(line.length ? TASK_BODY_INDENT + line : TASK_BODY_INDENT);
+    }
+  }
+  next.push(...lines.slice(end));
+  return next.join(newline) + (trailing ? newline : "");
+}
+
+export function extractTaskMarkdownContent(source: string, id: string): string {
+  // A foreign or malformed id must not abort a whole vault scan. Indented notes
+  // are located by the task line; legacy HTML comment blocks still require a
+  // managed UUID because the delimiter embeds the id.
+  const lineIndex = findTaskLineIndexById(source, id);
+  if (lineIndex >= 0) {
+    const indented = extractIndentedTaskBody(source, lineIndex);
+    if (indented) return indented;
+  }
+  return extractLegacyTaskComment(source, id);
+}
+
+export function patchTaskMarkdownContent(source: string, id: string, body: string): string {
+  if (body.length > 2_000_000) throw new Error("TASK_BODY_TOO_LARGE");
+  if (body.includes(`<!-- ${TASK_CONTENT_PREFIX}:`)) throw new Error("TASK_BODY_MARKER_CONFLICT");
+  const withoutComment = removeLegacyTaskComment(source, id);
+  const lineIndex = findTaskLineIndexById(withoutComment, id);
+  if (lineIndex < 0) {
+    // Refuse to write against an id we cannot locate; one bad marker must not
+    // fail the whole batch.
+    return withoutComment;
+  }
+  return replaceIndentedTaskBody(withoutComment, lineIndex, body);
 }
 
 export function replaceMarkdownDocumentBody(source: string, body: string): string {

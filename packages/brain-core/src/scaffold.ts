@@ -56,7 +56,7 @@ const INSTRUCTIONS = `# Second Brain — INSTRUCTIONS（正本 / Canonical）
 
 - 保留未知符號、BOM、CRLF 與縮排；不要重排與你無關的內容。
 - 不要上傳 Markdown 正文；在本機就地編輯。
-- 任務可用一行 \`- [ ] #task 標題 [[專案名]] ⏳ YYYY-MM-DD\` 表示。
+- 任務可用一行 \`- [ ] #task 標題 [[專案名]] ⏳ YYYY-MM-DD ⏰ HH:MM ⏱ 30m\` 表示；詳細筆記縮排寫在該行下面，Obsidian 與 AI 都看得到。
 - 專案與收藏用 YAML frontmatter（type: project / collection）放在 Projects/ 與 Collections/。
 - 可重用提示詞的 category 請以 \`提示詞/\` 開頭，例如 \`提示詞/投資分析\`。
 `;

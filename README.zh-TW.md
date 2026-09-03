@@ -80,13 +80,11 @@ Markdown 檔案格式是長期的真相來源（source of truth），設計上�
 ## 資料格式
 
 ```markdown
-- [ ] #task 撰寫第一份教學 [[Open Source Launch]] ⏳ 2026-08-15
+- [ ] #task 撰寫第一份教學 [[Open Source Launch]] ⏳ 2026-08-15 ⏰ 09:30 ⏱ 30m
 
-<!-- second-brain-task-content:00000000-0000-4000-8000-000000000000:start -->
-## 筆記
+  ## 筆記
 
-這個任務的完整 Markdown 內容。
-<!-- second-brain-task-content:00000000-0000-4000-8000-000000000000:end -->
+  這個任務的完整 Markdown 內容。
 ```
 
 產品邊界說明請見 [docs/architecture.md](docs/architecture.md) 與

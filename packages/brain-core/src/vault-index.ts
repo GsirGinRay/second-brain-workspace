@@ -49,18 +49,16 @@ Everything is ordinary Markdown in the vault. The four entity kinds:
 - **Task** — a list line anywhere, shaped like:
 
   \`\`\`
-  - [ ] #task Write the report [[Project Name]] ⏳ 2026-08-15
+  - [ ] #task Write the report [[Project Name]] ⏳ 2026-08-15 ⏰ 09:30 ⏱ 30m
+
+    ## Notes
+    ...
   \`\`\`
 
-  Optional fields ride the line (priority/date/project); richer task notes live
-  in a paired HTML-comment block:
-
-  \`\`\`
-  <!-- second-brain-task-content:<uuid>:start -->
-  ## Notes
-  ...
-  <!-- second-brain-task-content:<uuid>:end -->
-  \`\`\`
+  Optional fields ride the line (priority/date/time/project). Richer task notes
+  are ordinary Markdown indented under the list item so Obsidian and AI can
+  read them. Legacy HTML comment blocks are still read, then rewritten as
+  indented notes on the next save.
 
   The trailing \`publisher-task:{...}\` token is a data-format compatibility
   marker only, not a product dependency.
@@ -206,7 +204,9 @@ function aiInstructions(): string {
 2. To add a task, append a Markdown list line in the relevant file:
 
    \`\`\`
-   - [ ] #task <title> [[<Project name>]] ⏳ <YYYY-MM-DD>
+   - [ ] #task <title> [[<Project name>]] ⏳ <YYYY-MM-DD> ⏰ <HH:MM> ⏱ <minutes>m
+
+     Optional notes as ordinary indented Markdown.
    \`\`\`
 
    The scanner assigns an id automatically; do not invent \`publisher_id\` values.

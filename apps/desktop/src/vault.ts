@@ -4,6 +4,7 @@ import {
   parseProjectFrontmatter,
   parseCollectionFrontmatter,
   createCodeFenceTracker,
+  endIndexOfTaskBody,
   parseTaskLine,
   patchTaskLineMinimal,
   patchTaskMarkdownContent,
@@ -11,6 +12,7 @@ import {
   replaceMarkdownDocumentTitle,
   rankForIndex,
   updateProjectFrontmatter,
+  withVisibleScheduleTokens,
   type BrainProjectSnapshot,
   type BrainCollectionSnapshot,
   type BrainTaskSnapshot,
@@ -260,7 +262,9 @@ export function scanStructuredVault(
     let source = sources.get(file.relativePath)!;
     const lines = splitLines(source);
     let insideTaskContent = false;
+    let skipUntil = 0;
     const inCodeFence = createCodeFenceTracker();
+    const fileTasks: BrainTaskSnapshot[] = [];
     for (let index = 0; index < lines.length; index += 1) {
       // Fenced blocks document the task format; their contents are examples,
       // not tasks, and must never be adopted or rewritten.
@@ -268,6 +272,7 @@ export function scanStructuredVault(
       if (TASK_CONTENT_START.test(lines[index]!)) { insideTaskContent = true; continue; }
       if (TASK_CONTENT_END.test(lines[index]!)) { insideTaskContent = false; continue; }
       if (insideTaskContent) continue;
+      if (index < skipUntil) continue;
       const parsed = parseTaskLine(lines[index]!, file.relativePath, index);
       if (!parsed) continue;
       // A duplicated id (copy-pasted line, duplicated note, colliding
@@ -302,13 +307,33 @@ export function scanStructuredVault(
         body: extractTaskMarkdownContent(source, id),
       };
       tasks.push(task);
+      fileTasks.push(task);
+      skipUntil = endIndexOfTaskBody(lines, index);
+      let patchedLine = lines[index]!;
       if (!keptId || !parsed.rank) {
-        const patchedLine = patchTaskLineMinimal(parsed.rawLine, task);
+        patchedLine = patchTaskLineMinimal(parsed.rawLine, task);
+      }
+      patchedLine = withVisibleScheduleTokens(
+        patchedLine,
+        task.startTime ?? null,
+        task.durationMinutes ?? null,
+      );
+      if (patchedLine !== lines[index]) {
         source = replaceLine(source, index, patchedLine);
         lines[index] = patchedLine;
         changedSources.set(file.relativePath, source);
         sources.set(file.relativePath, source);
       }
+    }
+    let migrated = source;
+    for (const task of fileTasks) {
+      if (!task.id || !task.body) continue;
+      const next = patchTaskMarkdownContent(migrated, task.id, task.body);
+      if (next !== migrated) migrated = next;
+    }
+    if (migrated !== source) {
+      changedSources.set(file.relativePath, migrated);
+      sources.set(file.relativePath, migrated);
     }
   }
   assertUnique(tasks.map((task) => task.id), "DUPLICATE_TASK_ID");
@@ -332,14 +357,19 @@ function taskLocations(files: LocalMarkdownFile[]): Map<string, TaskLocation> {
   for (const file of files) {
     const lines = splitLines(decodeFile(file));
     let insideTaskContent = false;
+    let skipUntil = 0;
     const inCodeFence = createCodeFenceTracker();
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
       if (inCodeFence(lines[lineIndex]!)) continue;
       if (TASK_CONTENT_START.test(lines[lineIndex]!)) { insideTaskContent = true; continue; }
       if (TASK_CONTENT_END.test(lines[lineIndex]!)) { insideTaskContent = false; continue; }
       if (insideTaskContent) continue;
+      if (lineIndex < skipUntil) continue;
       const task = parseTaskLine(lines[lineIndex]!, file.relativePath, lineIndex);
-      if (task?.id) locations.set(task.id, { relativePath: file.relativePath, lineIndex, rawLine: task.rawLine });
+      if (task?.id) {
+        locations.set(task.id, { relativePath: file.relativePath, lineIndex, rawLine: task.rawLine });
+        skipUntil = endIndexOfTaskBody(lines, lineIndex);
+      }
     }
   }
   return locations;
@@ -412,10 +442,14 @@ export function applyDesiredSnapshot(
   const findTaskLineIndexFromSource = (source: string, taskId: string, relativePath = ""): number => {
     const lines = splitLines(source);
     const inCodeFence = createCodeFenceTracker();
+    let skipUntil = 0;
     for (let index = 0; index < lines.length; index += 1) {
       if (inCodeFence(lines[index]!)) continue;
+      if (index < skipUntil) continue;
       const parsed = parseTaskLine(lines[index]!, relativePath, index);
-      if (parsed?.id === taskId) return index;
+      if (!parsed?.id) continue;
+      skipUntil = endIndexOfTaskBody(lines, index);
+      if (parsed.id === taskId) return index;
     }
     return -1;
   };
@@ -446,14 +480,10 @@ export function applyDesiredSnapshot(
       // removeLine (which shrinks `source`) doesn't leave us with an
       // out-of-range index on the next iteration.
       const liveSource = currentSources.get(relativePath) ?? source;
-      const lineIndex = findTaskLineIndexFromSource(liveSource, id);
-      if (lineIndex >= 0) {
-        source = removeLine(liveSource, lineIndex);
-        currentSources.set(relativePath, source);
-      } else {
-        source = patchTaskMarkdownContent(liveSource, id, "");
-        currentSources.set(relativePath, source);
-      }
+      const withoutBody = patchTaskMarkdownContent(liveSource, id, "");
+      const lineIndex = findTaskLineIndexFromSource(withoutBody, id);
+      source = lineIndex >= 0 ? removeLine(withoutBody, lineIndex) : withoutBody;
+      currentSources.set(relativePath, source);
     }
     changed.add(relativePath);
   }

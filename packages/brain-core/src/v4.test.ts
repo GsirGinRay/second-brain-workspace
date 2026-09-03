@@ -46,8 +46,10 @@ const project: BrainProjectSnapshot = {
   schemaVersion: 4,
 };
 
-test("V4 task metadata round-trips only through the structured marker", () => {
+test("V4 task metadata round-trips through visible tokens and the structured marker", () => {
   const line = formatTaskLine(task);
+  assert.match(line, /⏰ 09:30/);
+  assert.match(line, /⏱ 45m/);
   assert.match(line, /"startTime":"09:30"/);
   assert.match(line, /"durationMinutes":45/);
   assert.doesNotMatch(line, /accessToken|refreshToken|eventId/i);
@@ -56,6 +58,34 @@ test("V4 task metadata round-trips only through the structured marker", () => {
   assert.equal(parsed?.startTime, "09:30");
   assert.equal(parsed?.durationMinutes, 45);
   assert.equal(parsed?.timeZone, "Asia/Taipei");
+});
+
+test("visible schedule tokens are preferred over JSON and can stand alone", () => {
+  const visibleOnly = "- [ ] #task Visible ⏰ 08:15 ⏱ 20m <!-- publisher-task:{\"id\":\"task-1\",\"status\":\"todo\",\"rank\":\"1\"} -->";
+  const parsedVisible = parseTaskLine(visibleOnly, "tasks.md", 0);
+  assert.equal(parsedVisible?.startTime, "08:15");
+  assert.equal(parsedVisible?.durationMinutes, 20);
+
+  const disagree = "- [ ] #task Clash ⏰ 10:00 ⏱ 15m <!-- publisher-task:{\"id\":\"task-1\",\"startTime\":\"09:30\",\"durationMinutes\":45} -->";
+  const parsedClash = parseTaskLine(disagree, "tasks.md", 0);
+  assert.equal(parsedClash?.startTime, "10:00");
+  assert.equal(parsedClash?.durationMinutes, 15);
+});
+
+test("patching a schedule writes visible tokens and clearing them removes both", () => {
+  const raw = '- [ ] #task Keep [private note](local.md) [[Launch]] ⏳ 2026-08-14 <!-- publisher-task:{"id":"task-1","status":"todo","rank":"1","unknown":"keep"} -->';
+  const scheduled = patchTaskLine(raw, { ...task, title: "Keep [private note](local.md)", rank: "1" });
+  assert.match(scheduled, /⏰ 09:30/);
+  assert.match(scheduled, /⏱ 45m/);
+  const cleared = patchTaskLine(scheduled, {
+    ...task,
+    title: "Keep [private note](local.md)",
+    rank: "1",
+    startTime: null,
+    durationMinutes: null,
+  });
+  assert.doesNotMatch(cleared, /⏰/);
+  assert.doesNotMatch(cleared, /⏱/);
 });
 
 test("V4 minimal patch preserves unrelated Markdown body and unknown marker fields", () => {

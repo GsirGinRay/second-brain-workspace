@@ -173,6 +173,8 @@ test("scheduling a task that lives inside a project note survives the project bo
   assert.ok(change && change.operation !== "delete");
   const patched = base64ToText(change.replacementBase64);
   assert.match(patched, /⏳ 2026-08-20/);
+  assert.match(patched, /⏰ 09:30/);
+  assert.match(patched, /⏱ 30m/);
   assert.match(patched, /"startTime":"09:30"/);
 });
 
@@ -221,6 +223,31 @@ test("task checkboxes inside a task Markdown body are not indexed as separate ta
   const scanned = scanStructuredVault([file("tasks.md", source)]);
   assert.equal(scanned.snapshot.tasks.length, 1);
   assert.match(scanned.snapshot.tasks[0]?.body ?? "", /Example only/);
+  const migrated = base64ToText(scanned.bootstrapChanges[0]!.replacementBase64);
+  assert.doesNotMatch(migrated, /second-brain-task-content/);
+  assert.match(migrated, /  - \[ \] #task Example only/);
+});
+
+test("indented task notes are not adopted as extra tasks", () => {
+  const line = formatTaskLine({
+    id: taskId, title: "Parent", status: "todo", taskDate: null, priority: "normal",
+    projectId: null, projectName: null, rank: "a", sourcePath: "tasks.md",
+    sourceHeading: null, completedAt: null,
+  });
+  const source = `${line}\r\n\r\n  - [ ] #task Example only\r\n`;
+  const scanned = scanStructuredVault([file("tasks.md", source)]);
+  assert.equal(scanned.snapshot.tasks.length, 1);
+  assert.match(scanned.snapshot.tasks[0]?.body ?? "", /Example only/);
+});
+
+test("scan migrates JSON-only startTime onto visible ⏰ ⏱ tokens", () => {
+  const source = `- [ ] #task Timed <!-- publisher-task:{"id":"${taskId}","status":"todo","rank":"a","startTime":"09:30","durationMinutes":45,"timeZone":"Asia/Taipei"} -->\r\n`;
+  const scanned = scanStructuredVault([file("tasks.md", source)]);
+  assert.equal(scanned.snapshot.tasks[0]?.startTime, "09:30");
+  assert.equal(scanned.snapshot.tasks[0]?.durationMinutes, 45);
+  const patched = base64ToText(scanned.bootstrapChanges[0]!.replacementBase64);
+  assert.match(patched, /⏰ 09:30/);
+  assert.match(patched, /⏱ 45m/);
 });
 
 test("project deletion preserves tasks by unlinking them and deletes only the project source", () => {

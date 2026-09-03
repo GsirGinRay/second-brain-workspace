@@ -120,13 +120,11 @@ and is designed to stay stable across releases.
 ## Data format
 
 ```markdown
-- [ ] #task Write the first tutorial [[Open Source Launch]] ⏳ 2026-08-15
+- [ ] #task Write the first tutorial [[Open Source Launch]] ⏳ 2026-08-15 ⏰ 09:30 ⏱ 30m
 
-<!-- second-brain-task-content:00000000-0000-4000-8000-000000000000:start -->
-## Notes
+  ## Notes
 
-Full Markdown content for this task.
-<!-- second-brain-task-content:00000000-0000-4000-8000-000000000000:end -->
+  Full Markdown content for this task.
 ```
 
 See [docs/architecture.md](docs/architecture.md) and

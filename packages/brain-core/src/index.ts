@@ -46,6 +46,8 @@ export {
   replaceMarkdownDocumentBody,
   replaceMarkdownDocumentTitle,
   createCodeFenceTracker,
+  endIndexOfTaskBody,
+  withVisibleScheduleTokens,
   isManagedTaskId,
   isValidTaskId,
   parseTaskLine,
