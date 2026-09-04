@@ -191,15 +191,90 @@ export const TEMPLATE_PACK_BY_ID: Readonly<Record<TemplatePackId, TemplatePack>>
     TemplatePack
   >;
 
+export interface ScaffoldFileOptions {
+  /** Calendar date (`YYYY-MM-DD`) stamped onto the first-run sample task. */
+  today?: string;
+  /** Mint project/collection ids. Defaults to `crypto.randomUUID()`. */
+  createId?: () => string;
+  /** Overlay the 2–3 synthetic samples (project, today's task, collection). */
+  samples?: boolean;
+}
+
+function ensurePublisherId(content: string, createId: () => string): string {
+  if (!/^type: (project|collection)$/m.test(content)) return content;
+  if (/^publisher_id:/m.test(content)) return content;
+  return content.replace(
+    /^(type: (?:project|collection))$/m,
+    `$1\npublisher_id: ${createId()}`,
+  );
+}
+
+function scaffoldSampleFiles(
+  today: string,
+  createId: () => string,
+): Record<string, string> {
+  const projectId = createId();
+  const collectionId = createId();
+  return {
+    "Projects/開源發表.md": `---
+type: project
+publisher_id: ${projectId}
+status: active
+area: 開源
+priority: 2
+progress: 10
+focus_today: true
+start_date: ${today}
+end_date: 
+completed_at: 
+---
+# 開源發表
+
+這是合成示範專案，用來練習看板、日曆與任務筆記。可直接改名或刪除。
+`,
+    "Collections/寫作素材.md": `---
+type: collection
+publisher_id: ${collectionId}
+category: 寫作
+importance: 2
+---
+# 寫作素材
+
+以後會重複查閱的參考資料放這裡。這則是合成示範，可直接改名或刪除。
+`,
+    "10-收件匣/待辦收件匣.md": `# 待辦收件匣
+
+未排程的想法先放這裡。可在 App 的今日／日曆中把想法拖曳到日期以排程。
+
+- [ ] #task 寫第一份教學 [[開源發表]] ⏳ ${today} ⏰ 09:30 ⏱ 30m
+
+  ## Notes
+
+  - 可見的任務清單
+  - 時間與筆記都寫在普通 Markdown 裡
+`,
+  };
+}
+
 /** Merge the file maps of the requested packs (later packs win on conflicts). */
 export function scaffoldTemplateFiles(
   ids: readonly TemplatePackId[],
+  options: ScaffoldFileOptions = {},
 ): Record<string, string> {
+  const createId = options.createId ?? (() => crypto.randomUUID());
   const out: Record<string, string> = {};
   for (const id of ids) {
     const pack = TEMPLATE_PACK_BY_ID[id];
     if (!pack) continue;
     for (const [path, content] of Object.entries(pack.files)) {
+      out[path] = ensurePublisherId(content, createId);
+    }
+  }
+  if (options.samples) {
+    if (!options.today) throw new Error("SCAFFOLD_TODAY_REQUIRED");
+    for (const [path, content] of Object.entries(
+      scaffoldSampleFiles(options.today, createId),
+    )) {
       out[path] = content;
     }
   }

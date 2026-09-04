@@ -375,6 +375,13 @@ test("beginner workflow supports Markdown drafts, onboarding and close-time fold
   assert.match(source, /flushDraftsToSelectedVault/);
 });
 
+test("first folder selection offers architecture preview with samples and does not overwrite", () => {
+  const source = app();
+  assert.match(source, /const startWithFolder = async \(\) => \{[\s\S]*prepareArchitecture\(/);
+  assert.match(source, /scaffoldArchitectureChanges\([\s\S]*samples:\s*true/);
+  assert.doesNotMatch(source, /startArchitectureOnboarding/);
+});
+
 test("Windows installer keeps a stable upgrade identity", () => {
   const config = tauriConfig();
   assert.equal(config.productName, "Second Brain Workspace");

@@ -569,42 +569,42 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     localStorage.setItem("second-brain.onboardingCompleted", "true");
     setOnboardingOpen(false);
   };
-  const startWithFolder = async () => {
-    const ok = await browseVault();
-    if (!ok) return;
-    finishOnboarding();
-  };
-  const startArchitectureOnboarding = async () => {
-    if (!diagnostics?.selectedVault) {
-      const ok = await browseVault();
-      if (!ok) return;
-    }
-    finishOnboarding();
-    setArchitectureOpen(true);
-  };
 
-  const prepareArchitecture = async () => {
+  const prepareArchitecture = async (
+    loaded?: {
+      files: LocalMarkdownFile[];
+      tasks: BrainTaskSnapshot[];
+      projects: BrainProjectSnapshot[];
+      collections: BrainCollectionSnapshot[];
+    },
+    options: { samples?: boolean } = {},
+  ) => {
     setWorking(true);
     setError("");
     try {
+      const existingFiles = loaded?.files ?? files;
+      const existingTasks = loaded?.tasks ?? tasks;
+      const existingProjects = loaded?.projects ?? projects;
+      const existingCollections = loaded?.collections ?? collections;
       const changes = scaffoldArchitectureChanges(
-        files.map((file) => file.relativePath),
+        existingFiles.map((file) => file.relativePath),
         selectedPacks,
+        { today: taipeiDateKey(), samples: options.samples === true },
       );
       // A brand-new vault has no .ai/INDEX.md yet; treat the failed read as
       // "not created" so scaffolding (whose job is to create it) can proceed.
-      const existingFiles = await native
+      const existingIndex = await native
         .readMarkdownFiles([".ai/INDEX.md"])
         .catch(() => []);
       const indexChange = renderIndexChange(
         {
           today: taipeiDateKey(),
           generatedAt: new Date().toISOString(),
-          tasks,
-          projects,
-          collections,
+          tasks: existingTasks,
+          projects: existingProjects,
+          collections: existingCollections,
         },
-        existingFiles[0],
+        existingIndex[0],
       );
       if (indexChange) changes.push(indexChange);
       if (changes.length === 0) {
@@ -755,6 +755,14 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     },
     [engine, native, refreshAiIndex, loadTemplates],
   );
+
+  const startWithFolder = async () => {
+    const ok = await browseVault();
+    if (!ok) return;
+    finishOnboarding();
+    const local = await reloadLocal();
+    if (local) await prepareArchitecture(local, { samples: true });
+  };
 
   useEffect(() => {
     void reloadLocal().catch((cause) => {
@@ -1866,9 +1874,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
               <button className="primary onboarding-primary" onClick={() => void startWithFolder()}>
                 {t("onboarding.chooseFolder")}
               </button>
-              <button className="secondary-button wide" onClick={() => void startArchitectureOnboarding()}>
-                {t("onboarding.architecture")}
-              </button>
+              <p className="eyebrow">{t("onboarding.architecture")}</p>
             </div>
             <hr className="modal-divider" />
             <button className="text-button" onClick={finishOnboarding}>

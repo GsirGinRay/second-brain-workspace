@@ -86,7 +86,7 @@ export {
   TEMPLATE_PACKS,
   scaffoldTemplateFiles,
 } from "./scaffold";
-export type { TemplatePack, TemplatePackId } from "./scaffold";
+export type { ScaffoldFileOptions, TemplatePack, TemplatePackId } from "./scaffold";
 export {
   parsePluginExport,
   renderPluginExport,

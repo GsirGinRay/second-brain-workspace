@@ -1,6 +1,7 @@
 import {
   renderVaultIndex,
   scaffoldTemplateFiles,
+  type ScaffoldFileOptions,
   type TemplatePackId,
   type VaultIndexInput,
 } from "@second-brain/brain-core";
@@ -33,11 +34,12 @@ export function decodeBase64(value: string): string {
 export function scaffoldArchitectureChanges(
   existingPaths: readonly string[],
   packIds: readonly TemplatePackId[],
+  options: ScaffoldFileOptions = {},
 ): MarkdownChange[] {
   const used = new Set(existingPaths.map((path) => path.replace(/\\/g, "/").toLowerCase()));
   const out: MarkdownChange[] = [];
   for (const [relativePath, content] of Object.entries(
-    scaffoldTemplateFiles(packIds),
+    scaffoldTemplateFiles(packIds, options),
   )) {
     const normalized = relativePath.replace(/\\/g, "/");
     if (used.has(normalized.toLowerCase())) continue;

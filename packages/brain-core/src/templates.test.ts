@@ -54,3 +54,41 @@ test("scaffolding only the prompts pack does not create AI files", () => {
   assert.ok(files["Collections/股票選股分析.md"]);
   assert.equal(files[".ai/INSTRUCTIONS.md"], undefined);
 });
+
+test("first-run samples add a project, today's visible task, and a collection", () => {
+  let n = 0;
+  const files = scaffoldTemplateFiles(
+    TEMPLATE_PACKS.map((pack) => pack.id),
+    {
+      today: "2026-08-15",
+      samples: true,
+      createId: () => `00000000-0000-4000-8000-00000000000${n++}`,
+    },
+  );
+  const project = files["Projects/開源發表.md"];
+  const collection = files["Collections/寫作素材.md"];
+  assert.ok(project, "sample project lives under Projects/");
+  assert.ok(collection, "sample collection lives under Collections/");
+  assert.match(project, /^---\ntype: project\npublisher_id: 00000000-0000-4000-8000-[0-9a-f]{12}/m);
+  assert.match(collection, /^---\ntype: collection\npublisher_id: 00000000-0000-4000-8000-[0-9a-f]{12}/m);
+  assert.match(files["Collections/股票選股分析.md"]!, /^---\ntype: collection\npublisher_id: /m);
+  assert.equal(files["Inbox.md"], undefined);
+  assert.equal(files["Personal System.md"], undefined);
+  const inbox = files["10-收件匣/待辦收件匣.md"];
+  assert.ok(inbox);
+  assert.match(inbox, /⏳ 2026-08-15/);
+  assert.match(inbox, /⏰ 09:30/);
+  assert.match(inbox, /⏱ 30m/);
+  assert.match(inbox, /\[\[開源發表\]\]/);
+  assert.match(inbox, /\n  ## Notes\n/);
+  assert.doesNotMatch(inbox, /publisher_id/);
+  assert.doesNotMatch(inbox, /<!-- publisher-task:/);
+});
+
+test("first-run samples stay out of the architecture when samples are off", () => {
+  const files = scaffoldTemplateFiles(["projects"], { samples: false, today: "2026-08-15" });
+  assert.equal(
+    Object.keys(files).some((path) => path.startsWith("Projects/") && path !== "Projects/README.md"),
+    false,
+  );
+});

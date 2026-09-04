@@ -42,6 +42,13 @@ test("translations preserve stable data values while localizing visible labels",
   assert.equal(translate("en", "missing.key"), "missing.key");
 });
 
+test("Traditional Chinese project view labels do not mix in English View", () => {
+  assert.equal(translate("zh-TW", "project.view.list"), "清單");
+  assert.equal(translate("zh-TW", "project.view.board"), "狀態看板");
+  assert.doesNotMatch(translate("zh-TW", "project.view.list"), /View/i);
+  assert.doesNotMatch(translate("zh-TW", "project.view.board"), /View/i);
+});
+
 test("detail surface accepts the panel and rejects unknown persisted values", () => {
   assert.equal(normalizeUiPreferences({ language: "en", theme: "dark", detailSurface: "panel" }).detailSurface, "panel");
   assert.equal(normalizeUiPreferences({ language: "en", theme: "dark", detailSurface: "drawer" }).detailSurface, "dialog");
