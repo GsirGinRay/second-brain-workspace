@@ -86,6 +86,7 @@ export {
 export type { BrainTemplate } from "./templates";
 export {
   TEMPLATE_PACKS,
+  DEFAULT_ARCHITECTURE_PACK_IDS,
   scaffoldTemplateFiles,
 } from "./scaffold";
 export type { ScaffoldFileOptions, TemplatePack, TemplatePackId } from "./scaffold";

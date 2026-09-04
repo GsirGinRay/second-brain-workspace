@@ -39,6 +39,7 @@ import {
   projectColor,
   rankForIndex,
   TEMPLATE_PACKS,
+  DEFAULT_ARCHITECTURE_PACK_IDS,
   collectionToPrompt,
   parsePluginExport,
   promptToCollection,
@@ -311,11 +312,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [previewDismissed, setPreviewDismissed] = useState(false);
   const [architectureOpen, setArchitectureOpen] = useState(false);
   const [selectedPacks, setSelectedPacks] = useState<TemplatePackId[]>([
-    "projects",
-    "knowledge",
-    "prompts",
-    "ai",
-    "templates",
+    ...DEFAULT_ARCHITECTURE_PACK_IDS,
   ]);
   const [importPromptsOpen, setImportPromptsOpen] = useState(false);
   const [importText, setImportText] = useState("");
@@ -577,7 +574,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       projects: BrainProjectSnapshot[];
       collections: BrainCollectionSnapshot[];
     },
-    options: { samples?: boolean } = {},
+    options: { samples?: boolean; packs?: readonly TemplatePackId[] } = {},
   ) => {
     setWorking(true);
     setError("");
@@ -588,7 +585,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       const existingCollections = loaded?.collections ?? collections;
       const changes = scaffoldArchitectureChanges(
         existingFiles.map((file) => file.relativePath),
-        selectedPacks,
+        options.packs ?? selectedPacks,
         { today: taipeiDateKey(), samples: options.samples === true },
       );
       // A brand-new vault has no .ai/INDEX.md yet; treat the failed read as
@@ -761,7 +758,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     if (!ok) return;
     finishOnboarding();
     const local = await reloadLocal();
-    if (local) await prepareArchitecture(local, { samples: true });
+    if (local) await prepareArchitecture(local, { samples: true, packs: [] });
   };
 
   useEffect(() => {
@@ -1785,7 +1782,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
                 <X aria-hidden="true" />
               </button>
             </div>
-            <p>勾選你要的模板包，一起建立資料夾、AI 委任檔、範本與提示詞庫。已存在的檔案不會被覆寫。</p>
+            <p>預設只勾專案管理與個人知識庫。提示詞庫、模板套件與 AI 委任之後需要再加。已存在的檔案不會被覆寫。</p>
             <div className="architecture-pack-list">
               {TEMPLATE_PACKS.map((pack) => (
                 <label key={pack.id} className="architecture-pack">
@@ -2253,6 +2250,9 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     <header className="command-hero"><div><span className="eyebrow">{t("today.eyebrow", { date: today })}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
     <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article></div>
+    {groups.today.length === 0 && groups.overdue.length === 0 && (
+      <Empty text={t("today.empty")} actionLabel={t("today.emptyAction")} onAction={onQuickAdd} />
+    )}
     {templateOpen && <section className="routine-editor"><header><div><span className="eyebrow">DAILY ROUTINE</span><input aria-label="模板名稱" value={routineTemplate.name} onChange={(event) => onRoutineTemplateChange({ ...routineTemplate, name: event.target.value })} /></div><button onClick={() => setTemplateOpen(false)} aria-label="關閉模板"><X /></button></header><div className="routine-items">{routineTemplate.items.map((item) => <article key={item.id} data-global-select-id={item.id} data-global-select-kind="routine" draggable={dragHandleId === item.id} onDragStart={() => { setDraggedItem(item.id); draggedItems.current = getGlobalSelectedIds(item.id, "routine"); }} onDragEnd={() => { setDragHandleId(null); draggedItems.current = []; }} onMouseUp={() => setDragHandleId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropItem(item.id)}><GripVertical onMouseDown={() => setDragHandleId(item.id)} /><input type="checkbox" aria-label={`${item.title}啟用`} checked={item.enabled} onChange={(event) => updateItem(item.id, { enabled: event.target.checked })} /><input aria-label="例行任務名稱" value={item.title} onChange={(event) => updateItem(item.id, { title: event.target.value })} /><select aria-label="例行任務專案" value={item.projectId ?? ""} onChange={(event) => { const project = projects.find((value) => value.id === event.target.value); updateItem(item.id, { projectId: project?.id ?? null, projectName: project?.name ?? null }); }}><option value="">無專案</option>{projects.map((project) => <option key={project.id ?? project.name} value={project.id ?? ""}>{project.name}</option>)}</select><select aria-label="例行任務優先度" value={item.priority} onChange={(event) => updateItem(item.id, { priority: event.target.value as RoutineTemplateItem["priority"] })}>{(["highest","high","medium","normal","low"] as const).map((value) => <option key={value} value={value}>{priorityDisplay(value).code}</option>)}</select><input aria-label="開始時間" type="time" value={item.startTime ?? ""} onChange={(event) => updateItem(item.id, { startTime: event.target.value || null, durationMinutes: event.target.value ? item.durationMinutes ?? 30 : null })} /><select aria-label="持續時間" disabled={!item.startTime} value={item.durationMinutes ?? 30} onChange={(event) => updateItem(item.id, { durationMinutes: Number(event.target.value) })}>{[15,30,45,60,90,120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分</option>)}</select><button className="danger-icon" aria-label={`刪除${item.title}`} onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: routineTemplate.items.filter((value) => value.id !== item.id) })}><Trash2 /></button></article>)}</div><button className="secondary" onClick={() => onRoutineTemplateChange({ ...routineTemplate, items: [...routineTemplate.items, { id: crypto.randomUUID(), title: "新的例行任務", enabled: true, projectId: null, projectName: null, priority: "normal", startTime: null, durationMinutes: null, rank: rankForIndex(routineTemplate.items.length) }] })}><Plus />新增模板項目</button></section>}
     <section className="timeline-section">
       <header>
@@ -4372,7 +4372,7 @@ function Projects({
         <select aria-label={t("project.filter.category")} value={areaFilter} onChange={(event) => { setAreaFilter(event.target.value); localStorage.setItem("second-brain.projectAreaFilter", event.target.value); }}><option value="all">{t("project.filter.allCategories")}</option>{areas.map((area) => <option key={area}>{area}</option>)}</select>
         <select aria-label={t("project.sort")} value={sort} onChange={(event) => { const value = event.target.value as typeof sort; setSort(value); localStorage.setItem("second-brain.projectSort", value); }}><option value="priority">{t("project.sort.importance")}</option><option value="status">{t("project.sort.status")}</option><option value="name">{t("project.sort.name")}</option><option value="endDate">{t("project.sort.endDate")}</option></select>
       </div>
-      {visibleProjects.length === 0 ? <Empty text={t("project.empty")} hint={t("project.emptyHelp")} actionLabel={t("project.action.add")} onAction={onCreate} /> : mode === "status" && tab === "current" ? (
+      {visibleProjects.length === 0 ? <Empty text={projects.length === 0 ? t("project.emptyFirst") : t("project.empty")} hint={projects.length === 0 ? t("project.emptyFirstHelp") : t("project.emptyHelp")} actionLabel={projects.length === 0 ? t("project.emptyFirstAction") : t("project.action.add")} onAction={onCreate} /> : mode === "status" && tab === "current" ? (
         <div className="project-status-board">
           {(["planning", "active", "paused"] as const).map((status) => <section key={status}><header><strong>{t(`project.status.${status}`)}</strong><span>{visibleProjects.filter((project) => project.status === status).length}</span></header>{visibleProjects.filter((project) => project.status === status).map(renderProject)}</section>)}
         </div>
@@ -4708,8 +4708,8 @@ function SyncSettings({
         <span className="step">★</span>
         <h2>{preferences.language === "zh-TW" ? "建立知識架構" : "Build knowledge architecture"}</h2>
         <p>{preferences.language === "zh-TW"
-          ? "產生 .ai 委任檔、自動索引、範本與提示詞庫。之後你在工作台打勾或改任務，.ai/INDEX.md 會跟著更新，讓任何 AI 一進資料夾就能找到專案、知識與完成度。"
-          : "Create the .ai handoff, automatic index, templates, and prompt library. Checking off work here refreshes .ai/INDEX.md so any AI can find projects, knowledge, and completion status."}</p>
+          ? "預設只建立專案與知識庫。提示詞庫、模板與 AI 委任之後需要再加。已存在的檔案不會被覆寫。"
+          : "Projects and knowledge are selected by default. Add the prompt library, templates, or AI handoff later if you need them. Existing files are not overwritten."}</p>
         <button className="primary wide" onClick={onOpenArchitecture}>
           {preferences.language === "zh-TW" ? "新建架構模板" : "New architecture templates"}
         </button>

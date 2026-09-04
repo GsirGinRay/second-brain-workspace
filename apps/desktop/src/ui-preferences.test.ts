@@ -58,3 +58,13 @@ test("all UI choices round-trip as a complete preference", () => {
   const value: UiPreferences = { language: "en", theme: "dark", density: "compact", detailSurface: "panel" };
   assert.deepEqual(normalizeUiPreferences(JSON.parse(JSON.stringify(value))), value);
 });
+
+test("empty states use plain-language first actions", () => {
+  assert.equal(translate("zh-TW", "today.emptyAction"), "新增第一個任務");
+  assert.equal(translate("en", "today.emptyAction"), "Add your first task");
+  assert.equal(translate("zh-TW", "calendar.emptyDayAction"), "新增第一個任務");
+  assert.equal(translate("en", "calendar.emptyDayAction"), "Add your first task");
+  assert.equal(translate("zh-TW", "project.emptyFirstAction"), "從模板建立");
+  assert.equal(translate("en", "project.emptyFirstAction"), "Create from template");
+  assert.equal(translate("zh-TW", "project.emptyFirst"), "還沒有專案。");
+});

@@ -28,7 +28,9 @@ test("scaffoldArchitectureChanges emits create changes only for missing files", 
   assert.ok(paths.includes("CLAUDE.md"));
   assert.ok(paths.includes("AGENTS.md"));
   assert.ok(paths.includes("10-收件匣/待辦收件匣.md"));
-  assert.ok(paths.includes("Collections/股票選股分析.md"));
+  assert.ok(paths.includes("Collections/會議紀錄.md"));
+  assert.ok(paths.includes("Collections/寫作大綱.md"));
+  assert.ok(!paths.includes("Collections/股票選股分析.md"));
   assert.ok(changes.every((change) => change.operation === "create"));
 });
 
@@ -54,9 +56,42 @@ test("first-run samples skip an existing inbox and still create missing project 
   );
   const paths = changes.map((change) => change.relativePath);
   assert.ok(!paths.includes("10-收件匣/待辦收件匣.md"));
-  assert.ok(paths.some((path) => path.startsWith("Projects/") && path !== "Projects/README.md"));
-  assert.ok(paths.some((path) => path.startsWith("Collections/") && path !== "Collections/README.md"));
+  assert.ok(paths.includes("Projects/開始使用.md"));
+  assert.ok(paths.includes("Collections/以後要查的資料.md"));
+  assert.ok(!paths.includes("Projects/開源發表.md"));
+  assert.ok(!paths.includes("Collections/股票選股分析.md"));
   assert.ok(changes.every((change) => change.operation === "create"));
+});
+
+test("empty-folder first-run writes only deletable samples, not templates or stock prompts", () => {
+  let n = 0;
+  const changes = scaffoldArchitectureChanges([], [], {
+    today: "2026-08-15",
+    samples: true,
+    createId: () => `11111111-1111-4111-8111-11111111111${n++}`,
+  });
+  const paths = changes.map((change) => change.relativePath);
+  assert.deepEqual(
+    [...paths].sort(),
+    [
+      "10-收件匣/待辦收件匣.md",
+      "Collections/以後要查的資料.md",
+      "Projects/開始使用.md",
+    ].sort(),
+  );
+  const inbox = decodeBase64(
+    changes.find((change) => change.relativePath === "10-收件匣/待辦收件匣.md")!
+      .replacementBase64,
+  );
+  assert.equal([...inbox.matchAll(/#task /g)].length, 3);
+  assert.match(inbox, /完成這一則/);
+  assert.match(inbox, /把它排到今天或日曆/);
+  assert.match(inbox, /在任務下面寫一段筆記/);
+  assert.ok(!paths.some((path) => path.startsWith("90-模板/")));
+  assert.ok(!paths.some((path) => path.startsWith("Prompts/")));
+  assert.ok(!paths.includes("CLAUDE.md"));
+  assert.ok(!paths.includes("AGENTS.md"));
+  assert.ok(!paths.some((path) => /股票|選股/.test(path)));
 });
 
 test("sample vault uses official folder conventions and visible task Markdown", () => {

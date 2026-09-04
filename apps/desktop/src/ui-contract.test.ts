@@ -378,8 +378,29 @@ test("beginner workflow supports Markdown drafts, onboarding and close-time fold
 test("first folder selection offers architecture preview with samples and does not overwrite", () => {
   const source = app();
   assert.match(source, /const startWithFolder = async \(\) => \{[\s\S]*prepareArchitecture\(/);
+  assert.match(source, /prepareArchitecture\(local, \{ samples: true, packs: \[\] \}\)/);
   assert.match(source, /scaffoldArchitectureChanges\([\s\S]*samples:\s*true/);
+  assert.match(source, /DEFAULT_ARCHITECTURE_PACK_IDS/);
+  assert.doesNotMatch(
+    source,
+    /useState<TemplatePackId\[\]>\(\[[\s\S]*"prompts"[\s\S]*"ai"[\s\S]*"templates"/,
+  );
   assert.doesNotMatch(source, /startArchitectureOnboarding/);
+});
+
+test("Today, calendar and project empty states teach the first action in plain language", () => {
+  const source = app();
+  const prefs = readFileSync(resolve(import.meta.dirname, "ui-preferences.ts"), "utf8");
+  assert.match(prefs, /"today\.emptyAction": "Add your first task"/);
+  assert.match(prefs, /"today\.emptyAction": "新增第一個任務"/);
+  assert.match(prefs, /"calendar\.emptyDayAction": "Add your first task"/);
+  assert.match(prefs, /"calendar\.emptyDayAction": "新增第一個任務"/);
+  assert.match(prefs, /"project\.emptyFirstAction": "Create from template"/);
+  assert.match(prefs, /"project\.emptyFirstAction": "從模板建立"/);
+  assert.match(source, /today\.emptyAction/);
+  assert.match(source, /calendar\.emptyDayAction/);
+  assert.match(source, /project\.emptyFirstAction/);
+  assert.match(source, /projects\.length === 0 \? t\("project\.emptyFirst"\)/);
 });
 
 test("Windows installer keeps a stable upgrade identity", () => {
