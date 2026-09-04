@@ -650,9 +650,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         setStatus("知識架構已存在，未覆寫任何既有檔案");
         return;
       }
+      const teachFirstRun = pendingScaffold.some((change) =>
+        /開始使用|待辦收件匣/.test(change.relativePath),
+      );
       await native.applyMarkdownChanges(changes);
       await reloadLocal();
-      setStatus("知識架構已建立；AI 委任檔、索引與模板已就緒");
+      setStatus(teachFirstRun ? "示範內容已建立，可直接改名或刪除" : "知識架構已建立");
     } catch (cause) {
       setError(`建立知識架構失敗：${describeError(cause, "SCAFFOLD_FAILED")}`);
     } finally {
