@@ -162,14 +162,15 @@ test("mergeSnapshots handles missing and new entities without undefined items", 
 
 test("minimal task patch preserves BOM, CRLF, indentation, links, wikilinks, unknown tokens and block id", () => {
   const raw = "\uFEFF  - [ ] #task Keep [link](https://example.com) [[Area]] [[Project]] \u{1F501} \u{23EB} 📅 2026-08-12 ⏳ 2026-08-11 ✅ 2026-08-10 ^block-id <!-- publisher-task:{\"id\":\"task-1\",\"status\":\"doing\",\"rank\":\"00000001\"} -->\r";
+  const canonical = (line: string) => line.replace("publisher-task:", "second-brain-task:");
   const parsed = parseTaskLine(raw, "tasks.md", 4);
   assert.ok(parsed);
-  assert.equal(patchTaskLine(raw, parsed), raw.replace(" 📅 2026-08-12", ""));
+  assert.equal(patchTaskLine(raw, parsed), canonical(raw.replace(" 📅 2026-08-12", "")));
 
   const updated = patchTaskLine(raw, { ...parsed, taskDate: "2026-08-13" });
   assert.equal(
     updated,
-    raw.replace(" 📅 2026-08-12", "").replace("⏳ 2026-08-11", "⏳ 2026-08-13"),
+    canonical(raw.replace(" 📅 2026-08-12", "").replace("⏳ 2026-08-11", "⏳ 2026-08-13")),
   );
   assert.match(updated, /\uFEFF  - /);
   assert.match(updated, /\[\[Area\]\] \[\[Project\]\]/);
@@ -180,13 +181,14 @@ test("minimal task patch preserves BOM, CRLF, indentation, links, wikilinks, unk
 
 test("unscheduling removes the planned date token so tasks can return to the idea inbox", () => {
   const marker = '<!-- publisher-task:{"id":"task-1","status":"todo","rank":"00000001"} -->';
+  const canonical = '<!-- second-brain-task:{"id":"task-1","status":"todo","rank":"00000001"} -->';
   const planned = `- [ ] #task 買牛奶 ⏳ 2026-08-15 ${marker}`;
   const parsedPlanned = parseTaskLine(planned, "tasks.md", 0);
   assert.ok(parsedPlanned);
   assert.equal(parsedPlanned.taskDate, "2026-08-15");
   assert.equal(
     patchTaskLine(planned, { ...parsedPlanned, taskDate: null }),
-    `- [ ] #task 買牛奶 ${marker}`,
+    `- [ ] #task 買牛奶 ${canonical}`,
   );
 
   // A legacy line with both due and planned tokens must lose both dates.
@@ -195,7 +197,7 @@ test("unscheduling removes the planned date token so tasks can return to the ide
   assert.ok(parsedBoth);
   assert.equal(
     patchTaskLine(both, { ...parsedBoth, taskDate: null }),
-    `- [ ] #task 買牛奶 ${marker}`,
+    `- [ ] #task 買牛奶 ${canonical}`,
   );
 
   // A legacy due-only line keeps working after the planned-date fix.
@@ -204,7 +206,7 @@ test("unscheduling removes the planned date token so tasks can return to the ide
   assert.ok(parsedDue);
   assert.equal(
     patchTaskLine(dueOnly, { ...parsedDue, taskDate: null }),
-    `- [ ] #task 買牛奶 ${marker}`,
+    `- [ ] #task 買牛奶 ${canonical}`,
   );
 
   // Re-scheduling an unscheduled task adds the planned token back.
@@ -212,12 +214,17 @@ test("unscheduling removes the planned date token so tasks can return to the ide
   assert.ok(unparsed);
   assert.equal(
     patchTaskLine(`- [ ] #task 買牛奶 ${marker}`, { ...unparsed, taskDate: "2026-08-20" }),
-    `- [ ] #task 買牛奶 ⏳ 2026-08-20 ${marker}`,
+    `- [ ] #task 買牛奶 ⏳ 2026-08-20 ${canonical}`,
   );
 
-  // Patching with the same date stays byte-identical (no spurious rewrites).
+  // A legacy prefix is rewritten even when the date is unchanged.
   const same = patchTaskLine(planned, { ...parsedPlanned, taskDate: "2026-08-15" });
-  assert.equal(same, planned);
+  assert.equal(same, `- [ ] #task 買牛奶 ⏳ 2026-08-15 ${canonical}`);
+  // An already-canonical line stays byte-identical.
+  assert.equal(
+    patchTaskLine(same, { ...parsedPlanned, taskDate: "2026-08-15" }),
+    same,
+  );
 });
 
 test("frontmatter updater preserves a BOM and CRLF", () => {

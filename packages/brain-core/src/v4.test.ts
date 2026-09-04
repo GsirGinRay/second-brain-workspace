@@ -50,6 +50,8 @@ test("V4 task metadata round-trips through visible tokens and the structured mar
   const line = formatTaskLine(task);
   assert.match(line, /⏰ 09:30/);
   assert.match(line, /⏱ 45m/);
+  assert.match(line, /<!-- second-brain-task:/);
+  assert.doesNotMatch(line, /publisher-task:/);
   assert.match(line, /"startTime":"09:30"/);
   assert.match(line, /"durationMinutes":45/);
   assert.doesNotMatch(line, /accessToken|refreshToken|eventId/i);
@@ -94,6 +96,8 @@ test("V4 minimal patch preserves unrelated Markdown body and unknown marker fiel
   assert.match(updated, /Keep \[private note\]\(local\.md\)/);
   assert.match(updated, /"unknown":"keep"/);
   assert.match(updated, /"startTime":"09:30"/);
+  assert.match(updated, /<!-- second-brain-task:/);
+  assert.doesNotMatch(updated, /publisher-task:/);
 });
 
 test("V3 snapshots migrate to V4 with safe defaults", () => {

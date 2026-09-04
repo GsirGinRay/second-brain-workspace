@@ -39,5 +39,7 @@ npm run desktop:installer
 
 ## Compatibility
 
-The legacy `publisher-task` Markdown marker is retained as a data-format
-compatibility identifier. It is not a dependency on the Publisher product.
+The legacy `publisher-task` comment and `publisher_id` frontmatter key are
+still read so original Publisher vaults open. On first load they are rewritten
+to `second-brain-task` and `id`. They are not a dependency on the Publisher
+product.

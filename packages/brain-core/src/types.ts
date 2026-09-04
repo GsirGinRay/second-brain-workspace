@@ -133,7 +133,7 @@ export interface ParsedMarkdownTask extends BrainTaskSnapshot {
   lineIndex: number;
   rawLine: string;
   /**
-   * Present when the line carried a publisher-task marker that could not be
+   * Present when the line carried a task marker that could not be
    * used: "unparsable" (JSON failed to parse — typical of an interrupted sync
    * write) or "unsafe-id" (an id that could break the marker structure). The
    * task itself still parses; scanners surface this so the anomaly is visible

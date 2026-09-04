@@ -74,12 +74,14 @@ test("sample vault uses official folder conventions and visible task Markdown", 
   const projectText = readFileSync(project, "utf8");
   const collectionText = readFileSync(collection, "utf8");
   const inboxText = readFileSync(inbox, "utf8");
-  assert.match(projectText, /^---\r?\ntype: project\r?\npublisher_id: [0-9a-f-]{36}/i);
-  assert.match(collectionText, /^---\r?\ntype: collection\r?\npublisher_id: [0-9a-f-]{36}/i);
+  assert.match(projectText, /^---\r?\ntype: project\r?\nid: [0-9a-f-]{36}/i);
+  assert.match(collectionText, /^---\r?\ntype: collection\r?\nid: [0-9a-f-]{36}/i);
   assert.match(inboxText, /⏳ 2026-08-15/);
   assert.match(inboxText, /⏰ 09:30/);
   assert.match(inboxText, /⏱ 30m/);
   assert.match(inboxText, /\n  ## Notes\n/);
+  assert.doesNotMatch(projectText, /publisher_id/);
+  assert.doesNotMatch(collectionText, /publisher_id/);
   assert.doesNotMatch(inboxText, /publisher_id/);
   assert.doesNotMatch(inboxText, /<!-- publisher-task:/);
 });

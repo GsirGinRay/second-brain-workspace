@@ -200,12 +200,12 @@ export interface ScaffoldFileOptions {
   samples?: boolean;
 }
 
-function ensurePublisherId(content: string, createId: () => string): string {
+function ensureEntityId(content: string, createId: () => string): string {
   if (!/^type: (project|collection)$/m.test(content)) return content;
-  if (/^publisher_id:/m.test(content)) return content;
+  if (/^(id|publisher_id):/m.test(content)) return content;
   return content.replace(
     /^(type: (?:project|collection))$/m,
-    `$1\npublisher_id: ${createId()}`,
+    `$1\nid: ${createId()}`,
   );
 }
 
@@ -218,7 +218,7 @@ function scaffoldSampleFiles(
   return {
     "Projects/開源發表.md": `---
 type: project
-publisher_id: ${projectId}
+id: ${projectId}
 status: active
 area: 開源
 priority: 2
@@ -234,7 +234,7 @@ completed_at:
 `,
     "Collections/寫作素材.md": `---
 type: collection
-publisher_id: ${collectionId}
+id: ${collectionId}
 category: 寫作
 importance: 2
 ---
@@ -267,7 +267,7 @@ export function scaffoldTemplateFiles(
     const pack = TEMPLATE_PACK_BY_ID[id];
     if (!pack) continue;
     for (const [path, content] of Object.entries(pack.files)) {
-      out[path] = ensurePublisherId(content, createId);
+      out[path] = ensureEntityId(content, createId);
     }
   }
   if (options.samples) {

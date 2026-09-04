@@ -1,6 +1,6 @@
 ---
 type: collection
-publisher_id: 7de8f6ce-1504-4ced-b3ca-4dfcf46d4992
+id: 7de8f6ce-1504-4ced-b3ca-4dfcf46d4992
 category: AI
 importance: 2
 ---

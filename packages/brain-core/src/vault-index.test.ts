@@ -265,7 +265,7 @@ test("INDEX encoding example is visible Markdown the parser can read", () => {
   assert.match(out, /⏰ <HH:MM>/);
   assert.match(out, /⏱ <minutes>m/);
   assert.match(out, /indented/);
-  assert.match(out, /do not invent `publisher_id`/);
+  assert.match(out, /do not invent `id`/);
   const example = out.match(/- \[ \] #task [^\n]+⏰ [^\n]+/);
   assert.ok(example, "encoding spec includes a visible task line");
   const parsed = parseTaskLine(example[0].trim(), "example.md", 0);

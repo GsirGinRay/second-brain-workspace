@@ -13,6 +13,8 @@ import {
   rankForIndex,
   updateProjectFrontmatter,
   withVisibleScheduleTokens,
+  canonicalizeTaskMarker,
+  canonicalizeEntityFrontmatterId,
   type BrainProjectSnapshot,
   type BrainCollectionSnapshot,
   type BrainTaskSnapshot,
@@ -154,7 +156,7 @@ export function buildProjectCreateChange(
   const content = [
     "---",
     "type: project",
-    `publisher_id: ${createId()}`,
+    `id: ${createId()}`,
     "status: planning",
     `area: ${category}`,
     `priority: ${normalizedPriority}`,
@@ -191,7 +193,7 @@ export function buildCollectionCreateChange(
   const content = [
     "---",
     "type: collection",
-    `publisher_id: ${createId()}`,
+    `id: ${createId()}`,
     `category: ${normalizedCategory}`,
     `importance: ${normalizedImportance}`,
     "---",
@@ -236,8 +238,9 @@ export function scanStructuredVault(
       const id = project.id ?? createId();
       const { frontmatterStart: _frontmatterStart, frontmatterEnd: _frontmatterEnd, ...snapshot } = project;
       projects.push({ ...snapshot, id, schemaVersion: 6 });
-      if (!project.id) {
-        const patched = updateProjectFrontmatter(source, { publisher_id: id });
+      let patched = canonicalizeEntityFrontmatterId(source);
+      if (!project.id) patched = updateProjectFrontmatter(patched, { id });
+      if (patched !== source) {
         changedSources.set(file.relativePath, patched);
         sources.set(file.relativePath, patched);
       }
@@ -247,8 +250,9 @@ export function scanStructuredVault(
       const id = collection.id ?? createId();
       const { frontmatterStart: _frontmatterStart, frontmatterEnd: _frontmatterEnd, ...snapshot } = collection;
       collections.push({ ...snapshot, id, schemaVersion: 6 });
-      if (!collection.id) {
-        const patched = updateProjectFrontmatter(source, { publisher_id: id });
+      let patched = canonicalizeEntityFrontmatterId(source);
+      if (!collection.id) patched = updateProjectFrontmatter(patched, { id });
+      if (patched !== source) {
         changedSources.set(file.relativePath, patched);
         sources.set(file.relativePath, patched);
       }
@@ -318,6 +322,7 @@ export function scanStructuredVault(
         task.startTime ?? null,
         task.durationMinutes ?? null,
       );
+      patchedLine = canonicalizeTaskMarker(patchedLine);
       if (patchedLine !== lines[index]) {
         source = replaceLine(source, index, patchedLine);
         lines[index] = patchedLine;
@@ -393,7 +398,7 @@ export function applyDesiredSnapshot(
     if (!project.id || !project.sourcePath || !byPath.has(project.sourcePath)) continue;
     const source = currentSources.get(project.sourcePath)!;
     let next = updateProjectFrontmatter(source, {
-      publisher_id: project.id,
+      id: project.id,
       status: project.status,
       area: project.area,
       priority: project.priority,
@@ -417,7 +422,7 @@ export function applyDesiredSnapshot(
     if (!collection.id || !collection.sourcePath || !byPath.has(collection.sourcePath)) continue;
     const source = currentSources.get(collection.sourcePath)!;
     let next = updateProjectFrontmatter(source, {
-      publisher_id: collection.id,
+      id: collection.id,
       category: collection.category,
       importance: collection.importance,
     });

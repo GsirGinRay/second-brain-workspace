@@ -80,7 +80,7 @@ test("structured vault scan bootstraps a missing collection id while preserving 
   const source = "---\r\ntype: collection\r\ncategory: 參考\r\n---\r\n# 剪輯資料\r\n正文\r\n";
   const result = scanStructuredVault([file("Collections/Editing.md", source)], () => collectionId);
   const patched = base64ToText(result.bootstrapChanges[0]!.replacementBase64);
-  assert.match(patched, new RegExp(`publisher_id: ${collectionId}`));
+  assert.match(patched, new RegExp(`id: ${collectionId}`));
   assert.ok(patched.includes("\r\n"));
 });
 
@@ -264,6 +264,8 @@ test("scan migrates JSON-only startTime onto visible ⏰ ⏱ tokens", () => {
   const patched = base64ToText(scanned.bootstrapChanges[0]!.replacementBase64);
   assert.match(patched, /⏰ 09:30/);
   assert.match(patched, /⏱ 45m/);
+  assert.match(patched, /<!-- second-brain-task:/);
+  assert.doesNotMatch(patched, /publisher-task:/);
 });
 
 test("project deletion preserves tasks by unlinking them and deletes only the project source", () => {
@@ -359,11 +361,15 @@ test("an unsafe marker id is re-adopted instead of failing the scan", () => {
 
 test("a foreign but harmless marker id is kept, not silently re-identified", () => {
   // Ids minted by an older vault or another tool are legitimate; rewriting them
-  // would break every cross-reference the user already has.
+  // would break every cross-reference the user already has. The first load still
+  // rewrites the legacy publisher-task prefix.
   const legacy = '- [ ] #task 舊資料 <!-- publisher-task:{"id":"task-1","rank":"00000000"} -->\r\n';
   const result = scanStructuredVault([file("board.md", legacy)], () => taskId);
   assert.equal(result.snapshot.tasks[0]?.id, "task-1");
-  assert.equal(result.bootstrapChanges.length, 0, "no rewrite of the user's file");
+  const patched = base64ToText(result.bootstrapChanges[0]!.replacementBase64);
+  assert.match(patched, /<!-- second-brain-task:/);
+  assert.doesNotMatch(patched, /publisher-task:/);
+  assert.match(patched, /"id":"task-1"/);
 });
 
 test("scan reports healed marker anomalies with file and line, and stays quiet otherwise", () => {
@@ -464,4 +470,38 @@ test("switching a task's project rewrites the wiki link and rescans to the new i
   switchTo(null);
   assert.doesNotMatch(base64ToText(taskFile().bytesBase64), /\[\[/, "clearing the project drops the link");
   assert.equal(scannedProjectId(), null, "rescan returns to unassigned");
+});
+
+test("first load rewrites publisher-task and publisher_id but keeps the ids", () => {
+  const projectSource = `---\r\ntype: project\r\npublisher_id: ${projectId}\r\n---\r\n# Launch\r\n`;
+  const taskSource = `- [ ] #task Timed ⏳ 2026-08-15 <!-- publisher-task:{"id":"${taskId}","status":"todo","rank":"a"} -->\r\n`;
+  const result = scanStructuredVault([
+    file("Projects/Launch.md", projectSource),
+    file("tasks.md", taskSource),
+  ]);
+  assert.equal(result.snapshot.projects[0]?.id, projectId);
+  assert.equal(result.snapshot.tasks[0]?.id, taskId);
+  const projectPatched = base64ToText(
+    result.bootstrapChanges.find((change) => change.relativePath === "Projects/Launch.md")!.replacementBase64,
+  );
+  const taskPatched = base64ToText(
+    result.bootstrapChanges.find((change) => change.relativePath === "tasks.md")!.replacementBase64,
+  );
+  assert.match(projectPatched, new RegExp(`id: ${projectId}`));
+  assert.doesNotMatch(projectPatched, /publisher_id/);
+  assert.match(taskPatched, /<!-- second-brain-task:/);
+  assert.doesNotMatch(taskPatched, /publisher-task:/);
+  assert.match(taskPatched, /⏳ 2026-08-15/);
+});
+
+test("already-canonical markers and ids are not rewritten on scan", () => {
+  const projectSource = `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Launch\r\n`;
+  const taskSource = `- [ ] #task Timed ⏳ 2026-08-15 <!-- second-brain-task:{"id":"${taskId}","status":"todo","rank":"a"} -->\r\n`;
+  const result = scanStructuredVault([
+    file("Projects/Launch.md", projectSource),
+    file("tasks.md", taskSource),
+  ]);
+  assert.equal(result.snapshot.projects[0]?.id, projectId);
+  assert.equal(result.snapshot.tasks[0]?.id, taskId);
+  assert.equal(result.bootstrapChanges.length, 0);
 });

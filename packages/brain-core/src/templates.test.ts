@@ -69,9 +69,11 @@ test("first-run samples add a project, today's visible task, and a collection", 
   const collection = files["Collections/寫作素材.md"];
   assert.ok(project, "sample project lives under Projects/");
   assert.ok(collection, "sample collection lives under Collections/");
-  assert.match(project, /^---\ntype: project\npublisher_id: 00000000-0000-4000-8000-[0-9a-f]{12}/m);
-  assert.match(collection, /^---\ntype: collection\npublisher_id: 00000000-0000-4000-8000-[0-9a-f]{12}/m);
-  assert.match(files["Collections/股票選股分析.md"]!, /^---\ntype: collection\npublisher_id: /m);
+  assert.match(project, /^---\ntype: project\nid: 00000000-0000-4000-8000-[0-9a-f]{12}/m);
+  assert.match(collection, /^---\ntype: collection\nid: 00000000-0000-4000-8000-[0-9a-f]{12}/m);
+  assert.match(files["Collections/股票選股分析.md"]!, /^---\ntype: collection\nid: /m);
+  assert.doesNotMatch(project, /publisher_id/);
+  assert.doesNotMatch(collection, /publisher_id/);
   assert.equal(files["Inbox.md"], undefined);
   assert.equal(files["Personal System.md"], undefined);
   const inbox = files["10-收件匣/待辦收件匣.md"];

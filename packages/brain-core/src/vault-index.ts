@@ -65,15 +65,16 @@ Everything is ordinary Markdown in the vault. The four entity kinds:
   the bottom of the file. Legacy HTML comment blocks are still read, then
   rewritten as indented notes on the next save.
 
-  The trailing \`publisher-task:{...}\` token is a data-format compatibility
-  marker only, not a product dependency.
+  The trailing \`second-brain-task:{...}\` token holds id / status / rank.
+  Legacy \`publisher-task:{...}\` comments are still read and rewritten on the
+  first load.
 
 - **Project** — a file under \`Projects/\` with YAML frontmatter:
 
   \`\`\`
   ---
   type: project
-  publisher_id: <uuid>
+  id: <uuid>
   status: planning        # planning | active | paused | done | archived
   area: <business area>
   priority: <1-3>
@@ -91,7 +92,7 @@ Everything is ordinary Markdown in the vault. The four entity kinds:
   \`\`\`
   ---
   type: collection
-  publisher_id: <uuid>
+  id: <uuid>
   category: 提示詞/投資分析    # category field; 提示詞/* = reusable prompt
   importance: <1-3>
   ---
@@ -332,10 +333,10 @@ function aiInstructions(): string {
      Optional notes as ordinary indented Markdown.
    \`\`\`
 
-   The scanner assigns an id automatically; do not invent \`publisher_id\` values.
+   The scanner assigns an id automatically; do not invent \`id\` values.
    Preserve existing text, BOM, CRLF, indentation and unknown tokens exactly.
 3. To create a project or collection, write a new file under \`Projects/\` or
-   \`Collections/\` with the frontmatter shown above; keep \`publisher_id\` a fresh
+   \`Collections/\` with the frontmatter shown above; keep \`id\` a fresh
    UUID and \`status: planning\` for projects.
 4. Reusable prompts live in \`Collections/\` with \`category: 提示詞/…\`; reuse
    them instead of duplicating guidance.

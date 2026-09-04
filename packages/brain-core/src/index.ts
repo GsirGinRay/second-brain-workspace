@@ -48,6 +48,8 @@ export {
   createCodeFenceTracker,
   endIndexOfTaskBody,
   withVisibleScheduleTokens,
+  canonicalizeTaskMarker,
+  canonicalizeEntityFrontmatterId,
   isManagedTaskId,
   isValidTaskId,
   parseTaskLine,

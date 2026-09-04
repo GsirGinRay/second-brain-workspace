@@ -511,7 +511,7 @@ test("end-to-end: plain box-drag selects month chips and Delete removes them all
     await waitFor(
       () => {
         const content = readFileSync(join(root, "Inbox.md"), "utf8");
-        const remainingMarkers = (content.match(/publisher-task:/g) ?? []).length;
+        const remainingMarkers = (content.match(/(?:publisher-task|second-brain-task):/g) ?? []).length;
         return remainingMarkers === 0;
       },
       6000,

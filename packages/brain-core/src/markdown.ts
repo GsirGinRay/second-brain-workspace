@@ -99,6 +99,23 @@ export function isManagedTaskId(value: unknown): value is string {
   return typeof value === "string" && MANAGED_TASK_ID.test(value);
 }
 
+/** Canonical HTML-comment marker written on task lines. */
+const TASK_MARKER_NAME = "second-brain-task";
+const TASK_MARKER_PATTERN =
+  /<!--\s*(?:publisher-task|second-brain-task):(\{[\s\S]*?\})\s*-->/;
+
+/** Canonical YAML key for project/collection ids. */
+const ENTITY_ID_KEY = "id";
+const LEGACY_ENTITY_ID_KEY = "publisher_id";
+
+/** Rewrite a legacy `publisher-task:` comment to `second-brain-task:`. */
+export function canonicalizeTaskMarker(rawLine: string): string {
+  return rawLine.replace(
+    /(<!--\s*)publisher-task:/g,
+    `$1${TASK_MARKER_NAME}:`,
+  );
+}
+
 const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 
 /**
@@ -299,9 +316,7 @@ function analyzeTaskLine(rawLine: string): TaskLineAnalysis | null {
     : null;
   if (projectSpan) tokenSpans.push(projectSpan);
 
-  const markerMatch = body.match(
-    /<!--\s*publisher-task:(\{[\s\S]*?\})\s*-->/,
-  );
+  const markerMatch = body.match(TASK_MARKER_PATTERN);
   const marker = markerMatch
     ? {
         start: bodyStart + (markerMatch.index ?? 0),
@@ -475,7 +490,9 @@ export function formatTaskLine(task: TaskLineInput): string {
     } : {}),
   };
   parts.push(
-    "<!-- publisher-task:" +
+    "<!-- " +
+      TASK_MARKER_NAME +
+      ":" +
       JSON.stringify(marker) +
       " -->",
   );
@@ -641,7 +658,9 @@ function patchMarker(
         !/\s/u.test(rawLine[tokenInsertionPoint(analysis) - 1])
           ? " "
           : "") +
-        "<!-- publisher-task:" +
+        "<!-- " +
+        TASK_MARKER_NAME +
+        ":" +
         JSON.stringify(values) +
         " -->",
     },
@@ -777,7 +796,8 @@ export function patchTaskLine(
     edits.push({ start: titleStart, end: titleEnd, replacement: desired.title });
   }
 
-  return edits.length ? applyEdits(rawLine, edits) : rawLine;
+  const patched = edits.length ? applyEdits(rawLine, edits) : rawLine;
+  return canonicalizeTaskMarker(patched);
 }
 
 export const patchTaskLineMinimal = patchTaskLine;
@@ -795,6 +815,54 @@ function stringifyScalar(value: string | number | boolean | null): string {
   if (value === null) return "";
   if (typeof value === "boolean") return value ? "true" : "false";
   return String(value);
+}
+
+function readFrontmatterEntityId(
+  values: Map<string, string | number | boolean | null>,
+): string | null {
+  const read = (key: string): string | null => {
+    const value = values.get(key);
+    return typeof value === "string" && value.length > 0 ? value : null;
+  };
+  return read(ENTITY_ID_KEY) ?? read(LEGACY_ENTITY_ID_KEY);
+}
+
+function findFrontmatterKey(
+  lines: string[],
+  closing: number,
+  key: string,
+): number {
+  return lines.findIndex(
+    (candidate, lineIndex) =>
+      lineIndex > 0 &&
+      lineIndex < closing &&
+      candidate.startsWith(key + ":"),
+  );
+}
+
+function renameLegacyEntityIdKey(lines: string[], closing: number): boolean {
+  const legacyIndex = findFrontmatterKey(lines, closing, LEGACY_ENTITY_ID_KEY);
+  if (legacyIndex < 0) return false;
+  const idIndex = findFrontmatterKey(lines, closing, ENTITY_ID_KEY);
+  if (idIndex >= 0) lines.splice(legacyIndex, 1);
+  else {
+    lines[legacyIndex] =
+      ENTITY_ID_KEY + lines[legacyIndex]!.slice(LEGACY_ENTITY_ID_KEY.length);
+  }
+  return true;
+}
+
+/** Rename `publisher_id:` to `id:` in YAML frontmatter. No-op otherwise. */
+export function canonicalizeEntityFrontmatterId(source: string): string {
+  const bom = source.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const content = bom ? source.slice(1) : source;
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  if (lines[0] !== "---") return source;
+  const closing = lines.findIndex((line, index) => index > 0 && line === "---");
+  if (closing < 0) return source;
+  if (!renameLegacyEntityIdKey(lines, closing)) return source;
+  return bom + lines.join(newline);
 }
 
 export function parseProjectFrontmatter(
@@ -817,10 +885,7 @@ export function parseProjectFrontmatter(
   const heading = headingIndex < 0 ? undefined : bodyLines[headingIndex]!.replace(/^#\s+/, "").trim();
   if (!heading) return null;
   return {
-    id:
-      typeof values.get("publisher_id") === "string"
-        ? (values.get("publisher_id") as string)
-        : null,
+    id: readFrontmatterEntityId(values),
     name: heading,
     sourcePath,
     status: String(values.get("status") ?? "active"),
@@ -1113,9 +1178,7 @@ export function parseCollectionFrontmatter(
   const name = bodyLines[headingIndex]!.replace(/^#\s+/, "").trim();
   if (!name) return null;
   return {
-    id: typeof values.get("publisher_id") === "string"
-      ? String(values.get("publisher_id"))
-      : null,
+    id: readFrontmatterEntityId(values),
     name,
     sourcePath,
     category: values.get("category") == null ? null : String(values.get("category")),
@@ -1133,7 +1196,13 @@ export function updateProjectFrontmatter(
   source: string,
   updates: Record<string, string | number | boolean | null>,
 ): string {
-  if (Object.keys(updates).length === 0) return source;
+  source = canonicalizeEntityFrontmatterId(source);
+  const normalized = { ...updates };
+  if (normalized.publisher_id !== undefined) {
+    if (normalized.id === undefined) normalized.id = normalized.publisher_id;
+    delete normalized.publisher_id;
+  }
+  if (Object.keys(normalized).length === 0) return source;
   const bom = source.startsWith("\uFEFF") ? "\uFEFF" : "";
   const content = bom ? source.slice(1) : source;
   const newline = content.includes("\r\n") ? "\r\n" : "\n";
@@ -1141,7 +1210,7 @@ export function updateProjectFrontmatter(
   if (lines[0] !== "---") return source;
   const closing = lines.findIndex((line, index) => index > 0 && line === "---");
   if (closing < 0) return source;
-  for (const [key, value] of Object.entries(updates)) {
+  for (const [key, value] of Object.entries(normalized)) {
     const line = key + ": " + stringifyScalar(value);
     const index = lines.findIndex(
       (candidate, lineIndex) =>
