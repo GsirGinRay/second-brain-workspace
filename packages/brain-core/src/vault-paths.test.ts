@@ -13,7 +13,10 @@ import {
   LEGACY_INBOX_PATH,
   LEGACY_JOURNAL_DIR,
   LEGACY_TEMPLATES_DIR,
+  canonicalKnowledgeWriteDir,
+  collectionMatchesCategoryFilter,
   isContentScanExcludedPath,
+  knowledgeFilterCategories,
   resolveInboxWritePath,
   resolveTodayJournalPath,
 } from "./vault-paths";
@@ -99,5 +102,31 @@ test("today's journal path prefers 日誌/ and can point at legacy 05-每日工�
       "tmp/backup-2026-08-15/日誌.md",
     ]),
     null,
+  );
+});
+
+test("new knowledge writes under 知識/<category>/ including 提示詞 subcategories", () => {
+  assert.equal(canonicalKnowledgeWriteDir("FAQ"), "知識/FAQ");
+  assert.equal(canonicalKnowledgeWriteDir("提示詞"), "知識/提示詞");
+  assert.equal(canonicalKnowledgeWriteDir("提示詞/寫作"), "知識/提示詞");
+  assert.equal(canonicalKnowledgeWriteDir("方法"), "知識/方法");
+  assert.equal(canonicalKnowledgeWriteDir(null), "知識");
+  assert.equal(canonicalKnowledgeWriteDir("參考"), "知識");
+});
+
+test("knowledge category filter keeps unknown and uncategorized notes listable", () => {
+  assert.equal(collectionMatchesCategoryFilter("FAQ", "all"), true);
+  assert.equal(collectionMatchesCategoryFilter(null, "all"), true);
+  assert.equal(collectionMatchesCategoryFilter("參考", "all"), true);
+  assert.equal(collectionMatchesCategoryFilter("FAQ", "FAQ"), true);
+  assert.equal(collectionMatchesCategoryFilter("提示詞/寫作", "FAQ"), false);
+  assert.equal(collectionMatchesCategoryFilter(null, "FAQ"), false);
+  assert.equal(collectionMatchesCategoryFilter("參考", "FAQ"), false);
+  assert.equal(collectionMatchesCategoryFilter("提示詞", "提示詞"), true);
+  assert.equal(collectionMatchesCategoryFilter("提示詞/寫作", "提示詞"), true);
+  assert.equal(collectionMatchesCategoryFilter("參考", "參考"), true);
+  assert.deepEqual(
+    knowledgeFilterCategories(["FAQ", "提示詞/寫作", "參考", null, ""]),
+    ["FAQ", "產業", "社群", "影片", "方法", "提示詞", "參考"],
   );
 });

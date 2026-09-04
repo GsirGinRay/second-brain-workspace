@@ -47,6 +47,9 @@ import {
   renderPluginExport,
   extractPromptVariables,
   fillPromptVariables,
+  KNOWLEDGE_CATEGORIES,
+  collectionMatchesCategoryFilter,
+  knowledgeFilterCategories,
   type BrainProjectSnapshot,
   type BrainCollectionSnapshot,
   type BrainTaskSnapshot,
@@ -106,6 +109,7 @@ import {
   buildCollectionCreateChange,
   buildCollectionDeleteChange,
   buildProjectCreateChange,
+  withRelatedProjectWikilink,
   buildProjectDeleteChanges,
   type LocalMarkdownFile,
   type MarkdownChange,
@@ -763,7 +767,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       }
       if (updateStatus)
         setStatus(
-          `已載入 ${local.tasks.length} 項任務 · ${local.projects.length} 個專案 · ${local.collections.length} 個收藏`,
+          `已載入 ${local.tasks.length} 項任務 · ${local.projects.length} 個專案 · ${local.collections.length} 篇知識`,
         );
       return local;
     },
@@ -1111,7 +1115,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     if (!diagnostics?.selectedVault) {
       const collection: BrainCollectionSnapshot = { schemaVersion: 6, id: crypto.randomUUID(), name: name.trim(), sourcePath: null, category, importance, body };
       await persistLocal(tasks, projects, [...collections, collection]);
-      setStatus("已建立收藏草稿；關閉前請選擇 Markdown 資料夾");
+      setStatus("已建立知識草稿；關閉前請選擇 Markdown 資料夾");
       return true;
     }
     const change = buildCollectionCreateChange(name, category, importance, files.map((file) => file.relativePath), undefined, body);
@@ -1120,10 +1124,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     try {
       await native.applyMarkdownChanges([change]);
       await reloadLocal();
-      setStatus("收藏已建立；內容保留在本機 Markdown");
+      setStatus("知識已建立；內容保留在本機 Markdown");
       return true;
     } catch (cause) {
-      setError(`建立收藏失敗：${describeError(cause, "CREATE_COLLECTION_FAILED")}`);
+      setError(`建立知識失敗：${describeError(cause, "CREATE_COLLECTION_FAILED")}`);
       return false;
     } finally {
       setWorking(false);
@@ -1186,7 +1190,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         }
         if (changes.length > 0) {
           await native.applyMarkdownChanges(changes);
-          setStatus("收藏已刪除 · 等待同步");
+          setStatus("知識已刪除 · 等待同步");
           await reloadLocal();
           if (devicePaired) {
             window.setTimeout(() => void runSync({ background: true }), 50);
@@ -1196,9 +1200,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         await persistLocal(tasks, projects, collections.filter((item) => item.id !== collection.id));
       }
       if (selectedCollectionId === collection.id) setSelectedCollectionId(null);
-      setStatus("收藏已刪除");
+      setStatus("知識已刪除");
     } catch (cause) {
-      setError(`刪除收藏失敗：${describeError(cause, "DELETE_COLLECTION_FAILED")}`);
+      setError(`刪除知識失敗：${describeError(cause, "DELETE_COLLECTION_FAILED")}`);
     } finally {
       setWorking(false);
     }
@@ -1672,7 +1676,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           actions={[
             { label: preferences.language === "zh-TW" ? "快速新增任務" : "Quick add task", run: () => setQuickAddOpen(true) },
             { label: preferences.language === "zh-TW" ? "新增專案" : "New project", run: () => setCreateEntity("project") },
-            { label: preferences.language === "zh-TW" ? "新增收藏" : "New collection", run: () => setCreateEntity("collection") },
+            { label: preferences.language === "zh-TW" ? "新增知識" : "New knowledge", run: () => setCreateEntity("collection") },
             { label: preferences.language === "zh-TW" ? "建立知識架構" : "Build architecture", run: () => setArchitectureOpen(true) },
             { label: t("search.goSettings"), run: () => setView("sync") },
           ]}
@@ -1762,10 +1766,11 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           kind={createEntity}
           initialName={promotedTask?.title ?? ""}
           templates={templates}
+          projects={projects}
           existingCategories={
             createEntity === "project"
               ? [...new Set(projects.map((p) => p.area).filter((a): a is string => Boolean(a)))].sort()
-              : [...new Set(collections.map((c) => c.category).filter((c): c is string => Boolean(c)))].sort()
+              : knowledgeFilterCategories(collections.map((c) => c.category))
           }
           onClose={() => {
             setCreateEntity(null);
@@ -1851,7 +1856,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setImportPromptsOpen(false); }}>
           <section className="modal" role="dialog" aria-modal="true" aria-label="匯入提示詞">
             <div className="modal-header"><div><span className="eyebrow">PROMPT LIBRARY</span><h2>匯入提示詞</h2></div><button className="icon-button" onClick={() => setImportPromptsOpen(false)} aria-label="關閉" title="關閉"><X aria-hidden="true" /></button></div>
-            <p>貼上「AI 提示詞 Plus」擴充匯出的 JSON（物件或純陣列）。每支提示詞會成為一筆「提示詞/…」分類的收藏。</p>
+            <p>貼上「AI 提示詞 Plus」擴充匯出的 JSON（物件或純陣列）。每支提示詞會成為一筆「提示詞/…」分類的知識。</p>
             <textarea className="prompt-json" rows={10} placeholder='{"version":"2.0.7","prompts":[{"name":"…","category":"…","content":"…"}]}' value={importText} onChange={(event) => setImportText(event.target.value)} />
             {importError && <p className="prompt-error" role="alert">{importError}</p>}
             <div className="modal-actions">
@@ -4420,10 +4425,10 @@ function Collections({
   const { t, preferences } = useUiPreferences();
   const [category, setCategory] = useState("all");
   const [importance, setImportance] = useState("all");
-  const categories = [...new Set(collections.map((item) => item.category).filter((item): item is string => Boolean(item)))].sort();
+  const categories = knowledgeFilterCategories(collections.map((item) => item.category));
   const promptCount = collections.filter((item) => (item.category ?? "").trim().toLowerCase().startsWith("提示詞")).length;
   const visible = collections
-    .filter((item) => category === "all" || item.category === category)
+    .filter((item) => collectionMatchesCategoryFilter(item.category, category))
     .filter((item) => importance === "all" || String(item.importance ?? "unset") === importance)
     .sort((left, right) => (left.importance ?? 99) - (right.importance ?? 99) || left.name.localeCompare(right.name));
   const selected = collections.find((item) => item.id === selectedId) ?? null;
@@ -4561,6 +4566,7 @@ function CreateEntityModal({
   initialName,
   templates = [],
   existingCategories = [],
+  projects = [],
   onClose,
   onCreate,
 }: {
@@ -4568,6 +4574,7 @@ function CreateEntityModal({
   initialName: string;
   templates?: { name: string; body: string }[];
   existingCategories?: string[];
+  projects?: BrainProjectSnapshot[];
   onClose: () => void;
   onCreate: (name: string, category: string | null, importance: number | null, body: string) => Promise<void>;
 }) {
@@ -4576,12 +4583,15 @@ function CreateEntityModal({
   const [category, setCategory] = useState("");
   const [importance, setImportance] = useState("");
   const [body, setBody] = useState("");
+  const [relatedProjectId, setRelatedProjectId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submit = async () => {
     if (!name.trim() || name.trim().length > 200 || submitting) return;
     setSubmitting(true);
     try {
-      await onCreate(name.trim(), category.trim() || null, importance ? Number(importance) : null, kind === "project" ? "" : body);
+      const relatedName = projects.find((project) => project.id === relatedProjectId)?.name ?? null;
+      const nextBody = kind === "project" ? "" : withRelatedProjectWikilink(body, relatedName);
+      await onCreate(name.trim(), category.trim() || null, importance ? Number(importance) : null, nextBody);
     } finally {
       setSubmitting(false);
     }
@@ -4589,20 +4599,36 @@ function CreateEntityModal({
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="modal entity-modal" role="dialog" aria-modal="true" aria-label={t(kind === "project" ? "entity.project.title" : "entity.collection.title")}>
-        <div className="modal-header"><div><span className="eyebrow">{kind === "project" ? "OUTCOME" : "REFERENCE"}</span><h2>{t(kind === "project" ? "entity.project.title" : "entity.collection.title")}</h2></div><button className="icon-button" aria-label={t("app.close")} title={t("app.close")} onClick={onClose}><X aria-hidden="true" /></button></div>
+        <div className="modal-header"><div><span className="eyebrow">{kind === "project" ? "OUTCOME" : "KNOWLEDGE"}</span><h2>{t(kind === "project" ? "entity.project.title" : "entity.collection.title")}</h2></div><button className="icon-button" aria-label={t("app.close")} title={t("app.close")} onClick={onClose}><X aria-hidden="true" /></button></div>
         <p className="entity-guidance">{t(kind === "project" ? "entity.project.help" : "entity.collection.help")}</p>
         <label>{t("entity.field.name")}<input autoFocus maxLength={200} value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <label>
-          {t("entity.field.category")}
-          <CategoryInput
-            value={category}
-            existingCategories={existingCategories}
-            listId={`create-entity-${kind}-category`}
-            ariaLabel={t("entity.field.category")}
-            onChange={setCategory}
-          />
-        </label>
+        {kind === "collection" ? (
+          <label>{t("entity.field.category")}<select value={category} onChange={(event) => setCategory(event.target.value)} aria-label={t("entity.field.category")}><option value="">{t("app.uncategorized")}</option>{KNOWLEDGE_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        ) : (
+          <label>
+            {t("entity.field.category")}
+            <CategoryInput
+              value={category}
+              existingCategories={existingCategories}
+              listId={`create-entity-${kind}-category`}
+              ariaLabel={t("entity.field.category")}
+              onChange={setCategory}
+            />
+          </label>
+        )}
         <label>{t("entity.field.importance")}<select value={importance} onChange={(event) => setImportance(event.target.value)}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
+        {kind === "collection" && (
+          <div className="quick-project-field">
+            <span className="quick-field-label">{t("task.field.project")}</span>
+            <ProjectPicker
+              projects={projects}
+              valueId={relatedProjectId}
+              onSelect={(project) => setRelatedProjectId(project?.id ?? null)}
+              locale={preferences.language}
+              ariaLabel={t("task.field.project")}
+            />
+          </div>
+        )}
         {kind === "collection" && templates.length > 0 && (
           <label>{preferences.language === "zh-TW" ? "套用模板" : "Apply template"}<select value="" onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!name.trim()) setName(picked.name); } }}><option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>{templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
         )}

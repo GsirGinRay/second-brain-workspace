@@ -15,7 +15,7 @@ export const CANONICAL_ATTACHMENTS_DIR = "附件";
 export const CANONICAL_TEMPLATES_DIR = "模板";
 export const CANONICAL_AI_DIR = ".ai";
 
-/** Knowledge classification folders. Category UI lands in a later session. */
+/** Knowledge classification folders used by the knowledge UI and write path. */
 export const KNOWLEDGE_CATEGORIES = [
   "FAQ",
   "產業",
@@ -27,8 +27,59 @@ export const KNOWLEDGE_CATEGORIES = [
 
 export type KnowledgeCategory = (typeof KNOWLEDGE_CATEGORIES)[number];
 
-/** New collections write here until category UI exists. Frozen: not 知識/提示詞/. */
+/** Fallback write dir when the category is not one of KNOWLEDGE_CATEGORIES. */
 export const CANONICAL_COLLECTION_WRITE_DIR = CANONICAL_KNOWLEDGE_DIR;
+
+function knowledgeCategoryFolder(
+  category: string | null | undefined,
+): KnowledgeCategory | null {
+  const trimmed = (category ?? "").trim();
+  if (!trimmed) return null;
+  const exact = KNOWLEDGE_CATEGORIES.find((item) => item === trimmed);
+  if (exact) return exact;
+  const slash = trimmed.indexOf("/");
+  if (slash > 0) {
+    const root = trimmed.slice(0, slash);
+    return KNOWLEDGE_CATEGORIES.find((item) => item === root) ?? null;
+  }
+  return null;
+}
+
+/** New knowledge lands in 知識/<FAQ|產業|社群|影片|方法|提示詞>/. */
+export function canonicalKnowledgeWriteDir(
+  category: string | null | undefined,
+): string {
+  const folder = knowledgeCategoryFolder(category);
+  return folder ? `${CANONICAL_KNOWLEDGE_DIR}/${folder}` : CANONICAL_COLLECTION_WRITE_DIR;
+}
+
+/** Filter by a canonical root (FAQ, 提示詞, …) or an exact legacy category. */
+export function collectionMatchesCategoryFilter(
+  category: string | null | undefined,
+  filter: string,
+): boolean {
+  if (filter === "all") return true;
+  const trimmed = (category ?? "").trim();
+  if (!trimmed) return false;
+  if (trimmed === filter) return true;
+  return knowledgeCategoryFolder(trimmed) === filter;
+}
+
+/** Always list the six vault categories, then leftover legacy labels. */
+export function knowledgeFilterCategories(
+  existing: readonly (string | null | undefined)[],
+): string[] {
+  const extras = new Set<string>();
+  for (const cat of existing) {
+    const trimmed = (cat ?? "").trim();
+    if (!trimmed) continue;
+    if (knowledgeCategoryFolder(trimmed) === null) extras.add(trimmed);
+  }
+  return [
+    ...KNOWLEDGE_CATEGORIES,
+    ...[...extras].sort((a, b) => a.localeCompare(b, "zh-Hant-TW")),
+  ];
+}
 
 export const LEGACY_PROJECTS_DIR = "Projects";
 export const LEGACY_COLLECTIONS_DIR = "Collections";

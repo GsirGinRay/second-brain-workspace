@@ -6,6 +6,7 @@ import {
   buildCollectionCreateChange,
   buildCollectionDeleteChange,
   buildProjectCreateChange,
+  withRelatedProjectWikilink,
   buildProjectDeleteChanges,
   scanStructuredVault,
   type LocalMarkdownFile,
@@ -189,6 +190,39 @@ test("project and collection creation use safe unique Markdown paths", () => {
   assert.match(base64ToText(collection.replacementBase64), /type: collection/);
 });
 
+test("new knowledge writes under 知識/<category>/", () => {
+  const faq = buildCollectionCreateChange("常見問題", "FAQ", 1, []);
+  assert.equal(faq.relativePath, "知識/FAQ/常見問題.md");
+  assert.match(base64ToText(faq.replacementBase64), /type: collection/);
+  assert.match(base64ToText(faq.replacementBase64), /category: FAQ/);
+  assert.match(base64ToText(faq.replacementBase64), /importance: 1/);
+
+  const prompt = buildCollectionCreateChange("寫作助手", "提示詞/寫作", 2, ["知識/提示詞/寫作助手.md"]);
+  assert.equal(prompt.relativePath, "知識/提示詞/寫作助手-2.md");
+  assert.match(base64ToText(prompt.replacementBase64), /category: 提示詞\/寫作/);
+});
+
+test("related project wikilink is appended once and left unchanged if already present", () => {
+  assert.equal(withRelatedProjectWikilink("步驟一", "開源發表"), "步驟一\n\n[[開源發表]]");
+  assert.equal(withRelatedProjectWikilink("已有 [[開源發表]]", "開源發表"), "已有 [[開源發表]]");
+  assert.equal(withRelatedProjectWikilink("步驟一", null), "步驟一");
+});
+
+test("related project stays a wikilink in the knowledge body instead of a nested folder", () => {
+  const change = buildCollectionCreateChange(
+    "會議紀錄",
+    "方法",
+    1,
+    [],
+    undefined,
+    "步驟一\n\n[[開源發表]]",
+  );
+  assert.equal(change.relativePath, "知識/方法/會議紀錄.md");
+  assert.match(base64ToText(change.replacementBase64), /\[\[開源發表\]\]/);
+  assert.ok(!change.relativePath.startsWith("專案/"));
+  assert.ok(!change.relativePath.includes("/開源發表/"));
+});
+
 test("new project writes ignore a legacy Projects/ file with the same name", () => {
   const project = buildProjectCreateChange("Launch Q4", "Work", 1, ["Projects/Launch Q4.md"]);
   assert.equal(project.relativePath, "專案/Launch Q4.md");
@@ -214,6 +248,21 @@ test("legacy Collections/ notes still scan as collections", () => {
   const result = scanStructuredVault([file("Collections/Old.md", source)], () => "66666666-6666-4666-8666-666666666666");
   assert.equal(result.snapshot.collections.length, 1);
   assert.equal(result.snapshot.collections[0]?.sourcePath, "Collections/Old.md");
+});
+
+test("legacy Collections/A.md still appears beside categorized knowledge", () => {
+  const legacy = `---\r\ntype: collection\r\nid: 66666666-6666-4666-8666-666666666666\r\ncategory: 參考\r\n---\r\n# 舊檔\r\n`;
+  const faq = `---\r\ntype: collection\r\nid: 77777777-7777-4777-8777-777777777777\r\ncategory: FAQ\r\n---\r\n# 新知識\r\n`;
+  const uncategorized = `---\r\ntype: collection\r\nid: 88888888-8888-4888-8888-888888888888\r\n---\r\n# 未分類舊檔\r\n`;
+  const result = scanStructuredVault([
+    file("Collections/A.md", legacy),
+    file("知識/FAQ/新知識.md", faq),
+    file("Collections/Loose.md", uncategorized),
+  ]);
+  assert.equal(result.snapshot.collections.length, 3);
+  assert.ok(result.snapshot.collections.some((item) => item.sourcePath === "Collections/A.md"));
+  assert.ok(result.snapshot.collections.some((item) => item.sourcePath === "知識/FAQ/新知識.md"));
+  assert.ok(result.snapshot.collections.some((item) => item.sourcePath === "Collections/Loose.md" && !item.category));
 });
 
 test("tmp/backup, templates, and attachments are not indexed even if supplied", () => {

@@ -15,8 +15,8 @@ import {
   withVisibleScheduleTokens,
   canonicalizeTaskMarker,
   canonicalizeEntityFrontmatterId,
-  CANONICAL_COLLECTION_WRITE_DIR,
   CANONICAL_PROJECTS_DIR,
+  canonicalKnowledgeWriteDir,
   isContentScanExcludedPath,
   resolveInboxWritePath,
   type BrainProjectSnapshot,
@@ -182,6 +182,18 @@ export function buildProjectCreateChange(
   };
 }
 
+export function withRelatedProjectWikilink(
+  body: string,
+  projectName: string | null | undefined,
+): string {
+  const name = projectName?.trim();
+  if (!name) return body;
+  const link = `[[${name}]]`;
+  if (body.includes(link)) return body;
+  const trimmed = body.replace(/\s+$/, "");
+  return trimmed ? `${trimmed}\n\n${link}` : link;
+}
+
 export function buildCollectionCreateChange(
   name: string,
   category: string | null,
@@ -206,7 +218,7 @@ export function buildCollectionCreateChange(
     "",
   ].join("\r\n");
   return {
-    relativePath: uniqueMarkdownPath(CANONICAL_COLLECTION_WRITE_DIR, title, existingPaths),
+    relativePath: uniqueMarkdownPath(canonicalKnowledgeWriteDir(normalizedCategory || null), title, existingPaths),
     expectedSha256: EMPTY_SHA256,
     replacementBase64: encodeBase64(encoder.encode(content)),
     operation: "create",

@@ -59,6 +59,21 @@ test("all UI choices round-trip as a complete preference", () => {
   assert.deepEqual(normalizeUiPreferences(JSON.parse(JSON.stringify(value))), value);
 });
 
+test("knowledge view uses 知識 / Knowledge on the menu, title and add button", () => {
+  assert.equal(translate("zh-TW", "view.collections"), "知識");
+  assert.equal(translate("en", "view.collections"), "Knowledge");
+  assert.equal(translate("zh-TW", "view.collections.title"), "知識");
+  assert.equal(translate("en", "view.collections.title"), "Knowledge");
+  assert.equal(translate("zh-TW", "collection.title"), "知識");
+  assert.equal(translate("en", "collection.title"), "Knowledge");
+  assert.equal(translate("zh-TW", "collection.action.add"), "新增知識");
+  assert.equal(translate("en", "collection.action.add"), "Add knowledge");
+  assert.equal(translate("zh-TW", "entity.collection.title"), "新增知識");
+  assert.equal(translate("en", "entity.collection.title"), "Add knowledge");
+  assert.doesNotMatch(translate("en", "view.collections"), /Collection/i);
+  assert.doesNotMatch(translate("en", "collection.action.add"), /Collection/i);
+});
+
 test("empty states use plain-language first actions", () => {
   assert.equal(translate("zh-TW", "today.emptyAction"), "新增第一個任務");
   assert.equal(translate("en", "today.emptyAction"), "Add your first task");
