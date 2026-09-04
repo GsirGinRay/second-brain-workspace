@@ -18,12 +18,12 @@ fn create_path_prepares_missing_safe_parent_directories() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("vault");
     fs::create_dir(&root).unwrap();
-    let target = prepare_path_for_create(&root, Path::new("Collections/Prompts.md")).unwrap();
+    let target = prepare_path_for_create(&root, Path::new("知識/Prompts.md")).unwrap();
     assert_eq!(
         target,
-        root.canonicalize().unwrap().join("Collections/Prompts.md")
+        root.canonicalize().unwrap().join("知識/Prompts.md")
     );
-    assert!(root.join("Collections").is_dir());
+    assert!(root.join("知識").is_dir());
 }
 use second_brain_workspace_lib::scheduler::{SyncCoordinator, SyncTrigger};
 use second_brain_workspace_lib::state::{
@@ -157,11 +157,13 @@ fn path_policy_allows_managed_architecture_paths_but_keeps_them_out_of_scan() {
         ".ai/INSTRUCTIONS.md",
         ".ai/INDEX.md",
         "90-模板/通用專案.md",
+        "模板/通用專案.md",
         "CLAUDE.md",
         "AGENTS.md",
     ] {
         assert!(validate_relative_path(Path::new(path)).is_ok(), "{path}");
     }
+    assert!(validate_relative_path(Path::new("附件/x.png")).is_err());
     // Other hidden / technical names stay rejected.
     for path in [".hidden/x.md", ".obsidian/x.md", "node_modules/x.md"] {
         assert!(validate_relative_path(Path::new(path)).is_err(), "{path}");
@@ -172,10 +174,12 @@ fn path_policy_allows_managed_architecture_paths_but_keeps_them_out_of_scan() {
     fs::create_dir(&root).unwrap();
     fs::create_dir(root.join(".ai")).unwrap();
     fs::create_dir(root.join("90-模板")).unwrap();
+    fs::create_dir(root.join("模板")).unwrap();
     fs::write(root.join("CLAUDE.md"), b"# claude\r\n").unwrap();
     fs::write(root.join("AGENTS.md"), b"# agents\r\n").unwrap();
     fs::write(root.join(".ai").join("INDEX.md"), b"index").unwrap();
     fs::write(root.join("90-模板").join("t.md"), b"t").unwrap();
+    fs::write(root.join("模板").join("t.md"), b"t").unwrap();
     fs::write(root.join("ok.md"), b"# ok\r\n").unwrap();
     let result = scan_markdown(&root, ScanLimits::default(), &|| false).unwrap();
     assert_eq!(result.files.len(), 1);
@@ -188,12 +192,15 @@ fn managed_subfolder_resolves_only_known_folders() {
     let root = dir.path().join("vault");
     fs::create_dir(&root).unwrap();
     fs::create_dir(root.join("90-模板")).unwrap();
+    fs::create_dir(root.join("模板")).unwrap();
     fs::create_dir(root.join(".ai")).unwrap();
     assert!(managed_subfolder(&root, "90-模板").is_ok());
+    assert!(managed_subfolder(&root, "模板").is_ok());
     assert!(managed_subfolder(&root, ".ai").is_ok());
     assert!(managed_subfolder(&root, "Projects").is_err());
     assert!(managed_subfolder(&root, "../escape").is_err());
     assert!(validate_relative_path(Path::new("90-模板/通用專案.md")).is_ok());
+    assert!(validate_relative_path(Path::new("模板/通用專案.md")).is_ok());
 }
 
 #[test]
@@ -210,6 +217,41 @@ fn markdown_scan_excludes_technical_dirs_and_enforces_limits() {
     let result = scan_markdown(&root, ScanLimits::default(), &|| false).unwrap();
     assert_eq!(result.files.len(), 1);
     assert_eq!(result.files[0].relative_path, Path::new("ok.md"));
+}
+
+#[test]
+fn markdown_scan_skips_templates_attachments_tmp_backup_but_reads_legacy_projects() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join("Projects")).unwrap();
+    fs::create_dir(root.join("專案")).unwrap();
+    fs::create_dir(root.join("模板")).unwrap();
+    fs::create_dir(root.join("附件")).unwrap();
+    fs::create_dir(root.join("tmp")).unwrap();
+    fs::create_dir(root.join("tmp").join("backup-2026-08-15")).unwrap();
+    fs::write(root.join("Projects").join("A.md"), b"# A\r\n").unwrap();
+    fs::write(root.join("專案").join("B.md"), b"# B\r\n").unwrap();
+    fs::write(root.join("模板").join("t.md"), b"# t\r\n").unwrap();
+    fs::write(root.join("附件").join("note.md"), b"# n\r\n").unwrap();
+    fs::write(
+        root.join("tmp").join("backup-2026-08-15").join("old.md"),
+        b"# old\r\n",
+    )
+    .unwrap();
+    let result = scan_markdown(&root, ScanLimits::default(), &|| false).unwrap();
+    let paths: Vec<_> = result
+        .files
+        .iter()
+        .map(|file| file.relative_path.clone())
+        .collect();
+    assert!(paths.contains(&PathBuf::from("Projects/A.md")) || paths.iter().any(|path| path.ends_with("A.md")));
+    assert!(paths.iter().any(|path| path.ends_with("B.md")));
+    assert_eq!(paths.len(), 2);
+    assert!(paths.iter().all(|path| {
+        let text = path.to_string_lossy();
+        !text.contains("backup") && !text.contains("模板") && !text.contains("附件") && !text.contains("tmp")
+    }));
 }
 
 #[test]

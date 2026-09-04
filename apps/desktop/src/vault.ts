@@ -15,6 +15,10 @@ import {
   withVisibleScheduleTokens,
   canonicalizeTaskMarker,
   canonicalizeEntityFrontmatterId,
+  CANONICAL_COLLECTION_WRITE_DIR,
+  CANONICAL_PROJECTS_DIR,
+  isContentScanExcludedPath,
+  resolveInboxWritePath,
   type BrainProjectSnapshot,
   type BrainCollectionSnapshot,
   type BrainTaskSnapshot,
@@ -62,7 +66,6 @@ export interface StructuredVaultScan {
   warnings: ScanWarning[];
 }
 
-const INBOX_PATH = "10-收件匣/待辦收件匣.md";
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
 const TASK_CONTENT_START = /^\s*<!-- second-brain-task-content:[0-9a-f-]{36}:start -->\s*$/i;
@@ -172,7 +175,7 @@ export function buildProjectCreateChange(
     "",
   ].join("\r\n");
   return {
-    relativePath: uniqueMarkdownPath("Projects", title, existingPaths),
+    relativePath: uniqueMarkdownPath(CANONICAL_PROJECTS_DIR, title, existingPaths),
     expectedSha256: EMPTY_SHA256,
     replacementBase64: encodeBase64(encoder.encode(content)),
     operation: "create",
@@ -203,7 +206,7 @@ export function buildCollectionCreateChange(
     "",
   ].join("\r\n");
   return {
-    relativePath: uniqueMarkdownPath("Collections", title, existingPaths),
+    relativePath: uniqueMarkdownPath(CANONICAL_COLLECTION_WRITE_DIR, title, existingPaths),
     expectedSha256: EMPTY_SHA256,
     replacementBase64: encodeBase64(encoder.encode(content)),
     operation: "create",
@@ -223,15 +226,16 @@ export function scanStructuredVault(
   files: LocalMarkdownFile[],
   createId: () => string = () => crypto.randomUUID(),
 ): StructuredVaultScan {
+  const scannedFiles = files.filter((file) => !isContentScanExcludedPath(file.relativePath));
   const tasks: BrainTaskSnapshot[] = [];
   const projects: BrainProjectSnapshot[] = [];
   const collections: BrainCollectionSnapshot[] = [];
   const warnings: ScanWarning[] = [];
   const seenTaskIds = new Set<string>();
-  const sources = new Map(files.map((file) => [file.relativePath, decodeFile(file)]));
+  const sources = new Map(scannedFiles.map((file) => [file.relativePath, decodeFile(file)]));
   const changedSources = new Map<string, string>();
 
-  for (const file of files) {
+  for (const file of scannedFiles) {
     const source = sources.get(file.relativePath)!;
     const project = parseProjectFrontmatter(source, file.relativePath);
     if (project) {
@@ -262,7 +266,7 @@ export function scanStructuredVault(
   assertUnique(collections.map((collection) => collection.id), "DUPLICATE_COLLECTION_ID");
   const projectIdByName = new Map(projects.map((project) => [project.name, project.id]));
 
-  for (const file of files) {
+  for (const file of scannedFiles) {
     let source = sources.get(file.relativePath)!;
     const lines = splitLines(source);
     let insideTaskContent = false;
@@ -349,10 +353,10 @@ export function scanStructuredVault(
       tasks,
       projects,
       collections,
-      fileHashes: Object.fromEntries(files.map((file) => [file.relativePath, file.sha256])),
+      fileHashes: Object.fromEntries(scannedFiles.map((file) => [file.relativePath, file.sha256])),
     },
     bootstrapChanges: [...changedSources].map(([relativePath, replacement]) =>
-      makeChange(files.find((file) => file.relativePath === relativePath)!, replacement)),
+      makeChange(scannedFiles.find((file) => file.relativePath === relativePath)!, replacement)),
     warnings,
   };
 }
@@ -506,29 +510,30 @@ export function applyDesiredSnapshot(
 
   const missingTasks = desired.tasks.filter((task) => task.id && !locations.has(task.id));
   if (missingTasks.length > 0) {
-    const inbox = byPath.get(INBOX_PATH);
-    let source = inbox ? currentSources.get(INBOX_PATH)! : "# 待辦收件匣\r\n\r\n## 新增 Task\r\n";
+    const inboxPath = resolveInboxWritePath([...byPath.keys()]);
+    const inbox = byPath.get(inboxPath);
+    let source = inbox ? currentSources.get(inboxPath)! : "# 待辦\r\n\r\n## 新增 Task\r\n";
     const newline = source.includes("\r\n") ? "\r\n" : "\n";
     for (const task of missingTasks) {
       if (source.includes(`\"id\":\"${task.id}\"`)) continue;
       if (!source.endsWith("\n")) source += newline;
-      source += formatTaskLine({ ...task, sourcePath: INBOX_PATH }) + newline;
+      source += formatTaskLine({ ...task, sourcePath: inboxPath }) + newline;
       if (task.body) source = patchTaskMarkdownContent(source, task.id!, task.body);
     }
     if (!inbox) {
       return [
         ...[...changed].sort().map((relativePath) => makeChange(byPath.get(relativePath)!, currentSources.get(relativePath)!)),
         {
-          relativePath: INBOX_PATH,
+          relativePath: inboxPath,
           expectedSha256: EMPTY_SHA256,
           replacementBase64: encodeBase64(encoder.encode(source)),
           operation: "create" as const,
         },
       ];
     }
-    if (source !== currentSources.get(INBOX_PATH)) {
-      currentSources.set(INBOX_PATH, source);
-      changed.add(INBOX_PATH);
+    if (source !== currentSources.get(inboxPath)) {
+      currentSources.set(inboxPath, source);
+      changed.add(inboxPath);
     }
   }
 

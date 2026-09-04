@@ -360,7 +360,7 @@ fn read_markdown_files(
 }
 
 /// List Markdown files under a managed, scan-excluded subfolder (`.ai`,
-/// `90-模板`). Used to enumerate templates and AI handoff files.
+/// `模板`, `90-模板`). Used to enumerate templates and AI handoff files.
 #[tauri::command]
 fn list_managed_files(
     folder: String,

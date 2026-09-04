@@ -5,15 +5,22 @@
  * three teaching tasks, and a neutral collection). Packs are opt-in later;
  * projects and knowledge are selected by default. Packs are:
  *
- * - "knowledge"  個人知識庫   -> Collections/ (references)
- * - "projects"   專案管理     -> intake inbox (10-收件匣)
- * - "prompts"    提示詞庫     -> Prompts/ + a sample reusable prompt
+ * - "knowledge"  個人知識庫   -> 知識/ (references; category folders later)
+ * - "projects"   專案管理     -> 專案/ + 收件匣/待辦.md
+ * - "prompts"    提示詞庫     -> 知識/提示詞/ + sample reusable prompts
  * - "ai"         AI 委任架構  -> .ai/INSTRUCTIONS.md + entry files + INDEX
- * - "templates"  模板套件     -> 90-模板/ starter entity templates
+ * - "templates"  模板套件     -> 模板/ starter entity templates
  *
  * The desktop app turns the resulting file map into atomic `create` changes and
  * skips any file that already exists (checked via readMarkdownFiles).
  */
+
+import {
+  CANONICAL_INBOX_PATH,
+  CANONICAL_KNOWLEDGE_DIR,
+  CANONICAL_PROJECTS_DIR,
+  CANONICAL_TEMPLATES_DIR,
+} from "./vault-paths";
 
 export type TemplatePackId =
   | "knowledge"
@@ -51,15 +58,15 @@ const INSTRUCTIONS = `# Second Brain — INSTRUCTIONS（正本 / Canonical）
 ## 讀取順序（Read order for AI）
 
 1. 先閱讀本檔（.ai/INSTRUCTIONS.md）——這是作者的規則。
-2. 再閱讀 .ai/INDEX.md——裡面有目前的專案／任務／收藏清單與編碼規格。
-3. 依索引操作：做專案管理、維護任務清單；變數與重用內容放 Collections 的「提示詞」分類。
+2. 再閱讀 .ai/INDEX.md——裡面有目前的專案／任務／知識清單與編碼規格。
+3. 依索引操作：做專案管理、維護任務清單；變數與重用內容放 知識/ 的「提示詞」分類。
 
 ## 準則（Rules）
 
 - 保留未知符號、BOM、CRLF 與縮排；不要重排與你無關的內容。
 - 不要上傳 Markdown 正文；在本機就地編輯。
 - 任務可用一行 \`- [ ] #task 標題 [[專案名]] ⏳ YYYY-MM-DD ⏰ HH:MM ⏱ 30m\` 表示；詳細筆記縮排寫在該行下面，Obsidian 與 AI 都看得到。
-- 專案與收藏用 YAML frontmatter（type: project / collection）放在 Projects/ 與 Collections/。
+- 專案與知識用 YAML frontmatter（type: project / collection）放在 專案/ 與 知識/。
 - 可重用提示詞的 category 請以 \`提示詞/\` 開頭，例如 \`提示詞/會議紀錄\`。
 `;
 
@@ -113,14 +120,14 @@ importance: 1
 可直接改名或刪除這則範例。
 `;
 
-const PROMPTS_README = `# Prompts（提示詞庫）
+const PROMPTS_README = `# 提示詞
 
-建立可重用的提示詞時，請在收藏中建立 \`type: collection\`，並將 \`category\` 設為
+建立可重用的提示詞時，請在知識庫中建立 \`type: collection\`，並將 \`category\` 設為
 \`提示詞/<子類別>\`（例如 \`提示詞/會議紀錄\`）。提示詞正文可包含 \`[變數]\` 佔位符，
-供複製或插入時填寫。此資料夾暫存提示詞相關的參考與備註。
+供複製或插入時填寫。
 `;
 
-const INBOX = `# 待辦收件匣
+const INBOX = `# 待辦
 
 未排程的想法先放這裡。可在 App 的今日／日曆中把想法拖曳到日期以排程。
 `;
@@ -143,17 +150,17 @@ ai_hint: 通用專案模板，包含背景、目標與下一步。
 - [ ] 拆解第一個可交付成果
 `;
 
-const PROJECTS_README = `# Projects
+const PROJECTS_README = `# 專案
 
 存放有明確成果、需要多個行動的專案。每個專案是一個 Markdown 檔，使用
 \`type: project\` frontmatter（status / area / priority / progress / focus_today / dates）。
 `;
 
-const COLLECTIONS_README = `# Collections
+const KNOWLEDGE_README = `# 知識
 
-存放會重複查閱的參考資料與可重用提示詞。每個收藏是一個 Markdown 檔，使用
-\`type: collection\` frontmatter（category / importance）。提示詞請用
-\`category: 提示詞/…\`，例如 \`提示詞/會議紀錄\`。
+存放會重複查閱的參考資料與可重用提示詞。每個知識檔是一個 Markdown 檔，使用
+\`type: collection\` frontmatter（category / importance）。分類資料夾之後可再細分：
+FAQ、產業、社群、影片、方法、提示詞。提示詞請用 \`category: 提示詞/…\`。
 `;
 
 export const TEMPLATE_PACKS: ReadonlyArray<TemplatePack> = [
@@ -162,8 +169,8 @@ export const TEMPLATE_PACKS: ReadonlyArray<TemplatePack> = [
     label: "專案管理",
     description: "建立專案資料夾與待辦收件匣，立刻開始排程與看板。",
     files: {
-      "10-收件匣/待辦收件匣.md": INBOX,
-      "Projects/README.md": PROJECTS_README,
+      [CANONICAL_INBOX_PATH]: INBOX,
+      [`${CANONICAL_PROJECTS_DIR}/README.md`]: PROJECTS_README,
     },
   },
   {
@@ -171,7 +178,7 @@ export const TEMPLATE_PACKS: ReadonlyArray<TemplatePack> = [
     label: "個人知識庫",
     description: "建立收藏資料夾，集中參考資料與長期知識。",
     files: {
-      "Collections/README.md": COLLECTIONS_README,
+      [`${CANONICAL_KNOWLEDGE_DIR}/README.md`]: KNOWLEDGE_README,
     },
   },
   {
@@ -180,9 +187,9 @@ export const TEMPLATE_PACKS: ReadonlyArray<TemplatePack> = [
     description: "之後需要再加。附會議紀錄與寫作大綱範例，作為可重用提示詞的起點。",
     defaultSelected: false,
     files: {
-      "Prompts/README.md": PROMPTS_README,
-      "Collections/會議紀錄.md": MEETING_PROMPT,
-      "Collections/寫作大綱.md": OUTLINE_PROMPT,
+      [`${CANONICAL_KNOWLEDGE_DIR}/提示詞/README.md`]: PROMPTS_README,
+      [`${CANONICAL_KNOWLEDGE_DIR}/提示詞/會議紀錄.md`]: MEETING_PROMPT,
+      [`${CANONICAL_KNOWLEDGE_DIR}/提示詞/寫作大綱.md`]: OUTLINE_PROMPT,
     },
   },
   {
@@ -200,10 +207,10 @@ export const TEMPLATE_PACKS: ReadonlyArray<TemplatePack> = [
   {
     id: "templates",
     label: "模板套件",
-    description: "之後需要再加。建立 90-模板 資料夾與一張範例專案模板，之後可一鍵套用。",
+    description: "之後需要再加。建立 模板 資料夾與一張範例專案模板，之後可一鍵套用。",
     defaultSelected: false,
     files: {
-      "90-模板/通用專案.md": TEMPLATE_PROJECT,
+      [`${CANONICAL_TEMPLATES_DIR}/通用專案.md`]: TEMPLATE_PROJECT,
     },
   },
 ];
@@ -244,7 +251,7 @@ function scaffoldSampleFiles(
   const projectId = createId();
   const collectionId = createId();
   return {
-    "Projects/開始使用.md": `---
+    [`${CANONICAL_PROJECTS_DIR}/開始使用.md`]: `---
 type: project
 id: ${projectId}
 status: active
@@ -260,7 +267,7 @@ completed_at:
 
 這是示範專案，用來練習看板、日曆與任務筆記。可直接改名或刪除。
 `,
-    "Collections/以後要查的資料.md": `---
+    [`${CANONICAL_KNOWLEDGE_DIR}/以後要查的資料.md`]: `---
 type: collection
 id: ${collectionId}
 category: 參考
@@ -270,7 +277,7 @@ importance: 2
 
 以後會重複查閱的參考資料放這裡。這則是合成示範，可直接改名或刪除。
 `,
-    "10-收件匣/待辦收件匣.md": `# 待辦收件匣
+    [CANONICAL_INBOX_PATH]: `# 待辦
 
 未排程的想法先放這裡。可在 App 的今日／日曆中把想法拖曳到日期以排程。
 

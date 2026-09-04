@@ -27,9 +27,9 @@ test("scaffoldArchitectureChanges emits create changes only for missing files", 
   assert.ok(paths.includes(".ai/INSTRUCTIONS.md"));
   assert.ok(paths.includes("CLAUDE.md"));
   assert.ok(paths.includes("AGENTS.md"));
-  assert.ok(paths.includes("10-收件匣/待辦收件匣.md"));
-  assert.ok(paths.includes("Collections/會議紀錄.md"));
-  assert.ok(paths.includes("Collections/寫作大綱.md"));
+  assert.ok(paths.includes("收件匣/待辦.md"));
+  assert.ok(paths.includes("知識/提示詞/會議紀錄.md"));
+  assert.ok(paths.includes("知識/提示詞/寫作大綱.md"));
   assert.ok(!paths.includes("Collections/股票選股分析.md"));
   assert.ok(changes.every((change) => change.operation === "create"));
 });
@@ -46,7 +46,7 @@ test("scaffoldArchitectureChanges skips files that already exist (case-insensiti
 test("first-run samples skip an existing inbox and still create missing project files", () => {
   let n = 0;
   const changes = scaffoldArchitectureChanges(
-    ["10-收件匣/待辦收件匣.md"],
+    ["收件匣/待辦.md"],
     TEMPLATE_PACKS.map((pack) => pack.id),
     {
       today: "2026-08-15",
@@ -55,10 +55,10 @@ test("first-run samples skip an existing inbox and still create missing project 
     },
   );
   const paths = changes.map((change) => change.relativePath);
-  assert.ok(!paths.includes("10-收件匣/待辦收件匣.md"));
-  assert.ok(paths.includes("Projects/開始使用.md"));
-  assert.ok(paths.includes("Collections/以後要查的資料.md"));
-  assert.ok(!paths.includes("Projects/開源發表.md"));
+  assert.ok(!paths.includes("收件匣/待辦.md"));
+  assert.ok(paths.includes("專案/開始使用.md"));
+  assert.ok(paths.includes("知識/以後要查的資料.md"));
+  assert.ok(!paths.includes("專案/開源發表.md"));
   assert.ok(!paths.includes("Collections/股票選股分析.md"));
   assert.ok(changes.every((change) => change.operation === "create"));
 });
@@ -74,20 +74,20 @@ test("empty-folder first-run writes only deletable samples, not templates or sto
   assert.deepEqual(
     [...paths].sort(),
     [
-      "10-收件匣/待辦收件匣.md",
-      "Collections/以後要查的資料.md",
-      "Projects/開始使用.md",
+      "收件匣/待辦.md",
+      "知識/以後要查的資料.md",
+      "專案/開始使用.md",
     ].sort(),
   );
   const inbox = decodeBase64(
-    changes.find((change) => change.relativePath === "10-收件匣/待辦收件匣.md")!
+    changes.find((change) => change.relativePath === "收件匣/待辦.md")!
       .replacementBase64,
   );
   assert.equal([...inbox.matchAll(/#task /g)].length, 3);
   assert.match(inbox, /完成這一則/);
   assert.match(inbox, /把它排到今天或日曆/);
   assert.match(inbox, /在任務下面寫一段筆記/);
-  assert.ok(!paths.some((path) => path.startsWith("90-模板/")));
+  assert.ok(!paths.some((path) => path.startsWith("模板/") || path.startsWith("90-模板/")));
   assert.ok(!paths.some((path) => path.startsWith("Prompts/")));
   assert.ok(!paths.includes("CLAUDE.md"));
   assert.ok(!paths.includes("AGENTS.md"));
@@ -100,9 +100,12 @@ test("sample vault uses official folder conventions and visible task Markdown", 
   assert.ok(!rootNames.includes("Inbox.md"));
   assert.ok(!rootNames.includes("Personal System.md"));
   assert.ok(!rootNames.includes("Prompt Library.md"));
-  const project = join(root, "Projects", "Personal System.md");
-  const collection = join(root, "Collections", "Prompt Library.md");
-  const inbox = join(root, "10-收件匣", "待辦收件匣.md");
+  assert.ok(!rootNames.includes("Projects"));
+  assert.ok(!rootNames.includes("Collections"));
+  assert.ok(!rootNames.includes("10-收件匣"));
+  const project = join(root, "專案", "Personal System.md");
+  const collection = join(root, "知識", "Prompt Library.md");
+  const inbox = join(root, "收件匣", "待辦.md");
   assert.ok(existsSync(project));
   assert.ok(existsSync(collection));
   assert.ok(existsSync(inbox));

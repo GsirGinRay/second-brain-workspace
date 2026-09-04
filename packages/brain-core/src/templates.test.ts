@@ -41,14 +41,18 @@ test("scaffold files cover the five packs and merge without collisions", () => {
   assert.ok(files[".ai/INDEX.md"]);
   assert.ok(files["CLAUDE.md"]);
   assert.ok(files["AGENTS.md"]);
-  assert.ok(files["10-收件匣/待辦收件匣.md"]);
-  assert.ok(files["Collections/會議紀錄.md"]);
-  assert.ok(files["Collections/寫作大綱.md"]);
+  assert.ok(files["收件匣/待辦.md"]);
+  assert.ok(files["知識/提示詞/會議紀錄.md"]);
+  assert.ok(files["知識/提示詞/寫作大綱.md"]);
   assert.equal(files["Collections/股票選股分析.md"], undefined);
-  assert.ok(files["90-模板/通用專案.md"]);
-  assert.ok(files["Prompts/README.md"]);
-  assert.ok(files["Projects/README.md"]);
-  assert.ok(files["Collections/README.md"]);
+  assert.ok(files["模板/通用專案.md"]);
+  assert.ok(files["知識/提示詞/README.md"]);
+  assert.ok(files["專案/README.md"]);
+  assert.ok(files["知識/README.md"]);
+  assert.equal(files["10-收件匣/待辦收件匣.md"], undefined);
+  assert.equal(files["Projects/README.md"], undefined);
+  assert.equal(files["Collections/README.md"], undefined);
+  assert.equal(files["90-模板/通用專案.md"], undefined);
 });
 
 test("architecture defaults to projects and knowledge; optional packs can be added later", () => {
@@ -66,8 +70,8 @@ test("architecture defaults to projects and knowledge; optional packs can be add
 
 test("scaffolding only the prompts pack uses generic writing samples, not stock picking", () => {
   const files = scaffoldTemplateFiles(["prompts"]);
-  assert.ok(files["Collections/會議紀錄.md"]);
-  assert.ok(files["Collections/寫作大綱.md"]);
+  assert.ok(files["知識/提示詞/會議紀錄.md"]);
+  assert.ok(files["知識/提示詞/寫作大綱.md"]);
   assert.equal(files["Collections/股票選股分析.md"], undefined);
   assert.equal(files[".ai/INSTRUCTIONS.md"], undefined);
   const joined = Object.values(files).join("\n");
@@ -81,10 +85,10 @@ test("first-run samples are a deletable getting-started project, three teaching 
     samples: true,
     createId: () => `00000000-0000-4000-8000-00000000000${n++}`,
   });
-  const project = files["Projects/開始使用.md"];
-  const collection = files["Collections/以後要查的資料.md"];
-  assert.ok(project, "sample project lives under Projects/");
-  assert.ok(collection, "sample collection lives under Collections/");
+  const project = files["專案/開始使用.md"];
+  const collection = files["知識/以後要查的資料.md"];
+  assert.ok(project, "sample project lives under 專案/");
+  assert.ok(collection, "sample collection lives under 知識/");
   assert.match(project, /^---\ntype: project\nid: 00000000-0000-4000-8000-[0-9a-f]{12}/m);
   assert.match(collection, /^---\ntype: collection\nid: 00000000-0000-4000-8000-[0-9a-f]{12}/m);
   assert.match(project, /可直接改名或刪除/);
@@ -95,11 +99,12 @@ test("first-run samples are a deletable getting-started project, three teaching 
   assert.equal(files["Projects/開源發表.md"], undefined);
   assert.equal(files["Collections/寫作素材.md"], undefined);
   assert.equal(files["Collections/股票選股分析.md"], undefined);
+  assert.equal(files["模板/通用專案.md"], undefined);
   assert.equal(files["90-模板/通用專案.md"], undefined);
   assert.equal(files["Prompts/README.md"], undefined);
   assert.equal(files["CLAUDE.md"], undefined);
   assert.equal(files["AGENTS.md"], undefined);
-  const inbox = files["10-收件匣/待辦收件匣.md"];
+  const inbox = files["收件匣/待辦.md"];
   assert.ok(inbox);
   assert.equal([...inbox.matchAll(/#task /g)].length, 3);
   assert.match(inbox, /完成這一則/);
@@ -118,7 +123,7 @@ test("first-run samples are a deletable getting-started project, three teaching 
 test("first-run samples stay out of the architecture when samples are off", () => {
   const files = scaffoldTemplateFiles(["projects"], { samples: false, today: "2026-08-15" });
   assert.equal(
-    Object.keys(files).some((path) => path.startsWith("Projects/") && path !== "Projects/README.md"),
+    Object.keys(files).some((path) => path.startsWith("專案/") && path !== "專案/README.md"),
     false,
   );
 });

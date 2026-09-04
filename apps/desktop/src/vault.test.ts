@@ -179,14 +179,19 @@ test("scheduling a task that lives inside a project note survives the project bo
 });
 
 test("project and collection creation use safe unique Markdown paths", () => {
-  const project = buildProjectCreateChange("Launch: Q4", "Work", 1, ["Projects/Launch Q4.md"]);
-  assert.equal(project.relativePath, "Projects/Launch Q4-2.md");
+  const project = buildProjectCreateChange("Launch: Q4", "Work", 1, ["專案/Launch Q4.md"]);
+  assert.equal(project.relativePath, "專案/Launch Q4-2.md");
   assert.equal(project.operation, "create");
   assert.match(base64ToText(project.replacementBase64), /status: planning/);
 
   const collection = buildCollectionCreateChange("Prompt/Library", "AI", 2, []);
-  assert.equal(collection.relativePath, "Collections/Prompt Library.md");
+  assert.equal(collection.relativePath, "知識/Prompt Library.md");
   assert.match(base64ToText(collection.replacementBase64), /type: collection/);
+});
+
+test("new project writes ignore a legacy Projects/ file with the same name", () => {
+  const project = buildProjectCreateChange("Launch Q4", "Work", 1, ["Projects/Launch Q4.md"]);
+  assert.equal(project.relativePath, "專案/Launch Q4.md");
 });
 
 test("project and collection creation includes full Markdown body", () => {
@@ -194,6 +199,53 @@ test("project and collection creation includes full Markdown body", () => {
   const collection = buildCollectionCreateChange("Prompt", null, null, [], undefined, "```text\nhello\n```");
   assert.match(base64ToText(project.replacementBase64), /## Goal\r\n\r\nShip it/);
   assert.match(base64ToText(collection.replacementBase64), /```text\r\nhello\r\n```/);
+});
+
+test("legacy Projects/ notes still scan as projects", () => {
+  const source = `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Alpha\r\n`;
+  const result = scanStructuredVault([file("Projects/A.md", source)]);
+  assert.equal(result.snapshot.projects.length, 1);
+  assert.equal(result.snapshot.projects[0]?.name, "Alpha");
+  assert.equal(result.snapshot.projects[0]?.sourcePath, "Projects/A.md");
+});
+
+test("legacy Collections/ notes still scan as collections", () => {
+  const source = `---\r\ntype: collection\r\ncategory: 參考\r\n---\r\n# 舊收藏\r\n`;
+  const result = scanStructuredVault([file("Collections/Old.md", source)], () => "66666666-6666-4666-8666-666666666666");
+  assert.equal(result.snapshot.collections.length, 1);
+  assert.equal(result.snapshot.collections[0]?.sourcePath, "Collections/Old.md");
+});
+
+test("tmp/backup, templates, and attachments are not indexed even if supplied", () => {
+  const project = `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Alpha\r\n`;
+  const result = scanStructuredVault([
+    file("Projects/A.md", project),
+    file("tmp/backup-2026-08-15/A.md", project),
+    file("模板/通用專案.md", "---\r\ntype: template\r\n---\r\n# T\r\n"),
+    file("90-模板/通用專案.md", "---\r\ntype: template\r\n---\r\n# T\r\n"),
+    file("附件/note.md", "# file\r\n"),
+  ]);
+  assert.equal(result.snapshot.projects.length, 1);
+  assert.equal(result.snapshot.projects[0]?.sourcePath, "Projects/A.md");
+  assert.equal(result.snapshot.fileHashes?.["tmp/backup-2026-08-15/A.md"], undefined);
+});
+
+test("new tasks keep writing the legacy inbox when the canonical file is absent", () => {
+  const inboxPath = "10-收件匣/待辦收件匣.md";
+  const files = [file(inboxPath, "# 待辦收件匣\r\n")];
+  const desired = {
+    schemaVersion: 6 as const,
+    tasks: [{
+      schemaVersion: 6 as const, id: taskId, title: "Legacy inbox", status: "todo" as const,
+      taskDate: null, priority: "normal" as const, projectId: null, projectName: null,
+      rank: "a", sourcePath: null, sourceHeading: null, completedAt: null,
+    }],
+    projects: [], collections: [], routineTemplates: [], fileHashes: {},
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  assert.equal(changes[0]?.relativePath, inboxPath);
+  assert.notEqual(changes[0]?.operation, "create");
+  assert.match(base64ToText(changes[0]!.replacementBase64), /Legacy inbox/);
 });
 
 test("desired snapshot creates a beginner inbox when the selected folder is empty", () => {
@@ -209,7 +261,7 @@ test("desired snapshot creates a beginner inbox when the selected folder is empt
   };
   const changes = applyDesiredSnapshot([], desired);
   assert.equal(changes[0]?.operation, "create");
-  assert.equal(changes[0]?.relativePath, "10-收件匣/待辦收件匣.md");
+  assert.equal(changes[0]?.relativePath, "收件匣/待辦.md");
   assert.match(base64ToText(changes[0]!.replacementBase64), /My first Markdown/);
 });
 

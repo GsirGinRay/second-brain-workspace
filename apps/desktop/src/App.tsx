@@ -40,6 +40,7 @@ import {
   rankForIndex,
   TEMPLATE_PACKS,
   DEFAULT_ARCHITECTURE_PACK_IDS,
+  MANAGED_TEMPLATE_DIRS,
   collectionToPrompt,
   parsePluginExport,
   promptToCollection,
@@ -541,7 +542,14 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         return;
       }
       try {
-        const paths = await native.listManagedFiles("90-模板");
+        const paths: string[] = [];
+        for (const folder of MANAGED_TEMPLATE_DIRS) {
+          try {
+            paths.push(...(await native.listManagedFiles(folder)));
+          } catch {
+            // New or legacy template folder may be absent.
+          }
+        }
         if (paths.length === 0) {
           setTemplates([]);
           return;

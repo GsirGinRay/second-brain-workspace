@@ -56,7 +56,7 @@ pub fn validate_relative_path(path: &Path) -> Result<(), NativeError> {
             Component::Normal(value) => {
                 let name = value.to_string_lossy();
                 if !is_managed_component(&name)
-                    && (is_technical_name(&name) || name == "90-模板")
+                    && (is_technical_name(&name) || is_template_dir(&name))
                 {
                     return Err(NativeError::UnsafePath);
                 }
@@ -85,14 +85,14 @@ pub fn validate_vault_root(root: &Path) -> Result<PathBuf, NativeError> {    let
     }
     if let Some(name) = canonical.file_name() {
         let name = name.to_string_lossy();
-        if is_technical_name(&name) || name == "90-模板" || is_hidden(&canonical) {
+        if is_technical_name(&name) || is_template_dir(&name) || is_hidden(&canonical) {
             return Err(NativeError::UnsafePath);
         }
     }
     Ok(canonical)
 }
 
-/// Resolve an allowed managed subfolder (`.ai`, `90-模板`) under the vault root,
+/// Resolve an allowed managed subfolder (`.ai`, `模板`, `90-模板`) under the vault root,
 /// rejecting symlinks/reparse points. Used to enumerate scaffold/template files
 /// that are intentionally excluded from normal scanning.
 pub fn managed_subfolder(root: &Path, sub: &str) -> Result<PathBuf, NativeError> {
@@ -215,13 +215,16 @@ pub fn scan_markdown_with_hook(
             let path = entry.path();
             let metadata = fs::symlink_metadata(&path)?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if is_hidden(&path) || is_technical_name(&name) || name == "90-模板" {
+            if is_hidden(&path) || is_technical_name(&name) {
                 continue;
             }
             if is_reparse_or_symlink(&path, &metadata) {
                 return Err(NativeError::UnsafePath);
             }
             if metadata.is_dir() {
+                if is_content_scan_skipped_dir(&name) {
+                    continue;
+                }
                 stack.push(path);
                 continue;
             }
@@ -291,14 +294,26 @@ fn is_technical_name(name: &str) -> bool {
 
 /// Managed architecture folders/files that the app is explicitly allowed to
 /// create even though they are excluded from Markdown scanning and cloud plans:
-/// the AI handoff folder `.ai/`, the template folder `90-模板/`, and the root
-/// entry files `CLAUDE.md` / `AGENTS.md`. These are exact literal names (no
-/// wildcards); every other traversal/symlink/hidden check still applies.
+/// the AI handoff folder `.ai/`, the template folders `模板/` and `90-模板/`,
+/// and the root entry files `CLAUDE.md` / `AGENTS.md`. These are exact literal
+/// names (no wildcards); every other traversal/symlink/hidden check still applies.
 fn is_managed_component(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        ".ai" | "90-模板" | "claude.md" | "agents.md"
+        ".ai" | "模板" | "90-模板" | "claude.md" | "agents.md"
     )
+}
+
+fn is_template_dir(name: &str) -> bool {
+    name == "模板" || name == "90-模板"
+}
+
+fn is_content_scan_skipped_dir(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    is_template_dir(name)
+        || lower == "附件"
+        || lower == "tmp"
+        || lower.contains("backup")
 }
 
 fn newline_style(bytes: &[u8]) -> NewlineStyle {

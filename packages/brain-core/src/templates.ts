@@ -2,7 +2,8 @@
  * Template instantiation for the Second Brain.
  *
  * Templates are ordinary Markdown (stored under the scanning-excluded
- * `90-模板/` folder) that may contain `{{variable}}` placeholders. Instantiating
+ * `模板/` folder, with legacy `90-模板/` still readable) that may contain
+ * `{{variable}}` placeholders. Instantiating
  * replaces those placeholders with caller-provided values. Callers are
  * responsible for turning the resulting text into a task line, project file or
  * collection file via the existing create-change builders in the desktop app.
@@ -47,7 +48,7 @@ export interface BrainTemplate {
   body: string;
 }
 
-/** Build the Markdown document used to store a template in `90-模板/`. */
+/** Build the Markdown document used to store a template in `模板/`. */
 export function renderTemplateDocument(template: BrainTemplate): string {
   const hint = template.hint?.trim() ? template.hint.trim() : "";
   return [

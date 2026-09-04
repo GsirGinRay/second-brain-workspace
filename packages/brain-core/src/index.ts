@@ -91,6 +91,30 @@ export {
 } from "./scaffold";
 export type { ScaffoldFileOptions, TemplatePack, TemplatePackId } from "./scaffold";
 export {
+  CANONICAL_AI_DIR,
+  CANONICAL_ATTACHMENTS_DIR,
+  CANONICAL_COLLECTION_WRITE_DIR,
+  CANONICAL_INBOX_DIR,
+  CANONICAL_INBOX_FILE,
+  CANONICAL_INBOX_PATH,
+  CANONICAL_JOURNAL_DIR,
+  CANONICAL_KNOWLEDGE_DIR,
+  CANONICAL_PROJECTS_DIR,
+  CANONICAL_TEMPLATES_DIR,
+  KNOWLEDGE_CATEGORIES,
+  LEGACY_COLLECTIONS_DIR,
+  LEGACY_INBOX_DIR,
+  LEGACY_INBOX_FILE,
+  LEGACY_INBOX_PATH,
+  LEGACY_PROJECTS_DIR,
+  LEGACY_TEMPLATES_DIR,
+  MANAGED_TEMPLATE_DIRS,
+  isContentScanExcludedDirName,
+  isContentScanExcludedPath,
+  resolveInboxWritePath,
+} from "./vault-paths";
+export type { KnowledgeCategory } from "./vault-paths";
+export {
   parsePluginExport,
   renderPluginExport,
   promptToCollection,
