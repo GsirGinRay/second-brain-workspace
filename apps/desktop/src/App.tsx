@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Archive,
+  BookOpen,
   CalendarDays,
   CheckCircle2,
   Clock,
@@ -50,6 +51,7 @@ import {
   KNOWLEDGE_CATEGORIES,
   collectionMatchesCategoryFilter,
   knowledgeFilterCategories,
+  resolveDailyJournal,
   type BrainProjectSnapshot,
   type BrainCollectionSnapshot,
   type BrainTaskSnapshot,
@@ -108,6 +110,8 @@ import {
   applyDesiredSnapshot,
   buildCollectionCreateChange,
   buildCollectionDeleteChange,
+  buildJournalCreateChange,
+  buildJournalUpdateChange,
   buildProjectCreateChange,
   withRelatedProjectWikilink,
   buildProjectDeleteChanges,
@@ -286,6 +290,11 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [activeDetailKey, setActiveDetailKey] = useState<string | null>(null);
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
   const [createEntity, setCreateEntity] = useState<"project" | "collection" | null>(null);
+  const [journalOpen, setJournalOpen] = useState<{
+    dateKey: string;
+    relativePath: string;
+    content: string;
+  } | null>(null);
   const [promotedTask, setPromotedTask] = useState<BrainTaskSnapshot | null>(null);
   const [routineTemplate, setRoutineTemplate] = useState<RoutineTemplate>(() => createDefaultRoutineTemplate(crypto.randomUUID()));
   const [files, setFiles] = useState<LocalMarkdownFile[]>([]);
@@ -1134,6 +1143,72 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     }
   }
 
+  async function openTodayJournal(): Promise<void> {
+    const dateKey = taipeiDateKey();
+    if (!diagnostics?.selectedVault) {
+      setStatus(t("today.journal.needFolder"));
+      return;
+    }
+    setWorking(true);
+    setError("");
+    try {
+      let currentFiles = latestFilesRef.current.length ? latestFilesRef.current : files;
+      const created = buildJournalCreateChange(
+        dateKey,
+        currentFiles.map((file) => file.relativePath),
+      );
+      if (created) {
+        await native.applyMarkdownChanges([created]);
+        const local = await reloadLocal();
+        currentFiles = local?.files ?? currentFiles;
+      }
+      const resolved = resolveDailyJournal(
+        dateKey,
+        currentFiles.map((file) => file.relativePath),
+      );
+      const file = currentFiles.find(
+        (item) => item.relativePath.replace(/\\/g, "/") === resolved.relativePath,
+      );
+      const content = file
+        ? decodeBase64(file.bytesBase64)
+        : created
+          ? decodeBase64(created.replacementBase64)
+          : "";
+      setJournalOpen({
+        dateKey,
+        relativePath: resolved.relativePath,
+        content,
+      });
+      if (created) setStatus(t("today.journal.created"));
+    } catch (cause) {
+      setError(`開啟日誌失敗：${describeError(cause, "OPEN_JOURNAL_FAILED")}`);
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function saveJournal(content: string): Promise<void> {
+    if (!journalOpen) return;
+    setWorking(true);
+    setError("");
+    try {
+      const snapshot = await reloadLocal();
+      const currentFiles = snapshot?.files ?? latestFilesRef.current;
+      const file = currentFiles.find(
+        (item) => item.relativePath.replace(/\\/g, "/") === journalOpen.relativePath,
+      );
+      if (!file) throw new Error("JOURNAL_SOURCE_NOT_FOUND");
+      await native.applyMarkdownChanges([buildJournalUpdateChange(file, content)]);
+      await reloadLocal();
+      setJournalOpen({ ...journalOpen, content });
+      setStatus(t("today.journal.saved"));
+    } catch (cause) {
+      setError(`儲存日誌失敗：${describeError(cause, "SAVE_JOURNAL_FAILED")}`);
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function permanentlyDeleteProject(project: BrainProjectSnapshot): Promise<void> {
     // The delete control that invoked this already confirmed in a dialog.
     if (!project.id) return;
@@ -1433,6 +1508,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onDelete={permanentlyDeleteTask}
         onOpenTask={(id) => openDetail("task", id)}
         onQuickAdd={() => setQuickAddOpen(true)}
+        onOpenJournal={() => void openTodayJournal()}
         routineTemplate={routineTemplate}
         onRoutineTemplateChange={saveRoutineTemplate}
       />
@@ -1785,6 +1861,16 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
               setPromotedTask(null);
             }
           }}
+        />
+      )}
+      {journalOpen && (
+        <JournalDialog
+          dateKey={journalOpen.dateKey}
+          relativePath={journalOpen.relativePath}
+          content={journalOpen.content}
+          working={working}
+          onSave={(content) => void saveJournal(content)}
+          onClose={() => setJournalOpen(null)}
         />
       )}
       {architectureOpen && (
@@ -2195,10 +2281,71 @@ function TaskActionBar({
   );
 }
 
-export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onOpenTask, onQuickAdd, routineTemplate, onRoutineTemplateChange }: {
+function JournalDialog({
+  dateKey,
+  relativePath,
+  content,
+  working,
+  onSave,
+  onClose,
+}: {
+  dateKey: string;
+  relativePath: string;
+  content: string;
+  working: boolean;
+  onSave: (content: string) => void;
+  onClose: () => void;
+}) {
+  const { t, preferences } = useUiPreferences();
+  const [value, setValue] = useState(content);
+  const dirty = value !== content;
+  const requestClose = () => {
+    if (
+      dirty &&
+      !window.confirm(
+        preferences.language === "zh-TW" ? "放棄尚未儲存的變更？" : "Discard unsaved changes?",
+      )
+    ) {
+      return;
+    }
+    onClose();
+  };
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) requestClose();
+      }}
+    >
+      <section className="modal journal-modal" role="dialog" aria-modal="true" aria-label={t("today.journal")}>
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">{t("today.journal")}</span>
+            <h2>{dateKey}</h2>
+          </div>
+          <button className="icon-button" onClick={requestClose} aria-label={t("app.close")} title={t("app.close")}>
+            <X aria-hidden="true" />
+          </button>
+        </div>
+        <p>{t("today.journal.hint")}</p>
+        <small className="journal-path">{relativePath}</small>
+        <MarkdownEditor value={value} onChange={setValue} locale={preferences.language} minRows={16} />
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={requestClose}>{t("app.cancel")}</button>
+          <button className="primary action-with-icon" disabled={working || !dirty} onClick={() => onSave(value)}>
+            <Save aria-hidden="true" />{t("app.save")}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onOpenTask, onQuickAdd, onOpenJournal, routineTemplate, onRoutineTemplateChange }: {
   tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; showCompleted: boolean;
   onShowCompletedChange: (value: boolean) => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onOpenTask: (taskId: string) => void; onQuickAdd: () => void;
+  onOpenJournal?: () => void;
   routineTemplate: RoutineTemplate; onRoutineTemplateChange: (template: RoutineTemplate) => void;
 }) {
   const { t, preferences } = useUiPreferences();
@@ -2269,7 +2416,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     return () => window.removeEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
   });
   return <section className="command-center">
-    <header className="command-hero"><div><span className="eyebrow">{t("today.eyebrow", { date: today })}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
+    <header className="command-hero"><div><span className="eyebrow">{t("today.eyebrow", { date: today })}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => onOpenJournal?.()} aria-label={t("today.journal")}><BookOpen />{t("today.journal")}</button><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
     <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article></div>
     {groups.today.length === 0 && groups.overdue.length === 0 && (

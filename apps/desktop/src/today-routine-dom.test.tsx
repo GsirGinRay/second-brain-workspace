@@ -77,6 +77,18 @@ function startDay(rendered: Rendered) {
   });
 }
 
+test("today view exposes a button to open today's journal", () => {
+  const rendered = renderToday([], createDefaultRoutineTemplate("t"));
+  try {
+    const button = [...rendered.container.querySelectorAll("button")]
+      .find((el) => el.textContent?.includes("今天的日誌"));
+    assert.ok(button, "today's journal button is rendered");
+    assert.equal(button?.getAttribute("aria-label"), "今天的日誌");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
 test("starting the day from a template with several P1 rows saves exactly one P1", () => {
   const template = createDefaultRoutineTemplate("11111111-1111-4111-8111-111111111111");
   template.items[0]!.priority = "highest";

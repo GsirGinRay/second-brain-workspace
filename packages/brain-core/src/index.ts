@@ -115,11 +115,19 @@ export {
   MANAGED_TEMPLATE_DIRS,
   isContentScanExcludedDirName,
   isContentScanExcludedPath,
+  isJournalNotePath,
+  journalNoteDateKey,
+  resolveDailyJournal,
   resolveInboxWritePath,
   resolveTodayJournalPath,
   canonicalJournalPath,
 } from "./vault-paths";
-export type { KnowledgeCategory } from "./vault-paths";
+export type { DailyJournalRef, KnowledgeCategory } from "./vault-paths";
+export {
+  DAILY_JOURNAL_HEADINGS,
+  renderDailyJournalDocument,
+} from "./journal";
+export type { DailyJournalHeading } from "./journal";
 export {
   parsePluginExport,
   renderPluginExport,

@@ -16,7 +16,10 @@ import {
   canonicalKnowledgeWriteDir,
   collectionMatchesCategoryFilter,
   isContentScanExcludedPath,
+  isJournalNotePath,
+  journalNoteDateKey,
   knowledgeFilterCategories,
+  resolveDailyJournal,
   resolveInboxWritePath,
   resolveTodayJournalPath,
 } from "./vault-paths";
@@ -102,6 +105,45 @@ test("today's journal path prefers 日誌/ and can point at legacy 05-每日工�
       "tmp/backup-2026-08-15/日誌.md",
     ]),
     null,
+  );
+});
+
+test("only YYYY-MM-DD notes under 日誌/ or 05-每日工作台/ count as journals", () => {
+  assert.equal(isJournalNotePath("日誌/2026-08-15.md"), true);
+  assert.equal(isJournalNotePath("05-每日工作台/2026-08-15.md"), true);
+  assert.equal(journalNoteDateKey("日誌/2026-08-15.md"), "2026-08-15");
+  assert.equal(journalNoteDateKey("05-每日工作台/2026-08-15.md"), "2026-08-15");
+  assert.equal(isJournalNotePath("日誌/README.md"), false);
+  assert.equal(isJournalNotePath("日誌/2026-08-15-notes.md"), false);
+  assert.equal(isJournalNotePath("日誌/2026-13-40.md"), false);
+  assert.equal(isJournalNotePath("專案/2026-08-15.md"), false);
+  assert.equal(isJournalNotePath("tmp/backup/日誌/2026-08-15.md"), false);
+  assert.equal(journalNoteDateKey("知識/2026-08-15.md"), null);
+});
+
+test("new journal writes always target 日誌/ for that date, never another day", () => {
+  assert.deepEqual(resolveDailyJournal("2026-08-15", []), {
+    relativePath: "日誌/2026-08-15.md",
+    exists: false,
+  });
+  assert.deepEqual(
+    resolveDailyJournal("2026-08-15", ["日誌/2026-08-16.md"]),
+    { relativePath: "日誌/2026-08-15.md", exists: false },
+  );
+  assert.deepEqual(
+    resolveDailyJournal("2026-08-16", ["日誌/2026-08-15.md"]),
+    { relativePath: "日誌/2026-08-16.md", exists: false },
+  );
+  assert.deepEqual(
+    resolveDailyJournal("2026-08-15", ["05-每日工作台/2026-08-15.md"]),
+    { relativePath: "05-每日工作台/2026-08-15.md", exists: true },
+  );
+  assert.deepEqual(
+    resolveDailyJournal("2026-08-15", [
+      "05-每日工作台/2026-08-15.md",
+      "日誌/2026-08-15.md",
+    ]),
+    { relativePath: "日誌/2026-08-15.md", exists: true },
   );
 });
 

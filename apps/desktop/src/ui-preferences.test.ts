@@ -74,6 +74,14 @@ test("knowledge view uses 知識 / Knowledge on the menu, title and add button",
   assert.doesNotMatch(translate("en", "collection.action.add"), /Collection/i);
 });
 
+test("today journal labels stay in the Today view, not a new menu item", () => {
+  assert.equal(translate("zh-TW", "today.journal"), "今天的日誌");
+  assert.equal(translate("en", "today.journal"), "Today's journal");
+  assert.equal(translate("zh-TW", "today.journal.hint"), "會議可放在日曆上；結論寫在這裡。");
+  assert.equal(translate("en", "today.journal.hint"), "Meetings can stay on the calendar. Write conclusions here.");
+  assert.doesNotMatch(translate("zh-TW", "view.today"), /日誌/);
+});
+
 test("empty states use plain-language first actions", () => {
   assert.equal(translate("zh-TW", "today.emptyAction"), "新增第一個任務");
   assert.equal(translate("en", "today.emptyAction"), "Add your first task");

@@ -5,6 +5,8 @@
  * until the migrator session. Markdown stays the long-term source of truth.
  */
 
+import { isValidDateKey } from "./dates";
+
 export const CANONICAL_PROJECTS_DIR = "專案";
 export const CANONICAL_KNOWLEDGE_DIR = "知識";
 export const CANONICAL_JOURNAL_DIR = "日誌";
@@ -164,4 +166,41 @@ export function resolveTodayJournalPath(
     else if (key === legacyKey) legacyActual = normalized;
   }
   return canonicalActual ?? legacyActual ?? null;
+}
+
+function journalDateFileName(relativePath: string): string | null {
+  const parts = normalizeRelativePath(relativePath).split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+  const [dir, file] = parts;
+  if (dir !== CANONICAL_JOURNAL_DIR && dir !== LEGACY_JOURNAL_DIR) return null;
+  if (!file.toLocaleLowerCase().endsWith(".md")) return null;
+  const dateKey = file.slice(0, -3);
+  return isValidDateKey(dateKey) ? dateKey : null;
+}
+
+/** True for `日誌/YYYY-MM-DD.md` and legacy `05-每日工作台/YYYY-MM-DD.md`. */
+export function isJournalNotePath(relativePath: string): boolean {
+  return journalDateFileName(relativePath) !== null;
+}
+
+export function journalNoteDateKey(relativePath: string): string | null {
+  return journalDateFileName(relativePath);
+}
+
+export interface DailyJournalRef {
+  relativePath: string;
+  exists: boolean;
+}
+
+/**
+ * Open an existing journal for `dateKey` (canonical, else legacy).
+ * If neither file exists, the write path is always `日誌/YYYY-MM-DD.md`.
+ */
+export function resolveDailyJournal(
+  dateKey: string,
+  existingPaths: readonly string[],
+): DailyJournalRef {
+  const existing = resolveTodayJournalPath(dateKey, existingPaths);
+  if (existing) return { relativePath: existing, exists: true };
+  return { relativePath: canonicalJournalPath(dateKey), exists: false };
 }

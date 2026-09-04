@@ -18,6 +18,10 @@ import {
   CANONICAL_PROJECTS_DIR,
   canonicalKnowledgeWriteDir,
   isContentScanExcludedPath,
+  isJournalNotePath,
+  isValidDateKey,
+  renderDailyJournalDocument,
+  resolveDailyJournal,
   resolveInboxWritePath,
   type BrainProjectSnapshot,
   type BrainCollectionSnapshot,
@@ -265,6 +269,36 @@ export function buildCollectionCreateChange(
   };
 }
 
+/**
+ * Create `日誌/YYYY-MM-DD.md` when that day's journal is missing.
+ * If a canonical or legacy journal already exists, return null so the caller
+ * opens the existing file instead of writing a second copy.
+ */
+export function buildJournalCreateChange(
+  dateKey: string,
+  existingPaths: readonly string[],
+): Extract<MarkdownChange, { operation: "create" }> | null {
+  if (!isValidDateKey(dateKey)) throw new Error("INVALID_JOURNAL_DATE");
+  const resolved = resolveDailyJournal(dateKey, existingPaths);
+  if (resolved.exists) return null;
+  return {
+    relativePath: resolved.relativePath,
+    expectedSha256: EMPTY_SHA256,
+    replacementBase64: encodeBase64(encoder.encode(renderDailyJournalDocument(dateKey))),
+    operation: "create",
+  };
+}
+
+export function buildJournalUpdateChange(
+  file: LocalMarkdownFile,
+  content: string,
+): MarkdownChange {
+  const original = decodeFile(file);
+  const newline = original.includes("\r\n") ? "\r\n" : "\n";
+  const next = content.replace(/\r?\n/g, newline).replace(/(\r?\n)*$/, "") + newline;
+  return makeChange(file, next);
+}
+
 function assertUnique(values: Array<string | null>, code: string): void {
   const seen = new Set<string>();
   for (const value of values) {
@@ -289,6 +323,7 @@ export function scanStructuredVault(
 
   for (const file of scannedFiles) {
     const source = sources.get(file.relativePath)!;
+    if (isJournalNotePath(file.relativePath)) continue;
     const project = parseProjectFrontmatter(source, file.relativePath);
     if (project) {
       const id = project.id ?? createId();

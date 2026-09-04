@@ -5,6 +5,8 @@ import {
   applyDesiredSnapshot,
   buildCollectionCreateChange,
   buildCollectionDeleteChange,
+  buildJournalCreateChange,
+  buildJournalUpdateChange,
   buildProjectCreateChange,
   withRelatedProjectWikilink,
   buildProjectDeleteChanges,
@@ -765,4 +767,70 @@ test("already-canonical markers and ids are not rewritten on scan", () => {
   assert.equal(result.snapshot.projects[0]?.id, projectId);
   assert.equal(result.snapshot.tasks[0]?.id, taskId);
   assert.equal(result.bootstrapChanges.length, 0);
+});
+
+test("new journal files write 日誌/YYYY-MM-DD.md with the four headings", () => {
+  const change = buildJournalCreateChange("2026-08-15", []);
+  assert.equal(change?.operation, "create");
+  assert.equal(change?.relativePath, "日誌/2026-08-15.md");
+  const body = base64ToText(change!.replacementBase64);
+  assert.match(body, /^# 2026-08-15/);
+  assert.match(body, /## 今日會議/);
+  assert.match(body, /## 結論/);
+  assert.match(body, /## 產生的任務/);
+  assert.match(body, /## 可升級的知識/);
+  assert.ok(!body.includes("2026-08-16"));
+});
+
+test("journal create does not write yesterday or tomorrow's file", () => {
+  const today = buildJournalCreateChange("2026-08-15", ["日誌/2026-08-14.md", "日誌/2026-08-16.md"]);
+  assert.equal(today?.relativePath, "日誌/2026-08-15.md");
+  assert.equal(buildJournalCreateChange("2026-08-16", ["日誌/2026-08-15.md"])?.relativePath, "日誌/2026-08-16.md");
+});
+
+test("legacy 05-每日工作台 journal is opened instead of creating 日誌/", () => {
+  assert.equal(
+    buildJournalCreateChange("2026-08-15", ["05-每日工作台/2026-08-15.md"]),
+    null,
+  );
+  assert.equal(
+    buildJournalCreateChange("2026-08-15", ["日誌/2026-08-15.md"]),
+    null,
+  );
+});
+
+test("journal updates rewrite the existing file, including a legacy daily note", () => {
+  const legacy = file("05-每日工作台/2026-08-15.md", "# 舊日誌\r\n\r\n結論\r\n");
+  const change = buildJournalUpdateChange(legacy, "# 2026-08-15\n\n## 結論\n\n開源發表");
+  assert.equal(change.relativePath, "05-每日工作台/2026-08-15.md");
+  assert.notEqual(change.operation, "create");
+  assert.equal(base64ToText(change.replacementBase64), "# 2026-08-15\r\n\r\n## 結論\r\n\r\n開源發表\r\n");
+});
+
+test("daily journal files are scanned as journals, not projects or collections", () => {
+  const typed = `---\r\ntype: collection\r\ncategory: 日誌\r\n---\r\n# 2026-08-15\r\n`;
+  const projectShaped = `---\r\ntype: project\r\nstatus: active\r\n---\r\n# 2026-08-15\r\n`;
+  const result = scanStructuredVault([
+    file("日誌/2026-08-15.md", typed),
+    file("05-每日工作台/2026-08-16.md", projectShaped),
+  ]);
+  assert.equal(result.snapshot.collections.length, 0);
+  assert.equal(result.snapshot.projects.length, 0);
+});
+
+test("tasks written under 產生的任務 stay on the journal file", () => {
+  const task = formatTaskLine({
+    id: taskId, title: "跟進會議", status: "todo", dueDate: null, plannedDate: null,
+    priority: "normal", projectId: null, projectName: null, rank: "a",
+    sourcePath: "日誌/2026-08-15.md", sourceHeading: null, completedAt: null,
+  });
+  const source = `# 2026-08-15\r\n\r\n## 產生的任務\r\n\r\n${task}\r\n`;
+  const result = scanStructuredVault([file("日誌/2026-08-15.md", source)]);
+  assert.equal(result.snapshot.tasks.length, 1);
+  assert.equal(result.snapshot.tasks[0]?.title, "跟進會議");
+  assert.equal(result.snapshot.tasks[0]?.sourcePath, "日誌/2026-08-15.md");
+});
+
+test("invalid journal dates are rejected", () => {
+  assert.throws(() => buildJournalCreateChange("2026-13-40", []), /INVALID_JOURNAL_DATE/);
 });

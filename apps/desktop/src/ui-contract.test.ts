@@ -280,6 +280,17 @@ test("desktop separates collections from outcome projects and supports promotion
   assert.match(source, /search\.placeholder/);
 });
 
+test("today view can open today's journal without adding a journal menu", () => {
+  const source = app();
+  assert.match(source, /today\.journal/);
+  assert.match(source, /buildJournalCreateChange/);
+  assert.match(source, /resolveDailyJournal/);
+  assert.match(source, /onOpenJournal/);
+  assert.match(source, /function JournalDialog/);
+  assert.doesNotMatch(source, /type View = [^;]*"journal"/);
+  assert.doesNotMatch(source, /setView\("journal"\)/);
+});
+
 test("knowledge create uses the six vault categories and optional project wikilinks", () => {
   const source = app();
   assert.match(source, /KNOWLEDGE_CATEGORIES/);
