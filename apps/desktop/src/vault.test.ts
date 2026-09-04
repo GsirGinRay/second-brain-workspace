@@ -314,6 +314,148 @@ test("desired snapshot creates a beginner inbox when the selected folder is empt
   assert.match(base64ToText(changes[0]!.replacementBase64), /My first Markdown/);
 });
 
+test("new tasks with a projectId are appended to the project file, not the inbox", () => {
+  const create = buildProjectCreateChange("Launch", "Work", 1, [], () => projectId, "Goal text");
+  assert.equal(create.relativePath, "專案/Launch.md");
+  const files = [
+    { relativePath: create.relativePath, sha256: "b".repeat(64), bytesBase64: create.replacementBase64 },
+    file("收件匣/待辦.md", "# 待辦\r\n"),
+  ];
+  const scanned = scanStructuredVault(files);
+  const newId = "33333333-3333-4333-8333-333333333333";
+  const ideaId = "44444444-4444-4444-8444-444444444444";
+  const desired = {
+    ...scanned.snapshot,
+    tasks: [
+      ...scanned.snapshot.tasks,
+      {
+        schemaVersion: 6 as const, id: newId, title: "Ship docs", status: "todo" as const,
+        taskDate: null, priority: "normal" as const, projectId, projectName: "Launch",
+        rank: "a", sourcePath: null, sourceHeading: null, completedAt: null,
+        body: "## Notes\n\nVisible under the task",
+      },
+      {
+        schemaVersion: 6 as const, id: ideaId, title: "Loose idea", status: "todo" as const,
+        taskDate: null, priority: "normal" as const, projectId: null, projectName: null,
+        rank: "b", sourcePath: null, sourceHeading: null, completedAt: null,
+      },
+    ],
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  const projectChange = changes.find((change) => change.relativePath === "專案/Launch.md");
+  const inboxChange = changes.find((change) => change.relativePath === "收件匣/待辦.md");
+  assert.ok(projectChange && projectChange.operation !== "delete");
+  assert.ok(inboxChange && inboxChange.operation !== "delete");
+  const projectText = base64ToText(projectChange.replacementBase64);
+  assert.match(projectText, /Goal text/);
+  assert.match(projectText, /Ship docs/);
+  assert.match(projectText, /\[\[Launch\]\]/);
+  assert.match(projectText, /  ## Notes/);
+  assert.match(projectText, /Visible under the task/);
+  assert.doesNotMatch(projectText, /Loose idea/);
+  const inboxText = base64ToText(inboxChange.replacementBase64);
+  assert.match(inboxText, /Loose idea/);
+  assert.doesNotMatch(inboxText, /Ship docs/);
+  const updatedFiles = files.map((item) => {
+    const change = changes.find((candidate) => candidate.relativePath === item.relativePath);
+    return change && "replacementBase64" in change && change.replacementBase64
+      ? { ...item, bytesBase64: change.replacementBase64 }
+      : item;
+  });
+  const rescanned = scanStructuredVault(updatedFiles);
+  const reapplied = applyDesiredSnapshot(updatedFiles, {
+    ...desired,
+    projects: rescanned.snapshot.projects,
+    collections: rescanned.snapshot.collections,
+  });
+  assert.equal(reapplied.length, 0);
+});
+
+test("changing status or schedule does not move a task to another file", () => {
+  const linked = formatTaskLine({
+    id: taskId, title: "Stay in inbox", status: "todo", taskDate: "2026-08-15",
+    priority: "normal", projectId, projectName: "Launch", rank: "a",
+    sourcePath: "收件匣/待辦.md", sourceHeading: null, completedAt: null,
+  });
+  const embeddedId = "33333333-3333-4333-8333-333333333333";
+  const embedded = formatTaskLine({
+    id: embeddedId, title: "Stay in project", status: "todo", taskDate: null,
+    priority: "normal", projectId, projectName: "Launch", rank: "b",
+    sourcePath: "專案/Launch.md", sourceHeading: null, completedAt: null,
+  });
+  const files = [
+    file("專案/Launch.md", `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Launch\r\n\r\n${embedded}\r\n`),
+    file("收件匣/待辦.md", `# 待辦\r\n${linked}\r\n`),
+  ];
+  const scanned = scanStructuredVault(files);
+  const desired = {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.map((item) => {
+      if (item.id === taskId) return { ...item, status: "doing" as const };
+      if (item.id === embeddedId) {
+        return { ...item, taskDate: "2026-08-20", startTime: "09:30", durationMinutes: 30, timeZone: "Asia/Taipei" };
+      }
+      return item;
+    }),
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  assert.equal(changes.length, 2);
+  const inboxChange = changes.find((change) => change.relativePath === "收件匣/待辦.md")!;
+  const projectChange = changes.find((change) => change.relativePath === "專案/Launch.md")!;
+  const inboxText = base64ToText(inboxChange.replacementBase64);
+  const projectText = base64ToText(projectChange.replacementBase64);
+  assert.match(inboxText, /Stay in inbox/);
+  assert.match(inboxText, /"status":"doing"/);
+  assert.doesNotMatch(inboxText, /Stay in project/);
+  assert.match(projectText, /Stay in project/);
+  assert.match(projectText, /⏳ 2026-08-20/);
+  assert.match(projectText, /⏰ 09:30/);
+  assert.doesNotMatch(projectText, /Stay in inbox/);
+});
+
+test("new tasks append to a legacy Projects/ note when that is the project source", () => {
+  const files = [
+    file("Projects/Launch.md", `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Launch\r\n`),
+    file("收件匣/待辦.md", "# 待辦\r\n"),
+  ];
+  const scanned = scanStructuredVault(files);
+  const newId = "33333333-3333-4333-8333-333333333333";
+  const desired = {
+    ...scanned.snapshot,
+    tasks: [{
+      schemaVersion: 6 as const, id: newId, title: "Legacy project task", status: "todo" as const,
+      taskDate: null, priority: "normal" as const, projectId, projectName: "Launch",
+      rank: "a", sourcePath: null, sourceHeading: null, completedAt: null,
+    }],
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0]?.relativePath, "Projects/Launch.md");
+  assert.match(base64ToText(changes[0]!.replacementBase64), /Legacy project task/);
+});
+
+test("new tasks fall back to the inbox when the project file is missing", () => {
+  const files = [file("收件匣/待辦.md", "# 待辦\r\n")];
+  const desired = {
+    schemaVersion: 6 as const,
+    tasks: [{
+      schemaVersion: 6 as const, id: taskId, title: "Orphan project task", status: "todo" as const,
+      taskDate: null, priority: "normal" as const, projectId, projectName: "Launch",
+      rank: "a", sourcePath: null, sourceHeading: null, completedAt: null,
+    }],
+    projects: [{
+      schemaVersion: 6 as const, id: projectId, name: "Launch", sourcePath: "專案/Launch.md",
+      status: "planning", area: null, priority: null, progress: 0, focusToday: false,
+      startDate: null, endDate: null, completedAt: null,
+    }],
+    collections: [], routineTemplates: [], fileHashes: {},
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0]?.relativePath, "收件匣/待辦.md");
+  assert.match(base64ToText(changes[0]!.replacementBase64), /Orphan project task/);
+});
+
 test("task checkboxes inside a task Markdown body are not indexed as separate tasks", () => {
   const line = formatTaskLine({
     id: taskId, title: "Parent", status: "todo", taskDate: null, priority: "normal",
@@ -397,6 +539,24 @@ test("project deletion relocates tasks stored inside the project note to the inb
   const files = [file("Projects/Launch.md", projectSource), file(inboxPath, "# 收件匣\r\n")];
   const scanned = scanStructuredVault(files);
   const changes = buildProjectDeleteChanges(files, scanned.snapshot, projectId);
+  const inbox = changes.find((change) => change.relativePath === inboxPath)!;
+  const text = base64ToText(inbox.replacementBase64);
+  assert.match(text, /Keep me/);
+  assert.doesNotMatch(text, /\[\[Launch\]\]/);
+});
+
+test("project deletion unlinks canonical project-file tasks into 收件匣/待辦.md", () => {
+  const embedded = formatTaskLine({
+    id: taskId, title: "Keep me", status: "todo", taskDate: null,
+    priority: "normal", projectId, projectName: "Launch", rank: "a",
+    sourcePath: "專案/Launch.md", sourceHeading: null, completedAt: null,
+  });
+  const projectSource = `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Launch\r\n${embedded}\r\n`;
+  const inboxPath = "收件匣/待辦.md";
+  const files = [file("專案/Launch.md", projectSource), file(inboxPath, "# 待辦\r\n")];
+  const scanned = scanStructuredVault(files);
+  const changes = buildProjectDeleteChanges(files, scanned.snapshot, projectId);
+  assert.equal(changes.find((change) => change.relativePath === "專案/Launch.md")?.operation, "delete");
   const inbox = changes.find((change) => change.relativePath === inboxPath)!;
   const text = base64ToText(inbox.replacementBase64);
   assert.match(text, /Keep me/);

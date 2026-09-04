@@ -131,6 +131,46 @@ function safeInline(value: string, maxLength = 200): string {
   return normalized;
 }
 
+function pathKey(relativePath: string): string {
+  return relativePath.replace(/\\/g, "/").toLocaleLowerCase();
+}
+
+/** New tasks with a project append to that project's file; otherwise the inbox. */
+function resolveNewTaskWritePath(
+  task: Pick<BrainTaskSnapshot, "projectId" | "projectName">,
+  projects: readonly Pick<BrainProjectSnapshot, "id" | "name" | "sourcePath">[],
+  existingPaths: readonly string[],
+): string {
+  const project = task.projectId
+    ? projects.find((item) => item.id === task.projectId)
+    : task.projectName
+      ? projects.find((item) => item.name === task.projectName)
+      : undefined;
+  if (project?.sourcePath) {
+    const wanted = pathKey(project.sourcePath);
+    for (const path of existingPaths) {
+      if (pathKey(path) === wanted) return path;
+    }
+  }
+  return resolveInboxWritePath(existingPaths);
+}
+
+function appendMissingTasks(
+  source: string,
+  writePath: string,
+  tasks: readonly BrainTaskSnapshot[],
+): string {
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  let next = source;
+  for (const task of tasks) {
+    if (!task.id || next.includes(`\"id\":\"${task.id}\"`)) continue;
+    if (!next.endsWith("\n")) next += newline;
+    next += formatTaskLine({ ...task, sourcePath: writePath }) + newline;
+    if (task.body) next = patchTaskMarkdownContent(next, task.id, task.body);
+  }
+  return next;
+}
+
 function uniqueMarkdownPath(directory: string, title: string, existingPaths: readonly string[]): string {
   const base = safeInline(title, 100)
     .replace(/[<>:"/\\|?*]+/g, " ")
@@ -520,38 +560,43 @@ export function applyDesiredSnapshot(
     }
   }
 
+  const createdFiles: MarkdownChange[] = [];
   const missingTasks = desired.tasks.filter((task) => task.id && !locations.has(task.id));
   if (missingTasks.length > 0) {
-    const inboxPath = resolveInboxWritePath([...byPath.keys()]);
-    const inbox = byPath.get(inboxPath);
-    let source = inbox ? currentSources.get(inboxPath)! : "# 待辦\r\n\r\n## 新增 Task\r\n";
-    const newline = source.includes("\r\n") ? "\r\n" : "\n";
+    const existingPaths = [...byPath.keys()];
+    const grouped = new Map<string, BrainTaskSnapshot[]>();
     for (const task of missingTasks) {
-      if (source.includes(`\"id\":\"${task.id}\"`)) continue;
-      if (!source.endsWith("\n")) source += newline;
-      source += formatTaskLine({ ...task, sourcePath: inboxPath }) + newline;
-      if (task.body) source = patchTaskMarkdownContent(source, task.id!, task.body);
+      const writePath = resolveNewTaskWritePath(task, desired.projects, existingPaths);
+      grouped.set(writePath, [...(grouped.get(writePath) ?? []), task]);
     }
-    if (!inbox) {
-      return [
-        ...[...changed].sort().map((relativePath) => makeChange(byPath.get(relativePath)!, currentSources.get(relativePath)!)),
-        {
-          relativePath: inboxPath,
+    for (const [writePath, tasksForPath] of grouped) {
+      const existing = byPath.get(writePath);
+      const current = existing
+        ? currentSources.get(writePath)!
+        : "# 待辦\r\n\r\n## 新增 Task\r\n";
+      const source = appendMissingTasks(current, writePath, tasksForPath);
+      if (!existing) {
+        createdFiles.push({
+          relativePath: writePath,
           expectedSha256: EMPTY_SHA256,
           replacementBase64: encodeBase64(encoder.encode(source)),
           operation: "create" as const,
-        },
-      ];
-    }
-    if (source !== currentSources.get(inboxPath)) {
-      currentSources.set(inboxPath, source);
-      changed.add(inboxPath);
+        });
+        continue;
+      }
+      if (source !== currentSources.get(writePath)) {
+        currentSources.set(writePath, source);
+        changed.add(writePath);
+      }
     }
   }
 
-  return [...changed]
-    .sort()
-    .map((relativePath) => makeChange(byPath.get(relativePath)!, currentSources.get(relativePath)!));
+  return [
+    ...[...changed]
+      .sort()
+      .map((relativePath) => makeChange(byPath.get(relativePath)!, currentSources.get(relativePath)!)),
+    ...createdFiles,
+  ];
 }
 
 export function buildProjectDeleteChanges(

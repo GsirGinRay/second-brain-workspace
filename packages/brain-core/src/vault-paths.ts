@@ -121,8 +121,9 @@ export function isContentScanExcludedPath(relativePath: string): boolean {
 }
 
 /**
- * New tasks still land in the inbox this session. Prefer the canonical file;
- * keep writing the legacy inbox when it exists and the new file does not.
+ * Write path for new tasks that do not belong to a project file.
+ * Prefer the canonical inbox; keep writing the legacy inbox when it exists
+ * and the new file does not.
  */
 export function resolveInboxWritePath(existingPaths: readonly string[]): string {
   const canonicalKey = pathKey(CANONICAL_INBOX_PATH);
