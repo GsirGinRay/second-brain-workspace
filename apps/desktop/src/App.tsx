@@ -141,7 +141,7 @@ import {
   todayTraySegmentKey,
   withReassignedRanks,
 } from "./task-reorder";
-import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./architecture";
+import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH } from "./architecture";
 import "./styles.css";
 
 type View = "today" | "calendar" | "board" | "projects" | "collections" | "sync";
@@ -507,6 +507,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         tasks: BrainTaskSnapshot[];
         projects: BrainProjectSnapshot[];
         collections: BrainCollectionSnapshot[];
+        existingPaths?: readonly string[];
       },
       enabled: boolean,
     ) => {
@@ -515,7 +516,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         // Missing .ai/INDEX.md reads as an IPC error; fall back to "not created
         // yet" so the background refresh can create the initial index.
         const existingFiles = await native
-          .readMarkdownFiles([".ai/INDEX.md"])
+          .readMarkdownFiles([VAULT_INDEX_PATH])
           .catch(() => []);
         const change = renderIndexChange(
           {
@@ -524,6 +525,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             tasks: local.tasks,
             projects: local.projects,
             collections: local.collections ?? [],
+            existingPaths: local.existingPaths ?? [],
           },
           existingFiles[0],
         );
@@ -598,8 +600,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       );
       // A brand-new vault has no .ai/INDEX.md yet; treat the failed read as
       // "not created" so scaffolding (whose job is to create it) can proceed.
+      const existingPaths = existingFiles.map((file) => file.relativePath);
       const existingIndex = await native
-        .readMarkdownFiles([".ai/INDEX.md"])
+        .readMarkdownFiles([VAULT_INDEX_PATH])
         .catch(() => []);
       const indexChange = renderIndexChange(
         {
@@ -608,6 +611,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           tasks: existingTasks,
           projects: existingProjects,
           collections: existingCollections,
+          existingPaths,
         },
         existingIndex[0],
       );
@@ -638,10 +642,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       // open, which would invalidate the hash captured during preparation and
       // fail the whole batch with HashPrecondition.
       const changes = pendingScaffold.filter(
-        (change) => change.relativePath !== ".ai/INDEX.md",
+        (change) => change.relativePath !== VAULT_INDEX_PATH,
       );
       const existingIndex = await native
-        .readMarkdownFiles([".ai/INDEX.md"])
+        .readMarkdownFiles([VAULT_INDEX_PATH])
         .catch(() => []);
       const indexChange = renderIndexChange(
         {
@@ -650,6 +654,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           tasks,
           projects,
           collections,
+          existingPaths: files.map((file) => file.relativePath),
         },
         existingIndex[0],
       );
@@ -750,6 +755,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             tasks: local.tasks,
             projects: local.projects,
             collections: local.collections ?? [],
+            existingPaths: local.files.map((file) => file.relativePath),
           },
           true,
         );

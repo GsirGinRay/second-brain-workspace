@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { renderVaultIndex, TEMPLATE_PACKS } from "@second-brain/brain-core";
-import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./architecture";
+import { CANONICAL_AI_DIR, renderVaultIndex, TEMPLATE_PACKS } from "@second-brain/brain-core";
+import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH } from "./architecture";
 import type { LocalMarkdownFile } from "./vault";
 
 function file(relativePath: string, content: string): LocalMarkdownFile {
@@ -132,7 +132,7 @@ test("renderIndexChange returns null when index is unchanged", () => {
     projects: [],
     collections: [],
   };
-  const existing = file(".ai/INDEX.md", renderVaultIndex(input));
+  const existing = file(VAULT_INDEX_PATH, renderVaultIndex(input));
   assert.equal(renderIndexChange(input, existing), null);
 });
 
@@ -147,7 +147,7 @@ test("renderIndexChange returns null when only the generated-at timestamp differ
     collections: [],
   };
   const existing = file(
-    ".ai/INDEX.md",
+    VAULT_INDEX_PATH,
     renderVaultIndex({ ...base, generatedAt: "2026-08-15T00:00:00.000Z" }),
   );
   assert.equal(
@@ -170,8 +170,10 @@ test("renderIndexChange emits a create when index is missing and write when chan
   const created = renderIndexChange(input, undefined);
   assert.ok(created);
   assert.equal(created.operation, "create");
+  assert.equal(created.relativePath, VAULT_INDEX_PATH);
+  assert.equal(created.relativePath, `${CANONICAL_AI_DIR}/INDEX.md`);
   // A different on-disk index forces a write.
-  const stale = file(".ai/INDEX.md", "# stale");
+  const stale = file(VAULT_INDEX_PATH, "# stale");
   const written = renderIndexChange(input, stale);
   assert.ok(written);
   assert.equal(written.operation, "write");

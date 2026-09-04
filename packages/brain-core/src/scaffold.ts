@@ -58,16 +58,27 @@ const INSTRUCTIONS = `# Second Brain — INSTRUCTIONS（正本 / Canonical）
 ## 讀取順序（Read order for AI）
 
 1. 先閱讀本檔（.ai/INSTRUCTIONS.md）——這是作者的規則。
-2. 再閱讀 .ai/INDEX.md——裡面有目前的專案／任務／知識清單與編碼規格。
-3. 依索引操作：做專案管理、維護任務清單；變數與重用內容放 知識/ 的「提示詞」分類。
+2. 再閱讀 .ai/INDEX.md——短地圖：進行中專案、今日／逾期任務、常用知識、今日日誌、未排程想法。
+3. 只打開 INDEX 列出的一個檔；不要讀整本收件匣。
 
 ## 準則（Rules）
 
 - 保留未知符號、BOM、CRLF 與縮排；不要重排與你無關的內容。
 - 不要上傳 Markdown 正文；在本機就地編輯。
-- 任務可用一行 \`- [ ] #task 標題 [[專案名]] ⏳ YYYY-MM-DD ⏰ HH:MM ⏱ 30m\` 表示；詳細筆記縮排寫在該行下面，Obsidian 與 AI 都看得到。
 - 專案與知識用 YAML frontmatter（type: project / collection）放在 專案/ 與 知識/。
 - 可重用提示詞的 category 請以 \`提示詞/\` 開頭，例如 \`提示詞/會議紀錄\`。
+
+## 如何新增一行任務
+
+在 INDEX 列出的那個檔追加一行，不要讀整本收件匣：
+
+\`\`\`
+- [ ] #task 寫報告 [[專案名]] ⏳ 2026-08-15 ⏰ 09:30 ⏱ 30m
+
+  可選筆記，用一般縮排 Markdown。
+\`\`\`
+
+掃描器會自動指定 id；不要自己發明 id。
 `;
 
 const CLAUDE_ENTRY = `# See .ai/INSTRUCTIONS.md

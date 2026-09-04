@@ -11,15 +11,18 @@ import {
   CANONICAL_TEMPLATES_DIR,
   KNOWLEDGE_CATEGORIES,
   LEGACY_INBOX_PATH,
+  LEGACY_JOURNAL_DIR,
   LEGACY_TEMPLATES_DIR,
   isContentScanExcludedPath,
   resolveInboxWritePath,
+  resolveTodayJournalPath,
 } from "./vault-paths";
 
 test("canonical write paths are the official vault folders", () => {
   assert.equal(CANONICAL_PROJECTS_DIR, "專案");
   assert.equal(CANONICAL_KNOWLEDGE_DIR, "知識");
   assert.equal(CANONICAL_JOURNAL_DIR, "日誌");
+  assert.equal(LEGACY_JOURNAL_DIR, "05-每日工作台");
   assert.equal(CANONICAL_INBOX_PATH, "收件匣/待辦.md");
   assert.equal(CANONICAL_ATTACHMENTS_DIR, "附件");
   assert.equal(CANONICAL_TEMPLATES_DIR, "模板");
@@ -68,4 +71,33 @@ test("content scan skips templates, attachments, tmp, and backup directories", (
   assert.equal(isContentScanExcludedPath("tmp/backup-2026-08-15/old.md"), true);
   assert.equal(isContentScanExcludedPath("notes/backup-copy/x.md"), true);
   assert.equal(isContentScanExcludedPath("專案/backup.md"), false);
+});
+
+test("today's journal path prefers 日誌/ and can point at legacy 05-每日工作台/", () => {
+  assert.equal(resolveTodayJournalPath("2026-08-15", []), null);
+  assert.equal(
+    resolveTodayJournalPath("2026-08-15", ["日誌/2026-08-15.md"]),
+    "日誌/2026-08-15.md",
+  );
+  assert.equal(
+    resolveTodayJournalPath("2026-08-15", ["05-每日工作台/2026-08-15.md"]),
+    "05-每日工作台/2026-08-15.md",
+  );
+  assert.equal(
+    resolveTodayJournalPath("2026-08-15", [
+      "05-每日工作台/2026-08-15.md",
+      "日誌/2026-08-15.md",
+    ]),
+    "日誌/2026-08-15.md",
+  );
+  assert.equal(
+    resolveTodayJournalPath("2026-08-15", ["日誌/2026-08-14.md"]),
+    null,
+  );
+  assert.equal(
+    resolveTodayJournalPath("2026-08-15", [
+      "tmp/backup-2026-08-15/日誌.md",
+    ]),
+    null,
+  );
 });

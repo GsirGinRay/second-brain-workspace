@@ -106,12 +106,15 @@ export {
   LEGACY_INBOX_DIR,
   LEGACY_INBOX_FILE,
   LEGACY_INBOX_PATH,
+  LEGACY_JOURNAL_DIR,
   LEGACY_PROJECTS_DIR,
   LEGACY_TEMPLATES_DIR,
   MANAGED_TEMPLATE_DIRS,
   isContentScanExcludedDirName,
   isContentScanExcludedPath,
   resolveInboxWritePath,
+  resolveTodayJournalPath,
+  canonicalJournalPath,
 } from "./vault-paths";
 export type { KnowledgeCategory } from "./vault-paths";
 export {

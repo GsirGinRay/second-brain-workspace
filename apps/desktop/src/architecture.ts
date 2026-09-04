@@ -1,4 +1,5 @@
 import {
+  CANONICAL_AI_DIR,
   renderVaultIndex,
   scaffoldTemplateFiles,
   type ScaffoldFileOptions,
@@ -16,7 +17,7 @@ import type { LocalMarkdownFile, MarkdownChange } from "./vault";
 
 const EMPTY_SHA256 =
   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-const INDEX_PATH = ".ai/INDEX.md";
+export const VAULT_INDEX_PATH = `${CANONICAL_AI_DIR}/INDEX.md`;
 
 function encodeBase64(text: string): string {
   return btoa(unescape(encodeURIComponent(text)));
@@ -82,7 +83,7 @@ export function renderIndexChange(
   )
     return null;
   return {
-    relativePath: INDEX_PATH,
+    relativePath: VAULT_INDEX_PATH,
     expectedSha256: existing?.sha256 ?? EMPTY_SHA256,
     replacementBase64: encodeBase64(content),
     operation: existing ? "write" : "create",

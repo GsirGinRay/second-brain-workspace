@@ -36,6 +36,7 @@ export const LEGACY_INBOX_DIR = "10-收件匣";
 export const LEGACY_INBOX_FILE = "待辦收件匣.md";
 export const LEGACY_INBOX_PATH = `${LEGACY_INBOX_DIR}/${LEGACY_INBOX_FILE}`;
 export const LEGACY_TEMPLATES_DIR = "90-模板";
+export const LEGACY_JOURNAL_DIR = "05-每日工作台";
 
 export const MANAGED_TEMPLATE_DIRS = [
   CANONICAL_TEMPLATES_DIR,
@@ -84,4 +85,31 @@ export function resolveInboxWritePath(existingPaths: readonly string[]): string 
   }
   if (!canonicalActual && legacyActual) return legacyActual;
   return canonicalActual ?? CANONICAL_INBOX_PATH;
+}
+
+export function canonicalJournalPath(dateKey: string): string {
+  return `${CANONICAL_JOURNAL_DIR}/${dateKey}.md`;
+}
+
+/**
+ * Point at today's journal only when the file already exists.
+ * Prefer `日誌/YYYY-MM-DD.md`; fall back to `05-每日工作台/YYYY-MM-DD.md`.
+ * Never invent a path for a missing file.
+ */
+export function resolveTodayJournalPath(
+  dateKey: string,
+  existingPaths: readonly string[],
+): string | null {
+  const canonicalKey = pathKey(canonicalJournalPath(dateKey));
+  const legacyKey = pathKey(`${LEGACY_JOURNAL_DIR}/${dateKey}.md`);
+  let canonicalActual: string | undefined;
+  let legacyActual: string | undefined;
+  for (const path of existingPaths) {
+    const normalized = normalizeRelativePath(path);
+    if (isContentScanExcludedPath(normalized)) continue;
+    const key = pathKey(normalized);
+    if (key === canonicalKey) canonicalActual = normalized;
+    else if (key === legacyKey) legacyActual = normalized;
+  }
+  return canonicalActual ?? legacyActual ?? null;
 }

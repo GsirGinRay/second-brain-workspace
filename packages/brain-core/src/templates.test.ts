@@ -38,6 +38,8 @@ test("scaffold files cover the five packs and merge without collisions", () => {
   const ids = TEMPLATE_PACKS.map((pack) => pack.id);
   const files = scaffoldTemplateFiles(ids);
   assert.ok(files[".ai/INSTRUCTIONS.md"]);
+  assert.match(files[".ai/INSTRUCTIONS.md"], /如何新增一行任務/);
+  assert.match(files[".ai/INSTRUCTIONS.md"], /只打開 INDEX 列出的一個檔/);
   assert.ok(files[".ai/INDEX.md"]);
   assert.ok(files["CLAUDE.md"]);
   assert.ok(files["AGENTS.md"]);
