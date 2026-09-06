@@ -390,6 +390,97 @@ fn list_managed_files(
     Ok(files)
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportVaultAttachmentRequest {
+    pub folder: String,
+    pub file_name: String,
+    pub bytes_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultAttachmentInfo {
+    pub relative_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VaultAttachmentPathRequest {
+    pub relative_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultAttachmentContents {
+    pub relative_path: String,
+    pub mime_type: String,
+    pub bytes_base64: String,
+}
+
+#[tauri::command]
+fn import_vault_attachment(
+    request: ImportVaultAttachmentRequest,
+    state: State<'_, AppState>,
+) -> Result<VaultAttachmentInfo, NativeError> {
+    if request.folder.is_empty()
+        || request.folder.len() > 100
+        || request.file_name.is_empty()
+        || request.file_name.len() > 200
+        || request.bytes_base64.is_empty()
+        || request.bytes_base64.len() > 24_000_000
+    {
+        return Err(NativeError::InvalidRequest);
+    }
+    let bytes = STANDARD
+        .decode(&request.bytes_base64)
+        .map_err(|_| NativeError::InvalidRequest)?;
+    let root = selected_root(&state)?;
+    let relative = crate::path_policy::import_attachment_bytes(
+        &root,
+        &request.folder,
+        &request.file_name,
+        &bytes,
+    )?;
+    Ok(VaultAttachmentInfo {
+        relative_path: relative.to_string_lossy().replace('\\', "/"),
+    })
+}
+
+#[tauri::command]
+fn read_vault_attachment(
+    request: VaultAttachmentPathRequest,
+    state: State<'_, AppState>,
+) -> Result<VaultAttachmentContents, NativeError> {
+    if request.relative_path.is_empty() || request.relative_path.len() > 500 {
+        return Err(NativeError::InvalidRequest);
+    }
+    let root = selected_root(&state)?;
+    let relative = PathBuf::from(&request.relative_path);
+    let (mime_type, bytes) = crate::path_policy::read_attachment_image(&root, &relative)?;
+    Ok(VaultAttachmentContents {
+        relative_path: relative.to_string_lossy().replace('\\', "/"),
+        mime_type,
+        bytes_base64: STANDARD.encode(bytes),
+    })
+}
+
+#[tauri::command]
+fn open_vault_attachment(
+    request: VaultAttachmentPathRequest,
+    state: State<'_, AppState>,
+) -> Result<(), NativeError> {
+    if request.relative_path.is_empty() || request.relative_path.len() > 500 {
+        return Err(NativeError::InvalidRequest);
+    }
+    let root = selected_root(&state)?;
+    let target = crate::path_policy::resolve_attachment_for_open(
+        &root,
+        Path::new(&request.relative_path),
+    )?;
+    open::that_detached(target).map_err(|_| NativeError::Io)
+}
+
 #[tauri::command]
 fn apply_markdown_changes(
     changes: Vec<MarkdownChangeRequest>,
@@ -727,6 +818,9 @@ pub fn run() -> tauri::Result<()> {
             scan_vault,
             read_markdown_files,
             list_managed_files,
+            import_vault_attachment,
+            read_vault_attachment,
+            open_vault_attachment,
             apply_markdown_changes,
             confirm_server_commit,
             save_pending_commit,

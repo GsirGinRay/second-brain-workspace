@@ -165,6 +165,40 @@ test("pending commit IPC rejects malformed nested choices and journal paths", as
   await assert.rejects(() => malformedJournal.loadPendingCommit(), /pending commit/i);
 });
 
+test("attachment IPC rejects escape paths and keeps markdown writes on .md files", async () => {
+  const adapter = createNativeAdapter(async (command) => {
+    if (command === "import_vault_attachment") return { relativePath: "附件/專案/a.png" };
+    if (command === "read_vault_attachment") {
+      return { relativePath: "附件/專案/a.png", mimeType: "image/png", bytesBase64: "YQ==" };
+    }
+    return undefined;
+  });
+  assert.equal(
+    (await adapter.importVaultAttachment!({
+      folder: "專案",
+      fileName: "a.png",
+      bytesBase64: "YQ==",
+    })).relativePath,
+    "附件/專案/a.png",
+  );
+  await assert.rejects(
+    () => adapter.importVaultAttachment!({ folder: "../x", fileName: "a.png", bytesBase64: "YQ==" }),
+    /folder/i,
+  );
+  await assert.rejects(
+    () => adapter.importVaultAttachment!({ folder: "專案", fileName: "a.exe", bytesBase64: "YQ==" }),
+    /file name/i,
+  );
+  await assert.rejects(() => adapter.openVaultAttachment!("專案/a.png"), /attachment path/i);
+  await assert.rejects(() => adapter.openVaultAttachment!("附件/../a.png"), /attachment path/i);
+  const pdfPreview = createNativeAdapter(async () => ({
+    relativePath: "附件/專案/a.png",
+    mimeType: "application/pdf",
+    bytesBase64: "YQ==",
+  }));
+  await assert.rejects(() => pdfPreview.readVaultAttachment!("附件/專案/a.png"), /mime/i);
+});
+
 test("publisher HTTP IPC validates the narrow structured response contract", async () => {
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   const adapter = createNativeAdapter(async (command, args) => {

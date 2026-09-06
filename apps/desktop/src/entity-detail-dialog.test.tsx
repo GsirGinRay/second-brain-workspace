@@ -125,6 +125,9 @@ test("project detail opens an empty live canvas and keeps the board action separ
     ));
     assert.ok(container.querySelector(".markdown-block-editor"));
     assert.equal(container.querySelectorAll(".markdown-block").length, 1, "an empty project starts with one editable block");
+    const preview = container.querySelector<HTMLElement>(".markdown-block-preview");
+    assert.ok(preview, "empty project has a live markdown canvas");
+    flushSync(() => preview!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
     assert.ok(container.querySelector(".markdown-block-input"));
     const openBoard = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("project.action.open"));
     assert.ok(openBoard);

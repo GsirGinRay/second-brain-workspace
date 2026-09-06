@@ -9,10 +9,12 @@ import {
   Save,
   X,
 } from "lucide-react";
-import type {
-  BrainProjectSnapshot,
-  BrainTaskSnapshot,
-  TaskStatus,
+import {
+  attachmentFolderForProject,
+  attachmentFolderForTask,
+  type BrainProjectSnapshot,
+  type BrainTaskSnapshot,
+  type TaskStatus,
 } from "@second-brain/brain-core";
 import { CategoryInput } from "./category-input";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
@@ -429,7 +431,7 @@ export function TaskDetailDialog({
             />
           </div>
         </div>
-        <MarkdownBlockEditor value={draft.body ?? ""} onChange={onBodyChange} locale={locale} />
+        <MarkdownBlockEditor value={draft.body ?? ""} onChange={onBodyChange} locale={locale} attachmentFolder={attachmentFolderForTask(draft.projectName)} maxAttachments={1} />
         <div className="detail-dialog-actions split-actions">
           <div>
             <DangerConfirmButton
@@ -647,7 +649,7 @@ export function ProjectDetailDialog({
           onOpenTask={onOpenProjectTask}
           onDeleteTask={onDeleteProjectTask}
         />
-        <MarkdownBlockEditor value={draft.body ?? ""} onChange={(body) => setDraft((current) => ({ ...current, body }))} locale={locale} />
+        <MarkdownBlockEditor value={draft.body ?? ""} onChange={(body) => setDraft((current) => ({ ...current, body }))} locale={locale} attachmentFolder={attachmentFolderForProject(draft.name)} />
         <div className="detail-dialog-actions split-actions">
           <div>
             <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onOpenBoard}><FolderKanban aria-hidden="true" />{t("project.action.open")}</button>

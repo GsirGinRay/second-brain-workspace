@@ -4,6 +4,7 @@ import React, { act } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
+import { AttachmentProvider } from "./attachment-context";
 import { blockMenuPlacement, deriveBlockKind, MarkdownBlockEditor, parseStyledBlock, splitTaskAwareBlocks } from "./markdown-block-editor";
 
 const window = new Window({ url: "http://localhost/" });
@@ -103,6 +104,34 @@ function renderEditor(value: string) {
   flushSync(() => root.render(<MarkdownBlockEditor value={value} onChange={(next) => changes.push(next)} locale="zh-TW" />));
   return { container, changes };
 }
+
+test("the block editor offers attach only when a vault folder and API exist", () => {
+  const without = renderEditor("note");
+  try {
+    assert.equal(without.container.querySelector('input[type="file"]'), null);
+  } finally {
+    without.container.remove();
+  }
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  flushSync(() => root.render(
+    <AttachmentProvider value={{
+      importFiles: async () => [],
+      readImage: async () => ({ relativePath: "附件/FAQ/a.png", mimeType: "image/png", bytesBase64: "" }),
+      openFile: async () => {},
+    }}>
+      <MarkdownBlockEditor value="note" onChange={() => {}} attachmentFolder="FAQ" />
+    </AttachmentProvider>,
+  ));
+  try {
+    assert.ok(container.querySelector('input[type="file"]'));
+    assert.match(container.textContent ?? "", /加入檔案/);
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
 
 test("a todo checkbox updates its Markdown in the single block canvas", () => {
   const rendered = renderEditor("- [ ] 撰寫初稿\n- [x] 發布\n\n## 備註");

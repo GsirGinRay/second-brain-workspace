@@ -38,3 +38,10 @@ test("WebView CSP never grants arbitrary HTTPS connectivity", () => {
   assert.doesNotMatch(connectSource, /https:/i);
   assert.doesNotMatch(connectSource, /(^|\s)\*(\s|$)/);
 });
+
+test("WebView img-src allows blob previews but not https images", () => {
+  const config = JSON.parse(readFileSync(resolve(import.meta.dirname, "../src-tauri/tauri.conf.json"), "utf8"));
+  const imgSource = String(config.app.security.csp).match(/img-src\s+([^;]+)/i)?.[1] ?? "";
+  assert.match(imgSource, /blob:/);
+  assert.doesNotMatch(imgSource, /https:/i);
+});

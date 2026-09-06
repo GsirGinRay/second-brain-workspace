@@ -6,6 +6,10 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
 import type { BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
+import { addDateDays, taipeiDateKey } from "@second-brain/brain-ui";
+
+const today = taipeiDateKey(new Date());
+const tomorrow = addDateDays(today, 1);
 
 register("./asset-loader.mjs", import.meta.url);
 
@@ -108,17 +112,17 @@ function pointerDragTo(source: Element, target: HTMLElement) {
 }
 
 test("agenda shows the selected day's tasks with a date input bound to the task date", () => {
-  const t = task("task-1", "買牛奶", "2026-08-15");
+  const t = task("task-1", "買牛奶", today);
   const rendered = renderCalendar([t]);
   try {
-    const cell = dayCell(rendered.container, "2026-08-15");
-    assert.ok(cell, "day cell 2026-08-15 exists");
+    const cell = dayCell(rendered.container, today);
+    assert.ok(cell, `day cell ${today} exists`);
     flushSync(() => {
       clickEvent(cell!, "click");
     });
     const input = rendered.container.querySelector<HTMLInputElement>("input[type='date']");
     assert.ok(input, "agenda date input exists");
-    assert.equal(input!.value, "2026-08-15", "input reflects the task's planned date");
+    assert.equal(input!.value, today, "input reflects the task's planned date");
     // Note: happy-dom does not deliver native input/change events to React's
     // synthetic onChange, so the save round-trip is covered by the drag tests
     // (same onSave pipeline) and the brain-core patch tests.
@@ -128,25 +132,25 @@ test("agenda shows the selected day's tasks with a date input bound to the task 
 });
 
 test("dragging a month task chip to another day schedules the new date", () => {
-  const t = task("task-1", "買牛奶", "2026-08-15");
+  const t = task("task-1", "買牛奶", today);
   const rendered = renderCalendar([t]);
   try {
     const source = rendered.container.querySelector<HTMLElement>(".calendar-task-title");
     assert.ok(source, "task chip exists");
-    const target = dayCell(rendered.container, "2026-08-16");
+    const target = dayCell(rendered.container, tomorrow);
     assert.ok(target, "target day cell exists");
     pointerDragTo(source!, target!);
 
     assert.equal(rendered.saved.length, 1, "onSave called once after pointer drop");
     const updated = rendered.saved[0]!.find((item) => item.id === "task-1");
-    assert.equal(updated?.taskDate, "2026-08-16", "dropped task date is the new day");
+    assert.equal(updated?.taskDate, tomorrow, "dropped task date is the new day");
   } finally {
     rendered.container.remove();
   }
 });
 
 test("dragging a task to the idea drawer unschedules it (taskDate null)", () => {
-  const t = task("task-1", "買牛奶", "2026-08-15");
+  const t = task("task-1", "買牛奶", today);
   const rendered = renderCalendar([t]);
   try {
     const source = rendered.container.querySelector<HTMLElement>(".calendar-task-title");

@@ -15,6 +15,16 @@ register("./asset-loader.mjs", import.meta.url);
 
 process.on("unhandledRejection", () => undefined);
 
+const FIXED_NOW = Date.parse("2026-08-15T00:00:00+08:00");
+const OriginalDate = Date;
+class MockDate extends OriginalDate {
+  constructor(...args: unknown[]) {
+    if (args.length === 0) super(FIXED_NOW);
+    else super(...(args as ConstructorParameters<typeof Date>));
+  }
+}
+globalThis.Date = MockDate as unknown as DateConstructor;
+
 const { App } = await import("./App");
 
 const window = new Window({ url: "http://localhost/" });
@@ -263,13 +273,13 @@ test("end-to-end: agenda date input is bound to the task's planned date", async 
 test("end-to-end: a stale-hash write is retried after re-scan so the date edit lands", async () => {
   const root = setupVault();
   const base = createVaultAdapter(root);
-  let failNext = true;
+  let writes = 0;
   const adapter: NativeAdapter = {
     ...base,
     async applyMarkdownChanges(changes) {
-      if (failNext) {
-        // Simulate a concurrent writer moving the file between scan and write.
-        failNext = false;
+      writes += 1;
+      // First write is vault bootstrap (marker migration). Fail the next user edit.
+      if (writes === 2) {
         throw new Error("file changed before write");
       }
       return base.applyMarkdownChanges(changes);

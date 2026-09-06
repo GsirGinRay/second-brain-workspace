@@ -9,8 +9,10 @@ use second_brain_workspace_lib::canonical::{
 use second_brain_workspace_lib::error::NativeError;
 use second_brain_workspace_lib::key_store::{KeyBackend, KeyStore};
 use second_brain_workspace_lib::path_policy::{
-    managed_subfolder, prepare_path_for_create, scan_markdown, scan_markdown_with_hook,
-    validate_path_under_root, validate_relative_path, validate_vault_root, ScanLimits,
+    import_attachment_bytes, managed_subfolder, prepare_path_for_create, read_attachment_image,
+    resolve_attachment_for_open, scan_markdown, scan_markdown_with_hook,
+    validate_attachment_relative_path, validate_path_under_root, validate_relative_path,
+    validate_vault_root, ScanLimits,
 };
 
 #[test]
@@ -252,6 +254,69 @@ fn markdown_scan_skips_templates_attachments_tmp_backup_but_reads_legacy_project
         let text = path.to_string_lossy();
         !text.contains("backup") && !text.contains("模板") && !text.contains("附件") && !text.contains("tmp")
     }));
+}
+
+#[test]
+fn attachment_paths_are_restricted_to_the_attachments_folder() {
+    assert!(validate_attachment_relative_path(Path::new("附件/開源發布/photo.png")).is_ok());
+    assert!(validate_attachment_relative_path(Path::new("附件/FAQ/brief.pdf")).is_ok());
+    for path in [
+        "附件/photo.png",
+        "專案/photo.png",
+        "附件/../escape/photo.png",
+        "../附件/x/photo.png",
+        "附件/開源發布/payload.exe",
+        "附件/開源發布/click.js",
+        "附件/開源發布/page.html",
+        "附件/.hidden/photo.png",
+        "notes/task.md",
+    ] {
+        assert!(
+            validate_attachment_relative_path(Path::new(path)).is_err(),
+            "{path}"
+        );
+    }
+    assert!(validate_relative_path(Path::new("附件/開源發布/photo.png")).is_err());
+}
+
+#[test]
+fn importing_an_attachment_copies_under_attachments_and_suffixes_collisions() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir(&root).unwrap();
+    let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    let first = import_attachment_bytes(&root, "開源發布", "photo.png", &png).unwrap();
+    assert_eq!(
+        first.to_string_lossy().replace('\\', "/"),
+        "附件/開源發布/photo.png"
+    );
+    assert_eq!(
+        fs::read(root.join("附件").join("開源發布").join("photo.png")).unwrap(),
+        png
+    );
+    let second = import_attachment_bytes(&root, "開源發布", "photo.png", &png).unwrap();
+    assert_eq!(
+        second.to_string_lossy().replace('\\', "/"),
+        "附件/開源發布/photo-2.png"
+    );
+    assert!(root.join("附件").join("開源發布").join("photo-2.png").is_file());
+    assert!(import_attachment_bytes(&root, "開源發布", "payload.exe", &png).is_err());
+    assert!(import_attachment_bytes(&root, "../escape", "photo.png", &png).is_err());
+    let outside = dir.path().join("outside.png");
+    fs::write(&outside, &png).unwrap();
+    assert!(validate_attachment_relative_path(&outside).is_err());
+    assert!(read_attachment_image(&root, Path::new("附件/開源發布/photo.png")).is_ok());
+    assert!(read_attachment_image(&root, Path::new("附件/開源發布/brief.pdf")).is_err());
+    fs::write(
+        root.join("附件").join("開源發布").join("brief.pdf"),
+        b"%PDF",
+    )
+    .unwrap();
+    assert!(read_attachment_image(&root, Path::new("附件/開源發布/brief.pdf")).is_err());
+    assert!(resolve_attachment_for_open(&root, Path::new("附件/開源發布/photo.png")).is_ok());
+    assert!(resolve_attachment_for_open(&root, Path::new("../escape.png")).is_err());
+    let scanned = scan_markdown(&root, ScanLimits::default(), &|| false).unwrap();
+    assert!(scanned.files.is_empty());
 }
 
 #[test]

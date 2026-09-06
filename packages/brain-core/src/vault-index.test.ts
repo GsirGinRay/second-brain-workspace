@@ -109,6 +109,20 @@ test("renderVaultIndex renders an empty vault without throwing", () => {
   assert.ok(!out.includes("No collections yet"));
 });
 
+test("renderVaultIndex never embeds attachment files", () => {
+  const out = renderVaultIndex({
+    ...input(),
+    existingPaths: [
+      "附件/開源發布/diagram.png",
+      "專案/開源發布.md",
+      "日誌/2026-08-15.md",
+    ],
+  });
+  assert.doesNotMatch(out, /diagram\.png/);
+  assert.doesNotMatch(out, /附件\//);
+  assert.match(out, /日誌\/2026-08-15\.md/);
+});
+
 test("renderVaultIndex lists in-progress projects with the canonical path", () => {
   const out = renderVaultIndex(input());
   const projects = section(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { AttachmentProvider } from "./attachment-context";
 import { fencedCodeInsertion, MarkdownEditor, MarkdownPreview } from "./markdown-editor";
 
 test("Markdown preview renders useful syntax without interpreting raw HTML", () => {
@@ -45,6 +46,28 @@ test("MarkdownEditor renders an icon-only toggle instead of the segmented contro
   assert.match(html, /editor-toggle-icon/);
   assert.doesNotMatch(html, /segmented-control/);
   assert.match(html, /<h1>Hi<\/h1>/);
+});
+
+test("Markdown preview only shows vault images after a restricted read", () => {
+  const html = renderToStaticMarkup(<MarkdownPreview value={'![](附件/專案/a.png)\n\n![](https://evil.example/x.png)'} />);
+  assert.doesNotMatch(html, /file:/);
+  assert.doesNotMatch(html, /src="附件/);
+  assert.doesNotMatch(html, /evil\.example/);
+  assert.match(html, /markdown-image-pending/);
+});
+
+test("MarkdownEditor shows an attach control when a vault folder is provided", () => {
+  const html = renderToStaticMarkup(
+    <AttachmentProvider value={{
+      importFiles: async () => [],
+      readImage: async () => ({ relativePath: "附件/專案/a.png", mimeType: "image/png", bytesBase64: "" }),
+      openFile: async () => {},
+    }}>
+      <MarkdownEditor value="" onChange={() => {}} attachmentFolder="專案" />
+    </AttachmentProvider>,
+  );
+  assert.match(html, /aria-label="加入檔案"/);
+  assert.match(html, /type="file"/);
 });
 
 test("MarkdownEditor write mode shows a basic formatting toolbar with code block and inline helpers", () => {

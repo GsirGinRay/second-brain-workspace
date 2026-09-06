@@ -124,6 +124,28 @@ export {
 } from "./vault-paths";
 export type { DailyJournalRef, KnowledgeCategory } from "./vault-paths";
 export {
+  ATTACHMENT_ACCEPT,
+  ATTACHMENT_FILE_EXTENSIONS,
+  ATTACHMENT_IMAGE_EXTENSIONS,
+  ATTACHMENT_MAX_FILE_BYTES,
+  attachmentExtension,
+  attachmentFolderForJournal,
+  attachmentFolderForKnowledge,
+  attachmentFolderForProject,
+  attachmentFolderForTask,
+  canAddAttachments,
+  canonicalAttachmentPath,
+  extractAttachmentHrefs,
+  isAllowedAttachmentExtension,
+  isImageAttachmentExtension,
+  isImageAttachmentPath,
+  renderAttachmentMarkdown,
+  sanitizeAttachmentFileName,
+  sanitizeAttachmentFolderName,
+  uniqueAttachmentFileName,
+  vaultAttachmentRelativePath,
+} from "./attachments";
+export {
   DAILY_JOURNAL_HEADINGS,
   renderDailyJournalDocument,
 } from "./journal";

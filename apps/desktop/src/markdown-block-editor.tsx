@@ -1,6 +1,8 @@
-import React, { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Code2, Copy, GripVertical, Palette, Plus, Repeat2, Trash2 } from "lucide-react";
+import React, { useEffect, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Code2, Copy, GripVertical, Palette, Paperclip, Plus, Repeat2, Trash2 } from "lucide-react";
+import { ATTACHMENT_ACCEPT } from "@second-brain/brain-core";
 import { MarkdownPreview, type MarkdownEditorLocale } from "./markdown-editor";
+import { filesFromDrop, snippetsFromFiles, useVaultAttachments } from "./attachment-context";
 import { GLOBAL_SELECTION_DELETE_EVENT } from "./global-shift-marquee";
 
 interface MarkdownBlock {
@@ -306,12 +308,19 @@ export function MarkdownBlockEditor({
   value,
   onChange,
   locale = "zh-TW",
+  attachmentFolder,
+  maxAttachments,
 }: {
   value: string;
   onChange: (value: string) => void;
   locale?: MarkdownEditorLocale;
+  attachmentFolder?: string;
+  maxAttachments?: number;
 }) {
   const zh = locale === "zh-TW";
+  const attachments = useVaultAttachments();
+  const canAttach = Boolean(attachments && attachmentFolder);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [blocks, setBlocks] = useState<MarkdownBlock[]>(() => createBlocks(value));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -706,6 +715,29 @@ export function MarkdownBlockEditor({
     commit(next);
     setEditingId(block.id);
   };
+  const insertSnippets = (snippets: string[]) => {
+    if (snippets.length === 0) return;
+    pushHistory();
+    const created = snippets.map((source) => ({ id: newBlockId(), source }));
+    const empty = blocks.length === 0 || (blocks.length === 1 && !parseStyledBlock(blocks[0]!.source).content.trim());
+    commit(empty ? created : [...blocks, ...created]);
+  };
+  const importFiles = (files: File[]) => {
+    if (!attachments || !attachmentFolder) return;
+    void snippetsFromFiles(attachments, attachmentFolder, files, value, locale, maxAttachments).then(insertSnippets);
+  };
+  const onDragOver = (event: ReactDragEvent) => {
+    if (!canAttach || filesFromDrop(event).length === 0) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+  const onDrop = (event: ReactDragEvent) => {
+    const files = filesFromDrop(event);
+    if (!canAttach || files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    importFiles(files);
+  };
 
   /**
    * Notion-style typing helpers inside a block textarea.
@@ -1059,6 +1091,8 @@ export function MarkdownBlockEditor({
       className={`markdown-block-editor ${marqueeBox ? "marquee-selecting" : ""}`}
       aria-label={zh ? "Markdown 內容" : "Markdown content"}
       onKeyDown={handleHistoryShortcut}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       onPointerDownCapture={beginMarqueeSelection}
       onPointerMove={moveMarqueeSelection}
       onPointerUp={endMarqueeSelection}
@@ -1508,7 +1542,15 @@ export function MarkdownBlockEditor({
           aria-hidden="true"
         />
       )}
-      {blocks.some((block) => parseStyledBlock(block.source).content.trim()) && <button type="button" className="markdown-block-add" onClick={() => addBlock()}><Plus aria-hidden="true" />{zh ? "新增區塊" : "Add block"}</button>}
+      <div className="markdown-block-footer">
+        {canAttach && (
+          <>
+            <input ref={fileInputRef} type="file" hidden accept={ATTACHMENT_ACCEPT} multiple={maxAttachments !== 1} onChange={(event) => { const files = [...(event.target.files ?? [])]; event.target.value = ""; importFiles(files); }} />
+            <button type="button" className="markdown-block-add" onClick={() => fileInputRef.current?.click()}><Paperclip aria-hidden="true" />{zh ? "加入檔案" : "Add file"}</button>
+          </>
+        )}
+        {blocks.some((block) => parseStyledBlock(block.source).content.trim()) && <button type="button" className="markdown-block-add" onClick={() => addBlock()}><Plus aria-hidden="true" />{zh ? "新增區塊" : "Add block"}</button>}
+      </div>
     </section>
   );
 }

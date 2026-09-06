@@ -79,6 +79,22 @@ export interface MarkdownApplyResult {
   backupPath: string;
 }
 
+export interface ImportVaultAttachmentRequest {
+  folder: string;
+  fileName: string;
+  bytesBase64: string;
+}
+
+export interface VaultAttachmentInfo {
+  relativePath: string;
+}
+
+export interface VaultAttachmentContents {
+  relativePath: string;
+  mimeType: string;
+  bytesBase64: string;
+}
+
 export interface PendingCommitRecord {
   planId: string;
   idempotencyKey: string;
@@ -102,6 +118,9 @@ export interface NativeAdapter {
   scanVault(): Promise<ScannedMarkdownFile[]>;
   readMarkdownFiles(relativePaths: string[]): Promise<MarkdownFileContents[]>;
   listManagedFiles?(folder: string): Promise<string[]>;
+  importVaultAttachment?(request: ImportVaultAttachmentRequest): Promise<VaultAttachmentInfo>;
+  readVaultAttachment?(relativePath: string): Promise<VaultAttachmentContents>;
+  openVaultAttachment?(relativePath: string): Promise<void>;
   applyMarkdownChanges(changes: MarkdownChangeRequest[]): Promise<MarkdownApplyResult>;
   confirmServerCommit(journalPath: string): Promise<void>;
   savePendingCommit(pending: PendingCommitRecord): Promise<void>;
@@ -137,6 +156,53 @@ function assertSha256(value: unknown, name: string): string {
   const result = assertString(value, name, 64);
   if (!/^[a-f0-9]{64}$/i.test(result)) throw new Error(`native response field ${name} is invalid`);
   return result.toLowerCase();
+}
+
+const ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|svg|pdf|txt|md|csv)$/i;
+
+function assertAttachmentFolder(value: string): string {
+  if (
+    value.length === 0
+    || value.length > 100
+    || value.includes("..")
+    || value.includes("/")
+    || value.includes("\\")
+    || value.startsWith(".")
+  ) {
+    throw new Error("attachment folder is invalid");
+  }
+  return value;
+}
+
+function assertAttachmentFileName(value: string): string {
+  if (
+    value.length === 0
+    || value.length > 200
+    || value.includes("..")
+    || value.includes("/")
+    || value.includes("\\")
+    || value.startsWith(".")
+    || !ATTACHMENT_EXT.test(value)
+  ) {
+    throw new Error("attachment file name is invalid");
+  }
+  return value;
+}
+
+function assertAttachmentRelativePath(value: unknown): string {
+  const path = assertString(value, "relativePath", 500);
+  if (
+    path.includes("..")
+    || path.startsWith("/")
+    || path.includes("\\")
+    || !path.startsWith("附件/")
+    || !ATTACHMENT_EXT.test(path)
+  ) {
+    throw new Error("attachment path is invalid");
+  }
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length !== 3 || parts[0] !== "附件") throw new Error("attachment path is invalid");
+  return path;
 }
 
 function assertUuid(value: unknown, name: string): string {
@@ -410,6 +476,34 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
       const value = await invoke("list_managed_files", { folder });
       if (!Array.isArray(value)) throw new Error("native managed file list is invalid");
       return value.map((item) => assertString(item, "path", 500));
+    },
+    async importVaultAttachment(request) {
+      assertAttachmentFolder(request.folder);
+      assertAttachmentFileName(request.fileName);
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(request.bytesBase64) || request.bytesBase64.length > 24_000_000) {
+        throw new Error("attachment bytes are invalid");
+      }
+      const value = assertRecord(await invoke("import_vault_attachment", { request }));
+      assertExactKeys(value, ["relativePath"]);
+      return { relativePath: assertAttachmentRelativePath(value.relativePath) };
+    },
+    async readVaultAttachment(relativePath) {
+      const path = assertAttachmentRelativePath(relativePath);
+      const value = assertRecord(await invoke("read_vault_attachment", { request: { relativePath: path } }));
+      assertExactKeys(value, ["relativePath", "mimeType", "bytesBase64"]);
+      const bytesBase64 = assertString(value.bytesBase64, "bytesBase64", 24_000_000);
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(bytesBase64)) throw new Error("native attachment bytes are invalid");
+      const mimeType = assertString(value.mimeType, "mimeType", 128);
+      if (!mimeType.startsWith("image/")) throw new Error("native attachment mime type is invalid");
+      return {
+        relativePath: assertAttachmentRelativePath(value.relativePath),
+        mimeType,
+        bytesBase64,
+      };
+    },
+    async openVaultAttachment(relativePath) {
+      const path = assertAttachmentRelativePath(relativePath);
+      await invoke("open_vault_attachment", { request: { relativePath: path } });
     },
     async applyMarkdownChanges(changes) {
       if (changes.length === 0) throw new Error("at least one markdown change is required");

@@ -49,6 +49,10 @@ import {
   extractPromptVariables,
   fillPromptVariables,
   KNOWLEDGE_CATEGORIES,
+  attachmentFolderForJournal,
+  attachmentFolderForKnowledge,
+  attachmentFolderForProject,
+  attachmentFolderForTask,
   collectionMatchesCategoryFilter,
   knowledgeFilterCategories,
   resolveDailyJournal,
@@ -126,6 +130,7 @@ import {
   type UiPreferences,
 } from "./ui-preferences";
 import appLogo from "./assets/app-logo.png";
+import { AttachmentProvider, createAttachmentApi } from "./attachment-context";
 import { MarkdownEditor } from "./markdown-editor";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
 import { formatMinutesAsTime, minutesFromOffset, snapMinutes, timeFromSlotDrop } from "./day-schedule";
@@ -260,6 +265,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     () => providedAdapter ?? createNativeAdapter(),
     [providedAdapter],
   );
+  const attachmentApi = useMemo(() => createAttachmentApi(native), [native]);
   const [view, setView] = useState<View>("today");
   const [preferences, setPreferences] = useState<UiPreferences>(loadUiPreferences);
   const t = useCallback<Translate>(
@@ -1585,6 +1591,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
 
   return (
     <UiPreferencesContext.Provider value={{ preferences, setPreferences, t }}>
+    <AttachmentProvider value={attachmentApi}>
     <div data-theme={preferences.theme} className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <GlobalShiftMarquee />
       <aside className="sidebar">
@@ -2094,6 +2101,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         </div>
       )}
     </div>
+    </AttachmentProvider>
     </UiPreferencesContext.Provider>
   );
 
@@ -2129,7 +2137,7 @@ function TaskEditor({
         value={value.title}
         onChange={(event) => setValue({ ...value, title: event.target.value })}
       />
-      <MarkdownEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} />
+      <MarkdownEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} attachmentFolder={attachmentFolderForTask(value.projectName)} maxAttachments={1} />
       <div className="form-row">
         <select
           aria-label={t("task.field.status")}
@@ -2329,7 +2337,7 @@ function JournalDialog({
         </div>
         <p>{t("today.journal.hint")}</p>
         <small className="journal-path">{relativePath}</small>
-        <MarkdownEditor value={value} onChange={setValue} locale={preferences.language} minRows={16} />
+        <MarkdownEditor value={value} onChange={setValue} locale={preferences.language} minRows={16} attachmentFolder={attachmentFolderForJournal()} />
         <div className="modal-actions">
           <button className="secondary-button" onClick={requestClose}>{t("app.cancel")}</button>
           <button className="primary action-with-icon" disabled={working || !dirty} onClick={() => onSave(value)}>
@@ -2879,7 +2887,7 @@ function QuickAddModal({
         </label>
         <div className="quick-content-field">
           <span>{t("quick.content")}</span>
-          <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} />
+          <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} attachmentFolder={attachmentFolderForTask(projects.find((item) => item.id === projectId)?.name)} maxAttachments={1} />
         </div>
         {templates.length > 0 && (
           <div className="quick-template-row">
@@ -4465,7 +4473,7 @@ function ProjectEditor({
           <DangerConfirmButton className="danger icon-action" armLabel={t("project.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={onDelete} />
         </div>
       </div>
-      <MarkdownEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} minRows={8} />
+      <MarkdownEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} minRows={8} attachmentFolder={attachmentFolderForProject(value.name)} />
     </article>
   );
 }
@@ -4682,7 +4690,7 @@ function CollectionEditor({
       </label>
       <label>{t("entity.field.importance")}<select value={value.importance ?? ""} onChange={(event) => setValue({ ...value, importance: event.target.value ? Number(event.target.value) : null })}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
     </div>
-    <MarkdownBlockEditor value={value.body} onChange={(body) => setValue({ ...value, body })} locale={locale} />
+    <MarkdownBlockEditor value={value.body} onChange={(body) => setValue({ ...value, body })} locale={locale} attachmentFolder={attachmentFolderForKnowledge(value.category)} />
     <div className="project-actions">
       {isPrompt && variables.length > 0 && (
         <button className="secondary-button action-with-icon" onClick={openFill}>◆ {t("collection.fillCopy")}</button>
@@ -4779,7 +4787,7 @@ function CreateEntityModal({
         {kind === "collection" && templates.length > 0 && (
           <label>{preferences.language === "zh-TW" ? "套用模板" : "Apply template"}<select value="" onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!name.trim()) setName(picked.name); } }}><option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>{templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
         )}
-        {kind === "collection" && <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} />}
+        {kind === "collection" && <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} attachmentFolder={attachmentFolderForKnowledge(category)} />}
         <div className="modal-actions"><button className="secondary-button" onClick={onClose}>{t("app.cancel")}</button><button className="primary" disabled={!name.trim() || submitting} onClick={() => void submit()}>{t(submitting ? "app.creating" : "app.create")}</button></div>
       </section>
     </div>

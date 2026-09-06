@@ -186,6 +186,309 @@ pub fn prepare_path_for_create(root: &Path, relative: &Path) -> Result<PathBuf, 
     validate_path_under_root(&canonical_root, relative)
 }
 
+const ATTACHMENT_ROOT: &str = "附件";
+const ATTACHMENT_MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+pub fn is_allowed_attachment_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "pdf" | "txt" | "md" | "csv"
+    )
+}
+
+pub fn is_image_attachment_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg"
+    )
+}
+
+pub fn attachment_mime(ext: &str) -> Option<&'static str> {
+    Some(match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "txt" => "text/plain",
+        "md" => "text/markdown",
+        "csv" => "text/csv",
+        _ => return None,
+    })
+}
+
+fn sanitize_attachment_folder(name: &str) -> Result<String, NativeError> {
+    let mut cleaned = String::new();
+    for ch in name.chars() {
+        if ch.is_control() {
+            continue;
+        }
+        if "/\\:*?\"<>|".contains(ch) {
+            if !cleaned.ends_with(' ') {
+                cleaned.push(' ');
+            }
+        } else {
+            cleaned.push(ch);
+        }
+    }
+    let cleaned = cleaned.trim().trim_end_matches(['.', ' ']).to_string();
+    if cleaned.is_empty() || cleaned.starts_with('.') || cleaned.contains("..") || cleaned.len() > 100
+    {
+        return Err(NativeError::InvalidRequest);
+    }
+    Ok(cleaned)
+}
+
+fn sanitize_attachment_file_name(name: &str) -> Result<String, NativeError> {
+    let base = name.replace('\\', "/");
+    let base = base.rsplit('/').next().unwrap_or("").trim();
+    if base.is_empty() || base.starts_with('.') || base.contains("..") {
+        return Err(NativeError::UnsafePath);
+    }
+    let ext = Path::new(base)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !is_allowed_attachment_extension(&ext) {
+        return Err(NativeError::UnsafePath);
+    }
+    let stem = Path::new(base)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || "/\\:*?\"<>|".contains(ch) {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect::<String>();
+    let stem = stem.trim().trim_end_matches(['.', ' ']).to_string();
+    if stem.is_empty() || stem.len() > 120 {
+        return Err(NativeError::UnsafePath);
+    }
+    Ok(format!("{stem}.{ext}"))
+}
+
+/// `附件/<folder>/<file.ext>` only. Markdown writes stay on `.md` paths.
+pub fn validate_attachment_relative_path(path: &Path) -> Result<(), NativeError> {
+    if path.as_os_str().is_empty() {
+        return Err(NativeError::UnsafePath);
+    }
+    let components: Vec<_> = path.components().collect();
+    if components.len() != 3 {
+        return Err(NativeError::UnsafePath);
+    }
+    for component in &components {
+        match component {
+            Component::Normal(value) => {
+                let name = value.to_string_lossy();
+                if is_technical_name(&name) || is_template_dir(&name) {
+                    return Err(NativeError::UnsafePath);
+                }
+            }
+            _ => return Err(NativeError::UnsafePath),
+        }
+    }
+    let first = match components[0] {
+        Component::Normal(value) => value.to_string_lossy(),
+        _ => return Err(NativeError::UnsafePath),
+    };
+    if first != ATTACHMENT_ROOT {
+        return Err(NativeError::UnsafePath);
+    }
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    if !is_allowed_attachment_extension(ext) {
+        return Err(NativeError::UnsafePath);
+    }
+    Ok(())
+}
+
+pub fn validate_attachment_path_under_root(
+    root: &Path,
+    relative: &Path,
+) -> Result<PathBuf, NativeError> {
+    let canonical_root = validate_vault_root(root)?;
+    validate_attachment_relative_path(relative)?;
+    let candidate = canonical_root.join(relative);
+    let components = relative.components().collect::<Vec<_>>();
+    let mut current = canonical_root.clone();
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            return Err(NativeError::UnsafePath);
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if is_reparse_or_symlink(&current, &metadata) || is_hidden(&current) {
+                    return Err(NativeError::UnsafePath);
+                }
+                let is_last = index + 1 == components.len();
+                if !is_last && !metadata.is_dir() {
+                    return Err(NativeError::UnsafePath);
+                }
+                if is_last && metadata.is_dir() {
+                    return Err(NativeError::UnsafePath);
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && index + 1 == components.len() => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let canonical_parent = candidate
+        .parent()
+        .ok_or(NativeError::UnsafePath)?
+        .canonicalize()?;
+    if !canonical_parent.starts_with(&canonical_root) {
+        return Err(NativeError::UnsafePath);
+    }
+    if candidate.exists() && !candidate.canonicalize()?.starts_with(&canonical_root) {
+        return Err(NativeError::UnsafePath);
+    }
+    Ok(candidate)
+}
+
+pub fn prepare_attachment_path_for_create(
+    root: &Path,
+    relative: &Path,
+) -> Result<PathBuf, NativeError> {
+    let canonical_root = validate_vault_root(root)?;
+    validate_attachment_relative_path(relative)?;
+    let parent = relative.parent().ok_or(NativeError::UnsafePath)?;
+    let mut current = canonical_root.clone();
+    for component in parent.components() {
+        let Component::Normal(name) = component else {
+            return Err(NativeError::UnsafePath);
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if !metadata.is_dir()
+                    || is_reparse_or_symlink(&current, &metadata)
+                    || is_hidden(&current)
+                {
+                    return Err(NativeError::UnsafePath);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current)?;
+                let metadata = fs::symlink_metadata(&current)?;
+                if !metadata.is_dir()
+                    || is_reparse_or_symlink(&current, &metadata)
+                    || is_hidden(&current)
+                {
+                    return Err(NativeError::UnsafePath);
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    validate_attachment_path_under_root(&canonical_root, relative)
+}
+
+fn unique_attachment_file_name(dir: &Path, original: &str) -> Result<String, NativeError> {
+    let mut used = std::collections::HashSet::new();
+    if dir.exists() {
+        for entry in fs::read_dir(dir)? {
+            let name = entry?.file_name().to_string_lossy().to_ascii_lowercase();
+            used.insert(name);
+        }
+    }
+    if !used.contains(&original.to_ascii_lowercase()) {
+        return Ok(original.to_string());
+    }
+    let stem = Path::new(original)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("file");
+    let ext = Path::new(original)
+        .extension()
+        .and_then(|value| value.to_str());
+    for suffix in 2..10_000 {
+        let candidate = match ext {
+            Some(ext) => format!("{stem}-{suffix}.{ext}"),
+            None => format!("{stem}-{suffix}"),
+        };
+        if !used.contains(&candidate.to_ascii_lowercase()) {
+            return Ok(candidate);
+        }
+    }
+    Err(NativeError::LimitExceeded)
+}
+
+/// Copy bytes into `附件/<folder>/<file>`, adding `-2` on name collision.
+/// Returns the vault-relative path with forward slashes.
+pub fn import_attachment_bytes(
+    root: &Path,
+    folder: &str,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, NativeError> {
+    if bytes.is_empty() || bytes.len() as u64 > ATTACHMENT_MAX_FILE_BYTES {
+        return Err(NativeError::LimitExceeded);
+    }
+    let folder = sanitize_attachment_folder(folder)?;
+    let file_name = sanitize_attachment_file_name(file_name)?;
+    let canonical_root = validate_vault_root(root)?;
+    let dest_dir = canonical_root.join(ATTACHMENT_ROOT).join(&folder);
+    let unique_name = unique_attachment_file_name(&dest_dir, &file_name)?;
+    let relative = PathBuf::from(ATTACHMENT_ROOT)
+        .join(&folder)
+        .join(&unique_name);
+    let target = prepare_attachment_path_for_create(root, &relative)?;
+    if target.exists() {
+        return Err(NativeError::Locked);
+    }
+    fs::write(&target, bytes)?;
+    Ok(relative)
+}
+
+/// Read an image under `附件/` for Markdown preview. PDFs must be opened instead.
+pub fn read_attachment_image(
+    root: &Path,
+    relative: &Path,
+) -> Result<(String, Vec<u8>), NativeError> {
+    let ext = relative
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    if !is_image_attachment_extension(ext) {
+        return Err(NativeError::UnsafePath);
+    }
+    let mime = attachment_mime(ext).ok_or(NativeError::UnsafePath)?;
+    let target = validate_attachment_path_under_root(root, relative)?;
+    let before = fs::metadata(&target)?;
+    if !before.is_file() || before.len() > ATTACHMENT_MAX_FILE_BYTES {
+        return Err(NativeError::LimitExceeded);
+    }
+    let bytes = fs::read(&target)?;
+    let after = fs::metadata(&target)?;
+    if before.len() != bytes.len() as u64 || before.len() != after.len() {
+        return Err(NativeError::HashPrecondition);
+    }
+    Ok((mime.to_owned(), bytes))
+}
+
+pub fn resolve_attachment_for_open(
+    root: &Path,
+    relative: &Path,
+) -> Result<PathBuf, NativeError> {
+    let target = validate_attachment_path_under_root(root, relative)?;
+    if !target.is_file() {
+        return Err(NativeError::UnsafePath);
+    }
+    Ok(target)
+}
+
 pub fn scan_markdown(
     root: &Path,
     limits: ScanLimits,
