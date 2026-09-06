@@ -151,6 +151,18 @@ export {
 } from "./journal";
 export type { DailyJournalHeading } from "./journal";
 export {
+  OUTCOME_SOURCE_DATE_PREFIX,
+  buildOutcomeKnowledgeDraft,
+  defaultJournalKnowledgeTitle,
+  extractMarkdownSection,
+  extractWikilinkTargets,
+  journalUpgradeContent,
+  knowledgeMentionsProject,
+  relatedKnowledgeForProject,
+  renderOutcomeKnowledgeBody,
+} from "./knowledge";
+export type { OutcomeKnowledgeInput } from "./knowledge";
+export {
   parsePluginExport,
   renderPluginExport,
   promptToCollection,

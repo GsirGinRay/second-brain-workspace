@@ -19,7 +19,9 @@ vault so an AI can find projects, knowledge, today's and overdue tasks with
 file paths, today's journal, and unscheduled ideas. Daily journals live at
 `日誌/YYYY-MM-DD.md` (legacy `05-每日工作台/` notes still open). Attachments copy
 into `附件/<project or category>/`; Markdown stores only a relative link. Images
-preview in the app; other files open with the system default.
+preview in the app; other files open with the system default. A task or today's
+journal can be saved as a knowledge note without changing the original file;
+project pages list knowledge that wikilinks the project.
 
 A private Publisher build can still embed one exact HTTPS origin. That adapter
 is not part of the public product and is not required to use the desktop app.

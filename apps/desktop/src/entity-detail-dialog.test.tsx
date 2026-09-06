@@ -296,3 +296,77 @@ test("project detail lists its tasks and the composer adds one bound to the proj
     container.remove();
   }
 });
+
+test("task detail can save as knowledge from the current draft without completing the task", () => {
+  const savedAs: BrainTaskSnapshot[] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <TaskDetailDialog
+        task={detailTask({ body: "會議結論" })}
+        projects={[]}
+        locale="zh-TW"
+        t={(key) => key}
+        onClose={() => undefined}
+        onSave={() => true}
+        onDelete={() => undefined}
+        onSaveAsKnowledge={(task) => savedAs.push(task)}
+      />,
+    ));
+    const saveAs = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("knowledge.action.save"));
+    assert.ok(saveAs, "save as knowledge is available from task detail");
+    flushSync(() => saveAs!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    assert.equal(savedAs.length, 1);
+    assert.equal(savedAs[0]?.title, "完整任務");
+    assert.equal(savedAs[0]?.status, "todo", "saving as knowledge does not complete the task");
+    assert.equal(savedAs[0]?.body, "會議結論");
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("project detail lists related knowledge and opens the selected note", () => {
+  const opened: string[] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <ProjectDetailDialog
+        project={projectDetail()}
+        openTasks={0}
+        doingTasks={0}
+        existingAreas={[]}
+        projectTasks={[]}
+        locale="zh-TW"
+        t={(key) => key}
+        onClose={() => undefined}
+        onSave={() => true}
+        onOpenBoard={() => undefined}
+        onComplete={() => undefined}
+        onReopen={() => undefined}
+        onArchive={() => undefined}
+        onDelete={() => undefined}
+        onAddProjectTask={() => undefined}
+        onToggleProjectTask={() => undefined}
+        onOpenProjectTask={() => undefined}
+        onDeleteProjectTask={() => undefined}
+        relatedKnowledge={[{ id: "note-1", name: "會議紀錄", category: "方法" }]}
+        onOpenKnowledge={(id) => opened.push(id)}
+      />,
+    ));
+    const section = container.querySelector(".detail-knowledge-section");
+    assert.ok(section, "related knowledge is listed on the project page");
+    assert.ok(section!.textContent?.includes("會議紀錄"));
+    const openNote = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("會議紀錄"));
+    assert.ok(openNote);
+    flushSync(() => openNote!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    assert.deepEqual(opened, ["note-1"]);
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   Archive,
+  BookPlus,
   CheckCircle2,
   FolderKanban,
   Maximize2,
@@ -321,6 +322,7 @@ export function TaskDetailDialog({
   onSave,
   onDelete,
   onCreateProject,
+  onSaveAsKnowledge,
 }: {
   task: BrainTaskSnapshot;
   projects: BrainProjectSnapshot[];
@@ -335,6 +337,7 @@ export function TaskDetailDialog({
   onSave: (task: BrainTaskSnapshot) => Promise<boolean> | boolean;
   onDelete: (task: BrainTaskSnapshot) => void;
   onCreateProject?: (name: string) => Promise<CreatedProject | null>;
+  onSaveAsKnowledge?: (task: BrainTaskSnapshot) => void;
 }) {
   const [draft, setDraft] = useState(task);
   const [saving, setSaving] = useState(false);
@@ -440,6 +443,15 @@ export function TaskDetailDialog({
               confirmLabel={t("confirm.deleteAgain")}
               onConfirm={() => onDelete(task)}
             />
+            {onSaveAsKnowledge && (
+              <button
+                type="button"
+                className="secondary-button action-with-icon"
+                onClick={() => onSaveAsKnowledge(draft)}
+              >
+                <BookPlus aria-hidden="true" />{t("knowledge.action.save")}
+              </button>
+            )}
           </div>
           <div>
             <button type="button" className="secondary-button" onClick={cancel}>{t("app.cancel")}</button>
@@ -564,6 +576,8 @@ export function ProjectDetailDialog({
   onToggleProjectTask,
   onOpenProjectTask,
   onDeleteProjectTask,
+  relatedKnowledge = [],
+  onOpenKnowledge,
 }: {
   project: BrainProjectSnapshot;
   openTasks: number;
@@ -589,6 +603,8 @@ export function ProjectDetailDialog({
   onToggleProjectTask: (task: BrainTaskSnapshot) => void;
   onOpenProjectTask: (taskId: string) => void;
   onDeleteProjectTask: (task: BrainTaskSnapshot) => void;
+  relatedKnowledge?: { id: string; name: string; category: string | null }[];
+  onOpenKnowledge?: (id: string) => void;
 }) {
   const [draft, setDraft] = useState(project);
   const [saving, setSaving] = useState(false);
@@ -649,6 +665,30 @@ export function ProjectDetailDialog({
           onOpenTask={onOpenProjectTask}
           onDeleteTask={onDeleteProjectTask}
         />
+        {onOpenKnowledge && (
+          <section className="detail-task-section detail-knowledge-section">
+            <header>
+              <h3>{t("project.relatedKnowledge")}</h3>
+              <small>{relatedKnowledge.length}</small>
+            </header>
+            {relatedKnowledge.length === 0 ? (
+              <p className="detail-task-empty">{t("project.relatedKnowledge.empty")}</p>
+            ) : (
+              <ul className="detail-knowledge-list">
+                {relatedKnowledge.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      className="detail-knowledge-title"
+                      onClick={() => onOpenKnowledge(item.id)}
+                    >{item.name}</button>
+                    {item.category ? <small>{item.category}</small> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
         <MarkdownBlockEditor value={draft.body ?? ""} onChange={(body) => setDraft((current) => ({ ...current, body }))} locale={locale} attachmentFolder={attachmentFolderForProject(draft.name)} />
         <div className="detail-dialog-actions split-actions">
           <div>

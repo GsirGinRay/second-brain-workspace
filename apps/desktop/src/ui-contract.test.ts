@@ -299,6 +299,20 @@ test("knowledge create uses the six vault categories and optional project wikili
   assert.match(source, /withRelatedProjectWikilink/);
 });
 
+test("task and journal can save an outcome as knowledge without a new menu or auto-promoting done tasks", () => {
+  const source = app();
+  const detailSource = detail();
+  assert.match(source, /openSaveAsKnowledge/);
+  assert.match(source, /journalUpgradeContent/);
+  assert.match(source, /relatedKnowledgeForProject/);
+  assert.match(source, /knowledge\.action\.save/);
+  assert.match(detailSource, /onSaveAsKnowledge/);
+  assert.match(detailSource, /project\.relatedKnowledge/);
+  assert.doesNotMatch(source, /type View = [^;]*"knowledge"/);
+  assert.doesNotMatch(source, /status === "done"[\s\S]{0,180}openSaveAsKnowledge/);
+  assert.doesNotMatch(source, /onToggleProjectTask[\s\S]{0,220}createCollection/);
+});
+
 test("desktop calendar and board open the shared task detail", () => {
   const source = app();
   assert.match(source, /<Board[\s\S]*projects=\{projects\}/);

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   Archive,
   BookOpen,
+  BookPlus,
   CalendarDays,
   CheckCircle2,
   Clock,
@@ -56,6 +57,10 @@ import {
   collectionMatchesCategoryFilter,
   knowledgeFilterCategories,
   resolveDailyJournal,
+  buildOutcomeKnowledgeDraft,
+  defaultJournalKnowledgeTitle,
+  journalUpgradeContent,
+  relatedKnowledgeForProject,
   type BrainProjectSnapshot,
   type BrainCollectionSnapshot,
   type BrainTaskSnapshot,
@@ -302,6 +307,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     content: string;
   } | null>(null);
   const [promotedTask, setPromotedTask] = useState<BrainTaskSnapshot | null>(null);
+  const [knowledgeSeed, setKnowledgeSeed] = useState<{
+    name: string;
+    body: string;
+    projectId: string | null;
+    category: string;
+  } | null>(null);
   const [routineTemplate, setRoutineTemplate] = useState<RoutineTemplate>(() => createDefaultRoutineTemplate(crypto.randomUUID()));
   const [files, setFiles] = useState<LocalMarkdownFile[]>([]);
   const [status, setStatus] = useState("正在啟動…");
@@ -1149,6 +1160,33 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     }
   }
 
+  function openSaveAsKnowledge(input: {
+    title: string;
+    content: string;
+    sourceDate: string | null;
+    projectId: string | null;
+    projectName: string | null;
+    attachmentSource?: string;
+  }): void {
+    const draft = buildOutcomeKnowledgeDraft({
+      title: input.title,
+      content: input.content,
+      sourceDate: input.sourceDate,
+      attachmentSource: input.attachmentSource,
+    });
+    const body = input.projectId
+      ? draft.body
+      : withRelatedProjectWikilink(draft.body, input.projectName);
+    setPromotedTask(null);
+    setKnowledgeSeed({
+      name: draft.name,
+      body,
+      projectId: input.projectId,
+      category: "方法",
+    });
+    setCreateEntity("collection");
+  }
+
   async function openTodayJournal(): Promise<void> {
     const dateKey = taipeiDateKey();
     if (!diagnostics?.selectedVault) {
@@ -1528,6 +1566,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onDelete={permanentlyDeleteTask}
         onOpenTask={(id) => openDetail("task", id)}
         onPromote={(task) => {
+          setKnowledgeSeed(null);
           setPromotedTask(task);
           setCreateEntity("project");
         }}
@@ -1554,14 +1593,14 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           setSelectedBoardProjectId(projectId);
           setView("board");
         }}
-        onCreate={() => setCreateEntity("project")}
+        onCreate={() => { setKnowledgeSeed(null); setCreateEntity("project"); }}
       />
     ) : view === "collections" ? (
       <Collections
         collections={collections}
         selectedId={selectedCollectionId}
         onSelect={setSelectedCollectionId}
-        onCreate={() => setCreateEntity("collection")}
+        onCreate={() => { setKnowledgeSeed(null); setCreateEntity("collection"); }}
         onSave={(collection) => void persistLocal(tasks, projects, collections.map((item) => item.id === collection.id ? collection : item))}
         onDelete={(collection) => void permanentlyDeleteCollection(collection)}
         onImportPrompts={() => { setImportText(""); setImportError(""); setImportPromptsOpen(true); }}
@@ -1758,8 +1797,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           }}
           actions={[
             { label: preferences.language === "zh-TW" ? "快速新增任務" : "Quick add task", run: () => setQuickAddOpen(true) },
-            { label: preferences.language === "zh-TW" ? "新增專案" : "New project", run: () => setCreateEntity("project") },
-            { label: preferences.language === "zh-TW" ? "新增知識" : "New knowledge", run: () => setCreateEntity("collection") },
+            { label: preferences.language === "zh-TW" ? "新增專案" : "New project", run: () => { setKnowledgeSeed(null); setCreateEntity("project"); } },
+            { label: preferences.language === "zh-TW" ? "新增知識" : "New knowledge", run: () => { setKnowledgeSeed(null); setCreateEntity("collection"); } },
             { label: preferences.language === "zh-TW" ? "建立知識架構" : "Build architecture", run: () => setArchitectureOpen(true) },
             { label: t("search.goSettings"), run: () => setView("sync") },
           ]}
@@ -1789,6 +1828,13 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             );
           }}
           onDelete={(task) => { void permanentlyDeleteTask(task); if (activeDetailKey) closeDetail(activeDetailKey); }}
+          onSaveAsKnowledge={(task) => openSaveAsKnowledge({
+            title: task.title,
+            content: task.body ?? "",
+            sourceDate: task.taskDate ?? taipeiDateKey(),
+            projectId: task.projectId,
+            projectName: task.projectName,
+          })}
         />
       )}
       {selectedProjectDetail && (
@@ -1842,31 +1888,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           onReopen={() => void persistLocal(tasks, projects.map((project) => project.id === selectedProjectDetail.id ? { ...project, status: "active", completedAt: null, focusToday: false } : project))}
           onArchive={() => void persistLocal(tasks, projects.map((project) => project.id === selectedProjectDetail.id ? { ...project, status: "archived", focusToday: false } : project))}
           onDelete={() => { void permanentlyDeleteProject(selectedProjectDetail); if (activeDetailKey) closeDetail(activeDetailKey); }}
-        />
-      )}
-      {createEntity && (
-        <CreateEntityModal
-          kind={createEntity}
-          initialName={promotedTask?.title ?? ""}
-          templates={templates}
-          projects={projects}
-          existingCategories={
-            createEntity === "project"
-              ? [...new Set(projects.map((p) => p.area).filter((a): a is string => Boolean(a)))].sort()
-              : knowledgeFilterCategories(collections.map((c) => c.category))
-          }
-          onClose={() => {
-            setCreateEntity(null);
-            setPromotedTask(null);
-          }}
-          onCreate={async (name, category, importance, body) => {
-            const created = createEntity === "project"
-              ? await createProject(name, category, importance, promotedTask ?? undefined, body)
-              : await createCollection(name, category, importance, body);
-            if (created) {
-              setCreateEntity(null);
-              setPromotedTask(null);
-            }
+          relatedKnowledge={relatedKnowledgeForProject(collections, selectedProjectDetail.name)
+            .flatMap((item) => item.id ? [{ id: item.id, name: item.name, category: item.category }] : [])}
+          onOpenKnowledge={(id) => {
+            if (activeDetailKey) closeDetail(activeDetailKey);
+            setSelectedCollectionId(id);
+            setView("collections");
           }}
         />
       )}
@@ -1877,7 +1904,50 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           content={journalOpen.content}
           working={working}
           onSave={(content) => void saveJournal(content)}
+          onSaveAsKnowledge={(content) => {
+            const upgrade = journalUpgradeContent(content);
+            openSaveAsKnowledge({
+              title: defaultJournalKnowledgeTitle(journalOpen.dateKey, upgrade),
+              content: upgrade,
+              sourceDate: journalOpen.dateKey,
+              projectId: null,
+              projectName: null,
+              attachmentSource: content,
+            });
+          }}
           onClose={() => setJournalOpen(null)}
+        />
+      )}
+      {createEntity && (
+        <CreateEntityModal
+          kind={createEntity}
+          mode={knowledgeSeed ? "save-outcome" : "create"}
+          initialName={knowledgeSeed?.name ?? promotedTask?.title ?? ""}
+          initialBody={knowledgeSeed?.body ?? ""}
+          initialCategory={knowledgeSeed?.category ?? ""}
+          initialProjectId={knowledgeSeed?.projectId ?? null}
+          templates={templates}
+          projects={projects}
+          existingCategories={
+            createEntity === "project"
+              ? [...new Set(projects.map((p) => p.area).filter((a): a is string => Boolean(a)))].sort()
+              : knowledgeFilterCategories(collections.map((c) => c.category))
+          }
+          onClose={() => {
+            setCreateEntity(null);
+            setPromotedTask(null);
+            setKnowledgeSeed(null);
+          }}
+          onCreate={async (name, category, importance, body) => {
+            const created = createEntity === "project"
+              ? await createProject(name, category, importance, promotedTask ?? undefined, body)
+              : await createCollection(name, category, importance, body);
+            if (created) {
+              setCreateEntity(null);
+              setPromotedTask(null);
+              setKnowledgeSeed(null);
+            }
+          }}
         />
       )}
       {architectureOpen && (
@@ -2295,6 +2365,7 @@ function JournalDialog({
   content,
   working,
   onSave,
+  onSaveAsKnowledge,
   onClose,
 }: {
   dateKey: string;
@@ -2302,6 +2373,7 @@ function JournalDialog({
   content: string;
   working: boolean;
   onSave: (content: string) => void;
+  onSaveAsKnowledge?: (content: string) => void;
   onClose: () => void;
 }) {
   const { t, preferences } = useUiPreferences();
@@ -2339,6 +2411,11 @@ function JournalDialog({
         <small className="journal-path">{relativePath}</small>
         <MarkdownEditor value={value} onChange={setValue} locale={preferences.language} minRows={16} attachmentFolder={attachmentFolderForJournal()} />
         <div className="modal-actions">
+          {onSaveAsKnowledge && (
+            <button type="button" className="secondary-button action-with-icon" onClick={() => onSaveAsKnowledge(value)}>
+              <BookPlus aria-hidden="true" />{t("knowledge.action.save")}
+            </button>
+          )}
           <button className="secondary-button" onClick={requestClose}>{t("app.cancel")}</button>
           <button className="primary action-with-icon" disabled={working || !dirty} onClick={() => onSave(value)}>
             <Save aria-hidden="true" />{t("app.save")}
@@ -4718,7 +4795,11 @@ function CollectionEditor({
 
 function CreateEntityModal({
   kind,
+  mode = "create",
   initialName,
+  initialBody = "",
+  initialCategory = "",
+  initialProjectId = null,
   templates = [],
   existingCategories = [],
   projects = [],
@@ -4726,7 +4807,11 @@ function CreateEntityModal({
   onCreate,
 }: {
   kind: "project" | "collection";
+  mode?: "create" | "save-outcome";
   initialName: string;
+  initialBody?: string;
+  initialCategory?: string;
+  initialProjectId?: string | null;
   templates?: { name: string; body: string }[];
   existingCategories?: string[];
   projects?: BrainProjectSnapshot[];
@@ -4734,11 +4819,12 @@ function CreateEntityModal({
   onCreate: (name: string, category: string | null, importance: number | null, body: string) => Promise<void>;
 }) {
   const { t, preferences } = useUiPreferences();
+  const saveOutcome = mode === "save-outcome";
   const [name, setName] = useState(initialName);
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState(initialCategory);
   const [importance, setImportance] = useState("");
-  const [body, setBody] = useState("");
-  const [relatedProjectId, setRelatedProjectId] = useState<string | null>(null);
+  const [body, setBody] = useState(initialBody);
+  const [relatedProjectId, setRelatedProjectId] = useState<string | null>(initialProjectId);
   const [submitting, setSubmitting] = useState(false);
   const submit = async () => {
     if (!name.trim() || name.trim().length > 200 || submitting) return;
@@ -4753,9 +4839,9 @@ function CreateEntityModal({
   };
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal entity-modal" role="dialog" aria-modal="true" aria-label={t(kind === "project" ? "entity.project.title" : "entity.collection.title")}>
-        <div className="modal-header"><div><span className="eyebrow">{kind === "project" ? "OUTCOME" : "KNOWLEDGE"}</span><h2>{t(kind === "project" ? "entity.project.title" : "entity.collection.title")}</h2></div><button className="icon-button" aria-label={t("app.close")} title={t("app.close")} onClick={onClose}><X aria-hidden="true" /></button></div>
-        <p className="entity-guidance">{t(kind === "project" ? "entity.project.help" : "entity.collection.help")}</p>
+      <section className="modal entity-modal" role="dialog" aria-modal="true" aria-label={t(kind === "project" ? "entity.project.title" : saveOutcome ? "knowledge.save.title" : "entity.collection.title")}>
+        <div className="modal-header"><div><span className="eyebrow">{kind === "project" ? "OUTCOME" : "KNOWLEDGE"}</span><h2>{t(kind === "project" ? "entity.project.title" : saveOutcome ? "knowledge.save.title" : "entity.collection.title")}</h2></div><button className="icon-button" aria-label={t("app.close")} title={t("app.close")} onClick={onClose}><X aria-hidden="true" /></button></div>
+        <p className="entity-guidance">{t(kind === "project" ? "entity.project.help" : saveOutcome ? "knowledge.save.help" : "entity.collection.help")}</p>
         <label>{t("entity.field.name")}<input autoFocus maxLength={200} value={name} onChange={(event) => setName(event.target.value)} /></label>
         {kind === "collection" ? (
           <label>{t("entity.field.category")}<select value={category} onChange={(event) => setCategory(event.target.value)} aria-label={t("entity.field.category")}><option value="">{t("app.uncategorized")}</option>{KNOWLEDGE_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
@@ -4784,7 +4870,7 @@ function CreateEntityModal({
             />
           </div>
         )}
-        {kind === "collection" && templates.length > 0 && (
+        {kind === "collection" && !saveOutcome && templates.length > 0 && (
           <label>{preferences.language === "zh-TW" ? "套用模板" : "Apply template"}<select value="" onChange={(event) => { const picked = templates.find((item) => item.name === event.target.value); if (picked) { setBody(picked.body); if (!name.trim()) setName(picked.name); } }}><option value="">{preferences.language === "zh-TW" ? "不使用模板" : "No template"}</option>{templates.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
         )}
         {kind === "collection" && <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} attachmentFolder={attachmentFolderForKnowledge(category)} />}

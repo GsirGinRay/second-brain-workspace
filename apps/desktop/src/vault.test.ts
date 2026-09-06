@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatTaskLine } from "@second-brain/brain-core";
+import {
+  buildOutcomeKnowledgeDraft,
+  formatTaskLine,
+  journalUpgradeContent,
+  renderDailyJournalDocument,
+} from "@second-brain/brain-core";
 import {
   applyDesiredSnapshot,
   buildCollectionCreateChange,
@@ -833,4 +838,78 @@ test("tasks written under 產生的任務 stay on the journal file", () => {
 
 test("invalid journal dates are rejected", () => {
   assert.throws(() => buildJournalCreateChange("2026-13-40", []), /INVALID_JOURNAL_DATE/);
+});
+
+test("saving an outcome as knowledge creates a new note and leaves the inbox and journal unchanged", () => {
+  const taskLine = formatTaskLine({
+    id: taskId, title: "寫第一份教學", status: "todo", dueDate: null, plannedDate: null,
+    priority: "normal", projectId: null, projectName: "開源發表", rank: "a",
+    sourcePath: "收件匣/待辦.md", sourceHeading: null, completedAt: null,
+    taskDate: "2026-08-15",
+  });
+  const inboxSource = `# 待辦\r\n\r\n${taskLine}\r\n\r\n  ## Notes\r\n\r\n  - 可見的任務清單\r\n`;
+  const journalSource = renderDailyJournalDocument("2026-08-15").replace(
+    "## 可升級的知識\r\n",
+    "## 可升級的知識\r\n\r\n會議結論：改用可見 Markdown\r\n",
+  );
+  const inbox = file("收件匣/待辦.md", inboxSource);
+  const journal = file("日誌/2026-08-15.md", journalSource);
+  const files = [inbox, journal];
+  const scanned = scanStructuredVault(files);
+  const task = scanned.snapshot.tasks[0]!;
+  assert.equal(task.title, "寫第一份教學");
+  assert.match(task.body ?? "", /可見的任務清單/);
+
+  const draft = buildOutcomeKnowledgeDraft({
+    title: task.title,
+    content: task.body ?? "",
+    sourceDate: task.taskDate ?? "2026-08-15",
+  });
+  const create = buildCollectionCreateChange(
+    draft.name,
+    "方法",
+    1,
+    files.map((item) => item.relativePath),
+    undefined,
+    withRelatedProjectWikilink(draft.body, "開源發表"),
+  );
+  assert.equal(create.operation, "create");
+  assert.equal(create.relativePath, "知識/方法/寫第一份教學.md");
+  const created = base64ToText(create.replacementBase64);
+  assert.match(created, /type: collection/);
+  assert.match(created, /來源：2026-08-15/);
+  assert.match(created, /可見的任務清單/);
+  assert.match(created, /\[\[開源發表\]\]/);
+
+  const afterCreate = scanStructuredVault([
+    ...files,
+    { relativePath: create.relativePath, sha256: "c".repeat(64), bytesBase64: create.replacementBase64 },
+  ]);
+  assert.equal(afterCreate.snapshot.collections.length, 1);
+  assert.equal(afterCreate.snapshot.collections[0]?.name, "寫第一份教學");
+  assert.equal(afterCreate.snapshot.tasks[0]?.title, "寫第一份教學");
+  assert.equal(afterCreate.snapshot.tasks[0]?.sourcePath, "收件匣/待辦.md");
+  assert.match(inboxSource, /寫第一份教學/);
+  assert.match(journalSource, /會議結論：改用可見 Markdown/);
+  assert.equal(journalUpgradeContent(journalSource), "會議結論：改用可見 Markdown");
+});
+
+test("completing a task does not create a knowledge file", () => {
+  const taskLine = formatTaskLine({
+    id: taskId, title: "寫第一份教學", status: "todo", dueDate: null, plannedDate: null,
+    priority: "normal", projectId: null, projectName: null, rank: "a",
+    sourcePath: "收件匣/待辦.md", sourceHeading: null, completedAt: null,
+    taskDate: "2026-08-15",
+  });
+  const files = [file("收件匣/待辦.md", `# 待辦\r\n\r\n${taskLine}\r\n`)];
+  const scanned = scanStructuredVault(files);
+  const changes = applyDesiredSnapshot(files, {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.map((task) => task.id === taskId
+      ? { ...task, status: "done" as const, completedAt: "2026-08-15" }
+      : task),
+  });
+  assert.ok(changes.some((change) => change.relativePath === "收件匣/待辦.md"));
+  assert.equal(changes.some((change) => change.relativePath.startsWith("知識/")), false);
+  assert.equal(changes.some((change) => change.operation === "create"), false);
 });

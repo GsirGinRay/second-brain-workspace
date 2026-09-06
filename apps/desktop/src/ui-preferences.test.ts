@@ -74,6 +74,16 @@ test("knowledge view uses 知識 / Knowledge on the menu, title and add button",
   assert.doesNotMatch(translate("en", "collection.action.add"), /Collection/i);
 });
 
+test("save as knowledge and related knowledge labels stay off the main menu", () => {
+  assert.equal(translate("zh-TW", "knowledge.action.save"), "存成知識");
+  assert.equal(translate("en", "knowledge.action.save"), "Save as knowledge");
+  assert.equal(translate("zh-TW", "knowledge.save.help"), "會建成一篇長期筆記；原本的任務或日誌不會被改掉。");
+  assert.equal(translate("en", "project.relatedKnowledge"), "Related knowledge");
+  assert.equal(translate("zh-TW", "project.relatedKnowledge"), "相關知識");
+  assert.doesNotMatch(translate("zh-TW", "view.today"), /知識/);
+  assert.doesNotMatch(translate("zh-TW", "view.projects"), /知識/);
+});
+
 test("today journal labels stay in the Today view, not a new menu item", () => {
   assert.equal(translate("zh-TW", "today.journal"), "今天的日誌");
   assert.equal(translate("en", "today.journal"), "Today's journal");
