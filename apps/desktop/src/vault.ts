@@ -18,6 +18,7 @@ import {
   CANONICAL_PROJECTS_DIR,
   canonicalKnowledgeWriteDir,
   isContentScanExcludedPath,
+  type LayoutMigrationPlan,
   isJournalNotePath,
   isValidDateKey,
   renderDailyJournalDocument,
@@ -674,4 +675,35 @@ export function buildCollectionDeleteChange(
     operation: "delete",
     replacementBase64: "",
   };
+}
+
+/**
+ * Turn accepted layout moves into create-at-dest + delete-source changes.
+ * Bytes are copied as-is (BOM / CRLF). Duplicates are never included.
+ */
+export function buildLayoutMigrationChanges(
+  files: readonly LocalMarkdownFile[],
+  plan: LayoutMigrationPlan,
+): MarkdownChange[] {
+  const byPath = new Map(files.map((file) => [pathKey(file.relativePath), file]));
+  const creates: MarkdownChange[] = [];
+  const deletes: MarkdownChange[] = [];
+  for (const move of plan.moves) {
+    const source = byPath.get(pathKey(move.from));
+    if (!source) continue;
+    if (!move.to.toLocaleLowerCase().endsWith(".md")) continue;
+    creates.push({
+      relativePath: move.to,
+      expectedSha256: EMPTY_SHA256,
+      replacementBase64: source.bytesBase64,
+      operation: "create",
+    });
+    deletes.push({
+      relativePath: source.relativePath,
+      expectedSha256: source.sha256,
+      operation: "delete",
+      replacementBase64: "",
+    });
+  }
+  return [...creates, ...deletes];
 }

@@ -4,6 +4,7 @@ import {
   buildOutcomeKnowledgeDraft,
   formatTaskLine,
   journalUpgradeContent,
+  planVaultLayoutMigration,
   renderDailyJournalDocument,
 } from "@second-brain/brain-core";
 import {
@@ -12,6 +13,7 @@ import {
   buildCollectionDeleteChange,
   buildJournalCreateChange,
   buildJournalUpdateChange,
+  buildLayoutMigrationChanges,
   buildProjectCreateChange,
   withRelatedProjectWikilink,
   buildProjectDeleteChanges,
@@ -912,4 +914,40 @@ test("completing a task does not create a knowledge file", () => {
   assert.ok(changes.some((change) => change.relativePath === "收件匣/待辦.md"));
   assert.equal(changes.some((change) => change.relativePath.startsWith("知識/")), false);
   assert.equal(changes.some((change) => change.operation === "create"), false);
+});
+
+test("layout migration copies exact bytes to the new path and deletes the old file", () => {
+  const source = "\uFEFF---\r\ntype: project\r\nid: " + projectId + "\r\n---\r\n# A\r\n";
+  const files = [file("Projects/A.md", source)];
+  const plan = planVaultLayoutMigration([{ relativePath: "Projects/A.md", entityType: "project" }]);
+  const changes = buildLayoutMigrationChanges(files, plan);
+  assert.deepEqual(
+    changes.map((change) => [change.operation ?? "write", change.relativePath]),
+    [
+      ["create", "專案/A.md"],
+      ["delete", "Projects/A.md"],
+    ],
+  );
+  assert.equal(changes[0] && "replacementBase64" in changes[0] ? changes[0].replacementBase64 : "", files[0]!.bytesBase64);
+  assert.equal(changes[1]?.expectedSha256, files[0]!.sha256);
+});
+
+test("layout migration never emits changes for duplicate destinations", () => {
+  const files = [
+    file("Projects/A.md", "---\ntype: project\n---\n# A\n"),
+    file("專案/A.md", "---\ntype: project\n---\n# A\n"),
+  ];
+  const plan = planVaultLayoutMigration([
+    { relativePath: "Projects/A.md", entityType: "project" },
+    { relativePath: "專案/A.md", entityType: "project" },
+  ]);
+  assert.equal(plan.moves.length, 0);
+  assert.equal(buildLayoutMigrationChanges(files, plan).length, 0);
+});
+
+test("layout migration skips non-markdown attachments so native md writes stay .md-only", () => {
+  const files = [file("99-附件/開源發表/shot.png", "not-markdown")];
+  const plan = planVaultLayoutMigration([{ relativePath: "99-附件/開源發表/shot.png" }]);
+  assert.equal(plan.moves[0]?.to, "附件/開源發表/shot.png");
+  assert.equal(buildLayoutMigrationChanges(files, plan).length, 0);
 });

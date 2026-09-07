@@ -10,6 +10,7 @@ import {
   CANONICAL_PROJECTS_DIR,
   CANONICAL_TEMPLATES_DIR,
   KNOWLEDGE_CATEGORIES,
+  LEGACY_ATTACHMENTS_DIR,
   LEGACY_INBOX_PATH,
   LEGACY_JOURNAL_DIR,
   LEGACY_TEMPLATES_DIR,
@@ -32,6 +33,7 @@ test("canonical write paths are the official vault folders", () => {
   assert.equal(CANONICAL_INBOX_PATH, "收件匣/待辦.md");
   assert.equal(CANONICAL_ATTACHMENTS_DIR, "附件");
   assert.equal(CANONICAL_TEMPLATES_DIR, "模板");
+  assert.equal(LEGACY_ATTACHMENTS_DIR, "99-附件");
   assert.equal(CANONICAL_AI_DIR, ".ai");
   assert.equal(CANONICAL_COLLECTION_WRITE_DIR, "知識");
   assert.deepEqual(KNOWLEDGE_CATEGORIES, [

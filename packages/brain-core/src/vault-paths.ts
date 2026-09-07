@@ -90,6 +90,7 @@ export const LEGACY_INBOX_FILE = "待辦收件匣.md";
 export const LEGACY_INBOX_PATH = `${LEGACY_INBOX_DIR}/${LEGACY_INBOX_FILE}`;
 export const LEGACY_TEMPLATES_DIR = "90-模板";
 export const LEGACY_JOURNAL_DIR = "05-每日工作台";
+export const LEGACY_ATTACHMENTS_DIR = "99-附件";
 
 export const MANAGED_TEMPLATE_DIRS = [
   CANONICAL_TEMPLATES_DIR,

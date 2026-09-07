@@ -330,6 +330,18 @@ const ENGLISH: Record<string, string> = {
   "sync.full": "Sync now",
   "sync.first": "Complete first sync",
   "sync.shadow": "Return to Shadow mode",
+  "layout.title": "Organize into the new layout",
+  "layout.help": "Preview files that will move into 專案/, 知識/, 日誌/, 收件匣/, 模板/, and 附件/. A verified ZIP backup is created first. Duplicate files are left in place so you can choose the original.",
+  "layout.preview": "Preview organization",
+  "layout.confirmTitle": "Confirm folder organization",
+  "layout.confirmHelp": "These files will move to the new folders. Filenames stay the same, so Obsidian wikilinks keep working. Duplicates are not moved or deleted. Cancel leaves everything unchanged.",
+  "layout.moves": "Will move",
+  "layout.duplicates": "Duplicates (choose the original; nothing is deleted)",
+  "layout.empty": "This folder already uses the new layout. Nothing needs to move.",
+  "layout.apply": "Organize now",
+  "layout.needFolder": "Choose a Markdown folder first.",
+  "layout.done": "Folder layout updated",
+  "layout.none": "Nothing to move",
 };
 
 const TRADITIONAL_CHINESE: Record<string, string> = {
@@ -628,6 +640,18 @@ const TRADITIONAL_CHINESE: Record<string, string> = {
   "sync.full": "立即完整同步",
   "sync.first": "完成首次同步",
   "sync.shadow": "切回 Shadow 模式",
+  "layout.title": "整理成新架構",
+  "layout.help": "預覽會列出將搬到 專案／知識／日誌／收件匣／模板／附件 的檔案。執行前會先做可驗證的 ZIP 備份。重複的檔案不會搬、也不會刪，請你選正本。",
+  "layout.preview": "預覽整理",
+  "layout.confirmTitle": "確認整理資料夾",
+  "layout.confirmHelp": "以下檔案會搬到新資料夾，檔名不變，Obsidian 的 [[wikilink]] 大多仍可用。重複的不會搬、也不會刪。取消則不做任何變更。",
+  "layout.moves": "將移動",
+  "layout.duplicates": "重複（請選正本，不會刪）",
+  "layout.empty": "這個資料夾已經是新架構，沒有需要移動的檔案。",
+  "layout.apply": "執行整理",
+  "layout.needFolder": "請先選擇 Markdown 資料夾。",
+  "layout.done": "已整理成新架構",
+  "layout.none": "沒有可移動的檔案",
 };
 
 export function translate(

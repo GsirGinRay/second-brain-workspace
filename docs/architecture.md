@@ -21,7 +21,12 @@ file paths, today's journal, and unscheduled ideas. Daily journals live at
 into `附件/<project or category>/`; Markdown stores only a relative link. Images
 preview in the app; other files open with the system default. A task or today's
 journal can be saved as a knowledge note without changing the original file;
-project pages list knowledge that wikilinks the project.
+project pages list knowledge that wikilinks the project. Settings can preview
+and apply a layout migrator that moves legacy folders (`Projects/`,
+`Collections/`, `05-每日工作台/`, `10-收件匣/`, `90-模板/`, `99-附件/`, numbered
+knowledge folders) into the canonical tree. Filenames stay the same so
+`[[wikilink]]` keep working; duplicate paths are listed and never deleted.
+A verified ZIP backup is created before the move.
 
 A private Publisher build can still embed one exact HTTPS origin. That adapter
 is not part of the public product and is not required to use the desktop app.

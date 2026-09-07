@@ -92,6 +92,16 @@ test("today journal labels stay in the Today view, not a new menu item", () => {
   assert.doesNotMatch(translate("zh-TW", "view.today"), /日誌/);
 });
 
+test("layout migrator copy stays in settings and does not invent a menu item", () => {
+  assert.equal(translate("zh-TW", "layout.title"), "整理成新架構");
+  assert.equal(translate("en", "layout.title"), "Organize into the new layout");
+  assert.equal(translate("zh-TW", "layout.preview"), "預覽整理");
+  assert.equal(translate("en", "layout.preview"), "Preview organization");
+  assert.equal(translate("zh-TW", "layout.duplicates"), "重複（請選正本，不會刪）");
+  assert.doesNotMatch(translate("zh-TW", "view.today"), /整理/);
+  assert.doesNotMatch(translate("zh-TW", "view.sync"), /整理/);
+});
+
 test("empty states use plain-language first actions", () => {
   assert.equal(translate("zh-TW", "today.emptyAction"), "新增第一個任務");
   assert.equal(translate("en", "today.emptyAction"), "Add your first task");

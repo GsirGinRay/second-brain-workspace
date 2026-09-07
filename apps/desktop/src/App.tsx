@@ -58,6 +58,11 @@ import {
   knowledgeFilterCategories,
   resolveDailyJournal,
   buildOutcomeKnowledgeDraft,
+  hintsForLayoutMigration,
+  layoutMigrationHasWork,
+  planVaultLayoutMigration,
+  LEGACY_TEMPLATES_DIR,
+  type LayoutMigrationPlan,
   defaultJournalKnowledgeTitle,
   journalUpgradeContent,
   relatedKnowledgeForProject,
@@ -124,6 +129,7 @@ import {
   buildProjectCreateChange,
   withRelatedProjectWikilink,
   buildProjectDeleteChanges,
+  buildLayoutMigrationChanges,
   type LocalMarkdownFile,
   type MarkdownChange,
 } from "./vault";
@@ -354,6 +360,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [templates, setTemplates] = useState<{ name: string; body: string }[]>([]);
   const [pendingScaffold, setPendingScaffold] = useState<MarkdownChange[] | null>(null);
   const [scaffoldPreviewPaths, setScaffoldPreviewPaths] = useState<string[]>([]);
+  const [pendingLayoutPlan, setPendingLayoutPlan] = useState<LayoutMigrationPlan | null>(null);
+  const [pendingLayoutFiles, setPendingLayoutFiles] = useState<LocalMarkdownFile[] | null>(null);
 
   const promptCollections = collections.filter((item) =>
     (item.category ?? "").trim().toLowerCase().startsWith("提示詞"),
@@ -704,6 +712,68 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     } finally {
       setPendingScaffold(null);
       setScaffoldPreviewPaths([]);
+      setWorking(false);
+    }
+  };
+
+  const prepareLayoutMigration = async () => {
+    if (!diagnostics?.selectedVault) {
+      setError(t("layout.needFolder"));
+      return;
+    }
+    setWorking(true);
+    setError("");
+    try {
+      const extraFiles: LocalMarkdownFile[] = [];
+      if (native.listManagedFiles) {
+        try {
+          const listed = await native.listManagedFiles(LEGACY_TEMPLATES_DIR);
+          const known = new Set(files.map((file) => file.relativePath.replace(/\\/g, "/").toLocaleLowerCase()));
+          const unread = listed.filter((path) => !known.has(path.replace(/\\/g, "/").toLocaleLowerCase()));
+          if (unread.length) extraFiles.push(...await native.readMarkdownFiles(unread));
+        } catch {
+          // Legacy template folder may be absent.
+        }
+      }
+      const allFiles = [...files, ...extraFiles];
+      const plan = planVaultLayoutMigration(
+        hintsForLayoutMigration(
+          allFiles.map((file) => file.relativePath),
+          projects,
+          collections,
+        ),
+      );
+      if (!layoutMigrationHasWork(plan)) {
+        setStatus(t("layout.empty"));
+        return;
+      }
+      setPendingLayoutFiles(allFiles);
+      setPendingLayoutPlan(plan);
+    } catch (cause) {
+      setError(`準備整理失敗：${describeError(cause, "LAYOUT_PREP_FAILED")}`);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const confirmLayoutMigration = async () => {
+    if (!pendingLayoutPlan || !pendingLayoutFiles) return;
+    setWorking(true);
+    setError("");
+    try {
+      const changes = buildLayoutMigrationChanges(pendingLayoutFiles, pendingLayoutPlan);
+      if (changes.length === 0) {
+        setStatus(t("layout.none"));
+        return;
+      }
+      await native.applyMarkdownChanges(changes);
+      await reloadLocal();
+      setStatus(t("layout.done"));
+    } catch (cause) {
+      setError(`整理資料夾失敗：${describeError(cause, "LAYOUT_FAILED")}`);
+    } finally {
+      setPendingLayoutPlan(null);
+      setPendingLayoutFiles(null);
       setWorking(false);
     }
   };
@@ -1625,6 +1695,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onSync={requestManualSync}
         onShadow={returnToShadowMode}
         onOpenArchitecture={() => setArchitectureOpen(true)}
+        onPreviewLayout={() => void prepareLayoutMigration()}
       />
     );
 
@@ -2011,6 +2082,46 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             <div className="modal-actions">
               <button className="secondary-button" onClick={() => { setPendingScaffold(null); setScaffoldPreviewPaths([]); }}>取消</button>
               <button className="primary" disabled={working} onClick={() => void confirmArchitecture()}>執行並建立</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {pendingLayoutPlan && (
+        <div className="modal-backdrop">
+          <section className="modal" role="dialog" aria-modal="true" aria-label={t("layout.confirmTitle")}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">LAYOUT</span>
+                <h2>{t("layout.confirmTitle")}</h2>
+              </div>
+              <button className="icon-button" onClick={() => { setPendingLayoutPlan(null); setPendingLayoutFiles(null); }} aria-label={t("app.close")} title={t("app.close")}>
+                <X aria-hidden="true" />
+              </button>
+            </div>
+            <p>{t("layout.confirmHelp")}</p>
+            {pendingLayoutPlan.moves.length > 0 && (
+              <>
+                <h3 className="layout-review-heading">{t("layout.moves")}</h3>
+                <ul className="review-list">
+                  {pendingLayoutPlan.moves.map((item) => (
+                    <li key={item.from}><code>{item.from}</code> → <code>{item.to}</code></li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {pendingLayoutPlan.duplicates.length > 0 && (
+              <>
+                <h3 className="layout-review-heading">{t("layout.duplicates")}</h3>
+                <ul className="review-list">
+                  {pendingLayoutPlan.duplicates.map((item) => (
+                    <li key={item.from}><code>{item.from}</code> → <code>{item.to}</code></li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <div className="modal-actions">
+              <button className="secondary-button" onClick={() => { setPendingLayoutPlan(null); setPendingLayoutFiles(null); }}>{t("app.cancel")}</button>
+              <button className="primary" disabled={working || pendingLayoutPlan.moves.length === 0} onClick={() => void confirmLayoutMigration()}>{t("layout.apply")}</button>
             </div>
           </section>
         </div>
@@ -4898,6 +5009,7 @@ function SyncSettings({
   onSync,
   onShadow,
   onOpenArchitecture,
+  onPreviewLayout,
 }: {
   diagnostics: DiagnosticsSnapshot | null;
   serverOrigin: string;
@@ -4916,6 +5028,7 @@ function SyncSettings({
   onSync: () => void;
   onShadow: () => void;
   onOpenArchitecture: () => void;
+  onPreviewLayout: () => void;
 }) {
   const { preferences, setPreferences, t } = useUiPreferences();
   const cloudEnabled = diagnostics?.syncEnabled === true;
@@ -4996,6 +5109,13 @@ function SyncSettings({
           : "Projects and knowledge are selected by default. Add the prompt library, templates, or AI handoff later if you need them. Existing files are not overwritten."}</p>
         <button className="primary wide" onClick={onOpenArchitecture}>
           {preferences.language === "zh-TW" ? "新建架構模板" : "New architecture templates"}
+        </button>
+      </section>
+      <section className="settings-card">
+        <h2>{t("layout.title")}</h2>
+        <p>{t("layout.help")}</p>
+        <button className="primary wide" disabled={working} onClick={onPreviewLayout}>
+          {t("layout.preview")}
         </button>
       </section>
       <section className="settings-card">

@@ -349,7 +349,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 
 .prompt-json{width:100%;min-height:220px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink);font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;resize:vertical}.prompt-error{color:#b42318;font-size:12px;margin:8px 0 0}
 .fill-field{display:grid;gap:5px;margin:10px 0;color:var(--muted);font-size:12px;font-weight:700}.fill-field input{border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);padding:9px;font-weight:400}
-.review-list{display:grid;gap:6px;margin:12px 0;max-height:40vh;overflow:auto;padding:0;list-style:none}.review-list li{border:1px solid var(--line);border-radius:8px;padding:8px 10px}.review-list code{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-all}
+.review-list{display:grid;gap:6px;margin:12px 0;max-height:40vh;overflow:auto;padding:0;list-style:none}.review-list li{border:1px solid var(--line);border-radius:8px;padding:8px 10px}.review-list code{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-all}.layout-review-heading{font-size:13px;margin:12px 0 6px;color:var(--muted)}
 
 .priority-control{position:relative;display:inline-flex;flex:0 0 auto}
 .priority-trigger{border:0;background:transparent;padding:0;display:inline-flex}

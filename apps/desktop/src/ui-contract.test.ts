@@ -299,6 +299,16 @@ test("knowledge create uses the six vault categories and optional project wikili
   assert.match(source, /withRelatedProjectWikilink/);
 });
 
+test("settings can preview a layout migrator without a new sidebar view", () => {
+  const source = app();
+  assert.match(source, /planVaultLayoutMigration/);
+  assert.match(source, /buildLayoutMigrationChanges/);
+  assert.match(source, /layout\.preview/);
+  assert.match(source, /onPreviewLayout/);
+  assert.doesNotMatch(source, /type View = [^;]*"layout"/);
+  assert.doesNotMatch(source, /setView\("layout"\)/);
+});
+
 test("task and journal can save an outcome as knowledge without a new menu or auto-promoting done tasks", () => {
   const source = app();
   const detailSource = detail();

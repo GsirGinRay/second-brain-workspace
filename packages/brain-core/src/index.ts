@@ -105,6 +105,7 @@ export {
   canonicalKnowledgeWriteDir,
   collectionMatchesCategoryFilter,
   knowledgeFilterCategories,
+  LEGACY_ATTACHMENTS_DIR,
   LEGACY_COLLECTIONS_DIR,
   LEGACY_INBOX_DIR,
   LEGACY_INBOX_FILE,
@@ -123,6 +124,21 @@ export {
   canonicalJournalPath,
 } from "./vault-paths";
 export type { DailyJournalRef, KnowledgeCategory } from "./vault-paths";
+export {
+  hintsForLayoutMigration,
+  isManualIndexPath,
+  layoutMigrationHasWork,
+  planVaultLayoutMigration,
+} from "./layout-migrator";
+export type {
+  LayoutEntityType,
+  LayoutFileHint,
+  LayoutMigrationDuplicate,
+  LayoutMigrationKept,
+  LayoutMigrationMove,
+  LayoutMigrationPlan,
+  LayoutMigrationReason,
+} from "./layout-migrator";
 export {
   ATTACHMENT_ACCEPT,
   ATTACHMENT_FILE_EXTENSIONS,
