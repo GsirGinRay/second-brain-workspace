@@ -452,7 +452,7 @@ pub fn import_attachment_bytes(
     Ok(relative)
 }
 
-/// Read an image under `附件/` for Markdown preview. PDFs must be opened instead.
+/// Read an image under `附件/` for Markdown preview. PDFs are shown as files and opened externally.
 pub fn read_attachment_image(
     root: &Path,
     relative: &Path,

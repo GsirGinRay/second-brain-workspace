@@ -152,6 +152,8 @@ export {
   canAddAttachments,
   canonicalAttachmentPath,
   extractAttachmentHrefs,
+  parseStandaloneAttachment,
+  withAttachmentImageWidth,
   isAllowedAttachmentExtension,
   isImageAttachmentExtension,
   isImageAttachmentPath,
@@ -163,6 +165,7 @@ export {
 } from "./attachments";
 export {
   DAILY_JOURNAL_HEADINGS,
+  isBlankDailyJournal,
   renderDailyJournalDocument,
 } from "./journal";
 export type { DailyJournalHeading } from "./journal";

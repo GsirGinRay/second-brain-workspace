@@ -5,7 +5,6 @@ import {
   formatTaskLine,
   journalUpgradeContent,
   planVaultLayoutMigration,
-  renderDailyJournalDocument,
 } from "@second-brain/brain-core";
 import {
   applyDesiredSnapshot,
@@ -776,16 +775,13 @@ test("already-canonical markers and ids are not rewritten on scan", () => {
   assert.equal(result.bootstrapChanges.length, 0);
 });
 
-test("new journal files write 日誌/YYYY-MM-DD.md with the four headings", () => {
+test("new journal files write 日誌/YYYY-MM-DD.md as a blank dated canvas", () => {
   const change = buildJournalCreateChange("2026-08-15", []);
   assert.equal(change?.operation, "create");
   assert.equal(change?.relativePath, "日誌/2026-08-15.md");
   const body = base64ToText(change!.replacementBase64);
-  assert.match(body, /^# 2026-08-15/);
-  assert.match(body, /## 今日會議/);
-  assert.match(body, /## 結論/);
-  assert.match(body, /## 產生的任務/);
-  assert.match(body, /## 可升級的知識/);
+  assert.equal(body, "# 2026-08-15\r\n\r\n");
+  assert.doesNotMatch(body, /## 今日會議/);
   assert.ok(!body.includes("2026-08-16"));
 });
 
@@ -850,10 +846,7 @@ test("saving an outcome as knowledge creates a new note and leaves the inbox and
     taskDate: "2026-08-15",
   });
   const inboxSource = `# 待辦\r\n\r\n${taskLine}\r\n\r\n  ## Notes\r\n\r\n  - 可見的任務清單\r\n`;
-  const journalSource = renderDailyJournalDocument("2026-08-15").replace(
-    "## 可升級的知識\r\n",
-    "## 可升級的知識\r\n\r\n會議結論：改用可見 Markdown\r\n",
-  );
+  const journalSource = `# 2026-08-15\r\n\r\n## 可升級的知識\r\n\r\n會議結論：改用可見 Markdown\r\n`;
   const inbox = file("收件匣/待辦.md", inboxSource);
   const journal = file("日誌/2026-08-15.md", journalSource);
   const files = [inbox, journal];

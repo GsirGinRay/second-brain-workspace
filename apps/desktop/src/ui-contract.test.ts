@@ -287,6 +287,9 @@ test("today view can open today's journal without adding a journal menu", () => 
   assert.match(source, /resolveDailyJournal/);
   assert.match(source, /onOpenJournal/);
   assert.match(source, /function JournalDialog/);
+  assert.match(source, /isBlankDailyJournal/);
+  assert.match(source, /DAILY_JOURNAL_HEADINGS/);
+  assert.match(source, /<MarkdownBlockEditor value=\{value\}/);
   assert.doesNotMatch(source, /type View = [^;]*"journal"/);
   assert.doesNotMatch(source, /setView\("journal"\)/);
 });

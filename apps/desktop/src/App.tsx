@@ -57,6 +57,8 @@ import {
   collectionMatchesCategoryFilter,
   knowledgeFilterCategories,
   resolveDailyJournal,
+  DAILY_JOURNAL_HEADINGS,
+  isBlankDailyJournal,
   buildOutcomeKnowledgeDraft,
   hintsForLayoutMigration,
   layoutMigrationHasWork,
@@ -2520,7 +2522,24 @@ function JournalDialog({
         </div>
         <p>{t("today.journal.hint")}</p>
         <small className="journal-path">{relativePath}</small>
-        <MarkdownEditor value={value} onChange={setValue} locale={preferences.language} minRows={16} attachmentFolder={attachmentFolderForJournal()} />
+        {isBlankDailyJournal(value) && (
+          <div className="journal-hint-row" role="group" aria-label={t("today.journal.hints")}>
+            {DAILY_JOURNAL_HEADINGS.map((heading) => (
+              <button
+                key={heading}
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  const prefix = value.trim() ? `${value.replace(/\s+$/, "")}\n\n` : `# ${dateKey}\n\n`;
+                  setValue(`${prefix}## ${heading}\n\n`);
+                }}
+              >
+                {heading}
+              </button>
+            ))}
+          </div>
+        )}
+        <MarkdownBlockEditor value={value} onChange={setValue} locale={preferences.language} attachmentFolder={attachmentFolderForJournal()} />
         <div className="modal-actions">
           {onSaveAsKnowledge && (
             <button type="button" className="secondary-button action-with-icon" onClick={() => onSaveAsKnowledge(value)}>

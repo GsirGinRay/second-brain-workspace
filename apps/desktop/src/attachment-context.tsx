@@ -102,7 +102,11 @@ export async function snippetsFromFiles(
   }
 }
 
+export function dropHasFiles(event: ReactDragEvent): boolean {
+  return [...event.dataTransfer.types].includes("Files");
+}
+
 export function filesFromDrop(event: ReactDragEvent): File[] {
-  if (![...event.dataTransfer.types].includes("Files")) return [];
+  if (!dropHasFiles(event)) return [];
   return [...event.dataTransfer.files];
 }

@@ -17,12 +17,20 @@ export const DAILY_JOURNAL_HEADINGS = [
 
 export type DailyJournalHeading = (typeof DAILY_JOURNAL_HEADINGS)[number];
 
-/** Canonical body for a new `日誌/YYYY-MM-DD.md`. */
+/** Canonical body for a new `日誌/YYYY-MM-DD.md`.
+ *  Blank canvas: the date heading only. Section titles are UI hints, not pre-written. */
 export function renderDailyJournalDocument(dateKey: string): string {
   if (!isValidDateKey(dateKey)) throw new Error("INVALID_JOURNAL_DATE");
-  const sections = DAILY_JOURNAL_HEADINGS.flatMap((heading) => [
-    `## ${heading}`,
-    "",
-  ]);
-  return [`# ${dateKey}`, "", ...sections].join("\r\n");
+  return `# ${dateKey}\r\n\r\n`;
+}
+
+/** True when the file is empty or only the date heading — show section hint chips. */
+export function isBlankDailyJournal(source: string): boolean {
+  const lines = source
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return true;
+  return lines.length === 1 && /^#\s+\d{4}-\d{2}-\d{2}$/.test(lines[0]!);
 }

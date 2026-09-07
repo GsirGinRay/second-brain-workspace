@@ -56,6 +56,14 @@ test("Markdown preview only shows vault images after a restricted read", () => {
   assert.match(html, /markdown-image-pending/);
 });
 
+test("Markdown preview shows a folder-like PDF file instead of a raw Markdown link", () => {
+  const html = renderToStaticMarkup(<MarkdownPreview value={'[測試文件.pdf](附件/測試專案/測試文件.pdf)'} />);
+  assert.doesNotMatch(html, /\[測試文件\.pdf\]\(/);
+  assert.doesNotMatch(html, /<iframe/);
+  assert.match(html, /vault-file-tile/);
+  assert.match(html, /測試文件\.pdf/);
+});
+
 test("MarkdownEditor shows an attach control when a vault folder is provided", () => {
   const html = renderToStaticMarkup(
     <AttachmentProvider value={{

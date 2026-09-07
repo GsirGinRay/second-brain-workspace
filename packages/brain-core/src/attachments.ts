@@ -201,3 +201,49 @@ export function canAddAttachments(
   if (maxAttachments === undefined) return true;
   return extractAttachmentHrefs(markdown).length + incomingCount <= maxAttachments;
 }
+
+export interface StandaloneAttachment {
+  relativePath: string;
+  name: string;
+  image: boolean;
+  pdf: boolean;
+  width?: number;
+}
+
+const IMAGE_WIDTH_MARKER = /\s*<!--\s*sbw:img-width:(\d{2,4})\s*-->\s*$/;
+
+export function clampAttachmentImageWidth(width: number): number {
+  return Math.min(900, Math.max(120, Math.round(width)));
+}
+
+/** A block that is only one vault image or file link, for visual canvas rendering. */
+export function parseStandaloneAttachment(markdown: string): StandaloneAttachment | null {
+  const trimmed = markdown.trim();
+  if (!trimmed) return null;
+  const widthMatch = trimmed.match(IMAGE_WIDTH_MARKER);
+  const width = widthMatch ? clampAttachmentImageWidth(Number(widthMatch[1])) : undefined;
+  const body = (widthMatch ? trimmed.slice(0, widthMatch.index).trim() : trimmed);
+  if (!body || /\n/.test(body)) return null;
+  const image = body.match(/^!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^)\s]+))\s*\)$/);
+  const link = image ? null : body.match(/^\[([^\]]+)\]\(\s*(?:<([^>]+)>|([^)\s]+))\s*\)$/);
+  const match = image ?? link;
+  if (!match) return null;
+  const path = vaultAttachmentRelativePath(match[2] ?? match[3] ?? "");
+  if (!path) return null;
+  const name = (match[1] ?? "").trim() || path.split("/").pop() || path;
+  const imageKind = isImageAttachmentPath(path);
+  if (image && !imageKind) return null;
+  return {
+    relativePath: path,
+    name,
+    image: imageKind,
+    pdf: attachmentExtension(path) === "pdf",
+    ...(imageKind && width ? { width } : {}),
+  };
+}
+
+export function withAttachmentImageWidth(markdown: string, width: number): string {
+  const parsed = parseStandaloneAttachment(markdown);
+  if (!parsed?.image) return markdown;
+  return `${renderAttachmentMarkdown(parsed.relativePath)} <!-- sbw:img-width:${clampAttachmentImageWidth(width)} -->`;
+}

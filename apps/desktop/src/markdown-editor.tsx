@@ -19,11 +19,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ATTACHMENT_ACCEPT,
+  attachmentExtension,
   isImageAttachmentPath,
   vaultAttachmentRelativePath,
 } from "@second-brain/brain-core";
 import {
   decodeAttachmentBytes,
+  dropHasFiles,
   filesFromDrop,
   snippetsFromFiles,
   useVaultAttachments,
@@ -109,11 +111,21 @@ function CodeBlock({ children, locale }: { children: ReactNode; locale: Markdown
   );
 }
 
-function VaultImage({ src, alt }: { src?: string; alt?: string }) {
+export function VaultAttachmentView({ href, alt, children, as = "link", width, onResize }: {
+  href?: string;
+  alt?: string;
+  children?: ReactNode;
+  as?: "image" | "link";
+  width?: number;
+  onResize?: (width: number) => void;
+}) {
   const api = useVaultAttachments();
-  const relative = src ? vaultAttachmentRelativePath(src) : null;
+  const relative = href ? vaultAttachmentRelativePath(href) : null;
   const isImage = relative ? isImageAttachmentPath(relative) : false;
+  const extension = (attachmentExtension(relative ?? "") ?? "").toUpperCase();
+  const label = alt || (typeof children === "string" ? children : "") || relative?.split("/").pop() || "";
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!api || !relative || !isImage) return;
     let cancelled = false;
@@ -131,25 +143,73 @@ function VaultImage({ src, alt }: { src?: string; alt?: string }) {
       if (created) URL.revokeObjectURL(created);
     };
   }, [api, relative, isImage]);
-  if (!relative || !isImage) return alt ? <span className="markdown-image-pending">{alt}</span> : null;
-  if (!blobUrl) return <span className="markdown-image-pending">{alt || relative}</span>;
-  return <img src={blobUrl} alt={alt ?? ""} />;
+  if (!relative) {
+    if (as === "image") return alt ? <span className="markdown-image-pending">{alt}</span> : null;
+    return <a href={href} target="_blank" rel="noreferrer">{children ?? alt}</a>;
+  }
+  const open = (event: { preventDefault(): void; stopPropagation(): void }) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (api) void api.openFile(relative);
+  };
+  if (isImage) {
+    if (!blobUrl) return <span className="markdown-image-pending">{label || relative}</span>;
+    const image = <img src={blobUrl} alt={label} className="vault-attachment-image" draggable={false} />;
+    if (!onResize) {
+      return width
+        ? <div className="vault-image-resize" style={{ width }}>{image}</div>
+        : image;
+    }
+    const startResize = (event: React.PointerEvent<HTMLButtonElement>, edge: "e" | "w") => {
+      event.preventDefault();
+      event.stopPropagation();
+      const frame = frameRef.current;
+      const originX = event.clientX;
+      const originWidth = frame?.getBoundingClientRect().width ?? width ?? 320;
+      const sign = edge === "e" ? 1 : -1;
+      const handle = event.currentTarget;
+      handle.setPointerCapture(event.pointerId);
+      let latest = originWidth;
+      let frameId = 0;
+      const apply = () => {
+        frameId = 0;
+        if (frame) frame.style.width = `${latest}px`;
+      };
+      const move = (next: PointerEvent) => {
+        latest = Math.min(900, Math.max(120, Math.round(originWidth + sign * (next.clientX - originX))));
+        if (!frameId) frameId = requestAnimationFrame(apply);
+      };
+      const stop = () => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", stop);
+        if (frameId) cancelAnimationFrame(frameId);
+        onResize(latest);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", stop);
+    };
+    return (
+      <div className="vault-image-resize" ref={frameRef} style={width ? { width } : undefined}>
+        {image}
+        <button type="button" className="vault-image-resize-handle west" aria-label="縮小圖片" onPointerDown={(event) => startResize(event, "w")} />
+        <button type="button" className="vault-image-resize-handle east" aria-label="放大圖片" onPointerDown={(event) => startResize(event, "e")} />
+      </div>
+    );
+  }
+  return (
+    <button type="button" className="vault-file-tile" onClick={open} title={label}>
+      <span className={`vault-file-icon${extension === "PDF" ? " is-pdf" : ""}`} aria-hidden="true">{extension || "FILE"}</span>
+      <span className="vault-file-name">{label || relative}</span>
+    </button>
+  );
+}
+
+function VaultImage({ src, alt }: { src?: string; alt?: string }) {
+  return <VaultAttachmentView href={src} alt={alt} as="image" />;
 }
 
 function VaultLink({ href, children }: { href?: string; children: ReactNode }) {
-  const api = useVaultAttachments();
-  const relative = href ? vaultAttachmentRelativePath(href) : null;
-  if (relative) {
-    return <a
-      href={href}
-      className="vault-attachment"
-      onClick={(event) => {
-        event.preventDefault();
-        if (api) void api.openFile(relative);
-      }}
-    >{children}</a>;
-  }
-  return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+  return <VaultAttachmentView href={href} as="link">{children}</VaultAttachmentView>;
 }
 
 export function MarkdownPreview({ value, locale = "zh-TW" }: { value: string; locale?: MarkdownEditorLocale }) {
@@ -283,7 +343,7 @@ export function MarkdownEditor({ value, onChange, locale = "zh-TW", minRows = 10
     void snippetsFromFiles(attachments, attachmentFolder, files, value, locale, maxAttachments).then(insertSnippets);
   };
   const onDragOver = (event: ReactDragEvent) => {
-    if (!canAttach || filesFromDrop(event).length === 0) return;
+    if (!canAttach || !dropHasFiles(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
   };

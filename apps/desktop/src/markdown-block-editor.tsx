@@ -1,13 +1,16 @@
 import React, { useEffect, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Code2, Copy, GripVertical, Palette, Paperclip, Plus, Repeat2, Trash2 } from "lucide-react";
-import { ATTACHMENT_ACCEPT } from "@second-brain/brain-core";
-import { MarkdownPreview, type MarkdownEditorLocale } from "./markdown-editor";
-import { filesFromDrop, snippetsFromFiles, useVaultAttachments } from "./attachment-context";
+import { ATTACHMENT_ACCEPT, parseStandaloneAttachment, withAttachmentImageWidth } from "@second-brain/brain-core";
+import { MarkdownPreview, VaultAttachmentView, type MarkdownEditorLocale } from "./markdown-editor";
+import { dropHasFiles, filesFromDrop, snippetsFromFiles, useVaultAttachments } from "./attachment-context";
 import { GLOBAL_SELECTION_DELETE_EVENT } from "./global-shift-marquee";
 
 interface MarkdownBlock {
   id: string;
   source: string;
+  rowId?: string;
+  col?: number;
+  colWidths?: number[];
 }
 
 interface MarqueeBox {
@@ -100,9 +103,18 @@ export function splitMarkdownBlocks(value: string): string[] {
   return blocks;
 }
 
-/** Task-note bodies are stored tightly (no blank lines) so Obsidian shows one
- *  unit. Lift each `- [ ]` line into its own block so the canvas uses the
- *  checkbox UI instead of rendering a Markdown list dash on top of it. */
+/** Tight notes (no blank lines) still become one Notion-like block per
+ *  structural line: headings, bullets, todos, quotes, dividers. Clicking a
+ *  heading then edits the title, not a blob of `##` / `- ` markers. */
+function isStandaloneBlockLine(line: string): boolean {
+  if (TASK_LINE.test(line)) return true;
+  if (/^\s*#{1,6}\s+/.test(line)) return true;
+  if (/^\s*[-*+]\s+/.test(line)) return true;
+  if (/^\s*\d+[.)、]\s+/.test(line)) return true;
+  if (/^\s*>/.test(line)) return true;
+  return /^---+$/.test(line.trim());
+}
+
 export function splitTaskAwareBlocks(value: string): string[] {
   const out: string[] = [];
   for (const block of splitMarkdownBlocks(value)) {
@@ -117,7 +129,7 @@ export function splitTaskAwareBlocks(value: string): string[] {
       buffer.length = 0;
     };
     for (const line of block.split("\n")) {
-      if (TASK_LINE.test(line)) {
+      if (isStandaloneBlockLine(line)) {
         flush();
         out.push(line);
       } else {
@@ -130,34 +142,183 @@ export function splitTaskAwareBlocks(value: string): string[] {
 }
 
 function createBlocks(value: string): MarkdownBlock[] {
-  const created = splitTaskAwareBlocks(value).map((source) => ({ id: newBlockId(), source }));
+  const created = parseDocumentChunks(value).map((item) => ({
+    id: newBlockId(),
+    source: item.source,
+    rowId: item.rowId,
+    col: item.col,
+    colWidths: item.widths,
+  }));
   return created.length > 0 ? created : [{ id: newBlockId(), source: "" }];
 }
 
 /** Reuse existing block ids when an external `value` matches current sources, so a
  *  parent re-render never remounts the textarea mid-stroke (Notion-like typing). */
 function syncBlocks(previous: MarkdownBlock[], value: string): MarkdownBlock[] {
-  const sources = splitTaskAwareBlocks(value);
-  if (sources.length === 0) {
+  const items = parseDocumentChunks(value);
+  if (items.length === 0) {
     const empty = previous.find((block) => !block.source.trim()) ?? previous[0];
     return [{ id: empty?.id ?? newBlockId(), source: "" }];
   }
   const unused = [...previous];
-  return sources.map((source) => {
-    const matchIndex = unused.findIndex((block) => block.source === source);
+  return items.map((item) => {
+    const matchIndex = unused.findIndex((block) => block.source === item.source && block.rowId === item.rowId && block.col === item.col);
     if (matchIndex >= 0) {
       const [match] = unused.splice(matchIndex, 1);
-      return match!;
+      return { ...match!, rowId: item.rowId, col: item.col, colWidths: item.widths };
     }
-    return { id: newBlockId(), source };
+    return { id: newBlockId(), source: item.source, rowId: item.rowId, col: item.col, colWidths: item.widths };
   });
+}
+
+const ROW_START = /^<!--\s*sbw:row\s+(\S+)\s+([\d.]+(?:\s+[\d.]+)*)\s*-->$/;
+const ROW_COL = /^<!--\s*sbw:col\s*-->$/;
+const ROW_END = /^<!--\s*sbw:row-end\s*-->$/;
+
+function equalColWidths(count: number): number[] {
+  const base = Math.floor(100 / count);
+  const widths = Array.from({ length: count }, () => base);
+  widths[count - 1] = 100 - base * (count - 1);
+  return widths;
+}
+
+export function parseDocumentChunks(value: string): Array<{ source: string; rowId?: string; col?: number; widths?: number[] }> {
+  const out: Array<{ source: string; rowId?: string; col?: number; widths?: number[] }> = [];
+  let rowId: string | undefined;
+  let col = 0;
+  let widths: number[] | undefined;
+  let colHasContent = false;
+  const flushEmptyCol = () => {
+    if (rowId && !colHasContent) {
+      out.push({ source: "", rowId, col, widths });
+    }
+  };
+  for (const chunk of splitTaskAwareBlocks(value)) {
+    const line = chunk.trim();
+    const start = line.match(ROW_START);
+    if (start) {
+      rowId = start[1];
+      widths = start[2]!.split(/\s+/).map(Number);
+      col = 0;
+      colHasContent = false;
+      continue;
+    }
+    if (line === "<!-- sbw:slot -->") {
+      out.push({ source: "", rowId, col: rowId ? col : undefined, widths: rowId ? widths : undefined });
+      colHasContent = true;
+      continue;
+    }
+    if (ROW_COL.test(line)) {
+      flushEmptyCol();
+      col += 1;
+      colHasContent = false;
+      continue;
+    }
+    if (ROW_END.test(line)) {
+      flushEmptyCol();
+      rowId = undefined;
+      col = 0;
+      widths = undefined;
+      colHasContent = false;
+      continue;
+    }
+    out.push({ source: chunk, rowId, col: rowId ? col : undefined, widths: rowId ? widths : undefined });
+    colHasContent = true;
+  }
+  return out;
 }
 
 function serializeBlocks(blocks: MarkdownBlock[]): string {
   // No per-source trimming: a block that legitimately ends with spaces must
   // keep serializing identically, otherwise the value-sync effect mistakes our
   // own output for an external edit and resets the editing state mid-stroke.
-  return blocks.map((block) => block.source).filter((source) => source.trim()).join("\n\n");
+  if (blocks.every((block) => !block.source.trim() && !block.rowId)) return "";
+  const parts: string[] = [];
+  let index = 0;
+  while (index < blocks.length) {
+    const block = blocks[index]!;
+    if (!block.rowId) {
+      parts.push(block.source.trim() ? block.source : "<!-- sbw:slot -->");
+      index += 1;
+      continue;
+    }
+    const rowId = block.rowId;
+    const row: MarkdownBlock[] = [];
+    while (index < blocks.length && blocks[index]?.rowId === rowId) {
+      row.push(blocks[index]!);
+      index += 1;
+    }
+    const colCount = Math.max(1, ...row.map((item) => (item.col ?? 0) + 1));
+    const widths = row[0]?.colWidths ?? equalColWidths(colCount);
+    parts.push(`<!-- sbw:row ${rowId} ${widths.join(" ")} -->`);
+    for (let col = 0; col < colCount; col += 1) {
+      if (col > 0) parts.push("<!-- sbw:col -->");
+      const cells = row.filter((entry) => (entry.col ?? 0) === col);
+      if (cells.length === 0) parts.push("<!-- sbw:slot -->");
+      for (const item of cells) {
+        parts.push(item.source.trim() ? item.source : "<!-- sbw:slot -->");
+      }
+    }
+    parts.push("<!-- sbw:row-end -->");
+  }
+  return parts.join("\n\n");
+}
+
+function placeBlockBeside(blocks: MarkdownBlock[], ids: readonly string[], targetId: string, side: "left" | "right"): MarkdownBlock[] {
+  const moving = blocks.filter((block) => ids.includes(block.id));
+  const rest = blocks.filter((block) => !ids.includes(block.id));
+  const target = rest.find((block) => block.id === targetId);
+  if (!target || moving.length === 0 || moving.some((block) => block.id === targetId)) return blocks;
+  if (!target.rowId) {
+    const rowId = newBlockId();
+    const widths = equalColWidths(2);
+    const targetCol = side === "left" ? 1 : 0;
+    const moveCol = side === "left" ? 0 : 1;
+    const nextTarget = { ...target, rowId, col: targetCol, colWidths: widths };
+    const nextMoving = moving.map((block) => ({ ...block, rowId, col: moveCol, colWidths: widths }));
+    return rest.flatMap((block) => {
+      if (block.id !== target.id) return [block];
+      return side === "left" ? [...nextMoving, nextTarget] : [nextTarget, ...nextMoving];
+    });
+  }
+  const rowBlocks = rest.filter((block) => block.rowId === target.rowId);
+  const colCount = Math.max(...rowBlocks.map((block) => (block.col ?? 0) + 1));
+  if (colCount >= 4) return blocks;
+  const insertCol = side === "left" ? (target.col ?? 0) : (target.col ?? 0) + 1;
+  const widths = equalColWidths(colCount + 1);
+  const shifted = rest.map((block) => {
+    if (block.rowId !== target.rowId) return block;
+    const col = block.col ?? 0;
+    return { ...block, col: col >= insertCol ? col + 1 : col, colWidths: widths };
+  });
+  const nextMoving = moving.map((block) => ({ ...block, rowId: target.rowId, col: insertCol, colWidths: widths }));
+  const insertAt = shifted.findIndex((block) => block.rowId === target.rowId && (block.col ?? 0) >= insertCol);
+  const at = insertAt < 0 ? shifted.length : insertAt;
+  return [...shifted.slice(0, at), ...nextMoving, ...shifted.slice(at)];
+}
+
+function reindexRow(blocks: MarkdownBlock[], rowId: string): MarkdownBlock[] {
+  const cols = [...new Set(blocks.filter((block) => block.rowId === rowId).map((block) => block.col ?? 0))].sort((left, right) => left - right);
+  if (cols.length <= 1) {
+    return blocks.map((block) => (block.rowId === rowId ? { id: block.id, source: block.source } : block));
+  }
+  const remap = new Map(cols.map((col, index) => [col, index]));
+  const widths = equalColWidths(cols.length);
+  return blocks.map((block) => {
+    if (block.rowId !== rowId) return block;
+    return { ...block, col: remap.get(block.col ?? 0) ?? 0, colWidths: widths };
+  });
+}
+
+function releaseFromRow(blocks: MarkdownBlock[], ids: readonly string[]): MarkdownBlock[] {
+  const rowIds = [...new Set(blocks.flatMap((block) => (ids.includes(block.id) && block.rowId ? [block.rowId] : [])))];
+  let next = blocks.map((block) => (ids.includes(block.id) ? { id: block.id, source: block.source } : block));
+  for (const rowId of rowIds) next = reindexRow(next, rowId);
+  return next;
+}
+
+function rowTemplate(widths: number[]): string {
+  return widths.flatMap((width, index) => (index === 0 ? [`minmax(0, ${width}fr)`] : ["8px", `minmax(0, ${width}fr)`])).join(" ");
 }
 
 function isTaskBlock(source: string): boolean {
@@ -334,7 +495,8 @@ export function MarkdownBlockEditor({
   // Index of the insertion gap currently highlighted while dragging (0 = before the
   // first block, blocks.length = after the last one).
   const [dropIndex, setDropIndex] = useState<number | null>(null);
-  const dragRef = useRef<{ id: string; ids: string[]; startY: number; moved: boolean } | null>(null);
+  const [dropColumn, setDropColumn] = useState<{ id: string; side: "left" | "right" } | null>(null);
+  const dragRef = useRef<{ id: string; ids: string[]; startX: number; startY: number; moved: boolean } | null>(null);
   const marqueeOriginRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
   const suppressHandleClickRef = useRef(false);
   const suppressCanvasClickUntilRef = useRef(0);
@@ -664,9 +826,11 @@ export function MarkdownBlockEditor({
     updateBlockContent(block, source);
   };
   const removeBlock = (id: string) => {
-    if (!blocks.some((block) => block.id === id)) return;
+    const target = blocks.find((block) => block.id === id);
+    if (!target) return;
     pushHistory();
-    commit(blocks.filter((block) => block.id !== id));
+    const remaining = blocks.filter((block) => block.id !== id);
+    commit(target.rowId ? reindexRow(remaining, target.rowId) : remaining);
     if (editingId === id) setEditingId(null);
   };
   const toggleTask = (blockId: string, lineIndex: number, checked: boolean) => {
@@ -697,19 +861,21 @@ export function MarkdownBlockEditor({
     setBlockMenuPanel("root");
   };
 
-  /** Leaves edit mode, dropping the block when it ended up empty. */
+  /** Leaves edit mode. Empty blocks stay so they can be dragged into columns. */
   const finishEditing = (id: string) => {
-    const block = blocks.find((item) => item.id === id);
-    if (block && !parseStyledBlock(block.source).content.trim() && blocks.length > 1) {
-      pushHistory();
-      commit(blocks.filter((item) => item.id !== id));
-    }
-    setEditingId(null);
+    setEditingId((current) => (current === id ? null : current));
   };
 
   const addBlock = (afterIndex?: number, source = "") => {
     pushHistory();
-    const block = { id: newBlockId(), source };
+    const after = afterIndex === undefined ? undefined : blocks[afterIndex];
+    const block = {
+      id: newBlockId(),
+      source,
+      rowId: after?.rowId,
+      col: after?.col,
+      colWidths: after?.colWidths,
+    };
     const next = [...blocks];
     next.splice(afterIndex === undefined ? blocks.length : afterIndex + 1, 0, block);
     commit(next);
@@ -727,7 +893,7 @@ export function MarkdownBlockEditor({
     void snippetsFromFiles(attachments, attachmentFolder, files, value, locale, maxAttachments).then(insertSnippets);
   };
   const onDragOver = (event: ReactDragEvent) => {
-    if (!canAttach || filesFromDrop(event).length === 0) return;
+    if (!canAttach || !dropHasFiles(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
   };
@@ -926,7 +1092,13 @@ export function MarkdownBlockEditor({
         const head = source.slice(0, lineStart) + before;
         const ordered = parsed.marker.match(/^(\d+)([.、][ \t]*)$/);
         const continuationMarker = ordered ? `${Number(ordered[1]) + 1}${ordered[2]}` : parsed.marker;
-        const created = { id: newBlockId(), source: `${parsed.indent}${continuationMarker}${after}${source.slice(lineEnd)}` };
+        const created = {
+          id: newBlockId(),
+          source: `${parsed.indent}${continuationMarker}${after}${source.slice(lineEnd)}`,
+          rowId: block.rowId,
+          col: block.col,
+          colWidths: block.colWidths,
+        };
         const next = blocks.flatMap((item) => item.id === block.id
           ? [{ ...item, source: withBlockStyle(head, parseStyledBlock(block.source).style) }, created]
           : [item]);
@@ -937,9 +1109,17 @@ export function MarkdownBlockEditor({
     }
 
     if (line.trim() === "") {
-      // Empty paragraph: Enter closes the block without spawning empties.
       event.preventDefault();
-      finishEditing(block.id);
+      pushHistory();
+      const created = {
+        id: newBlockId(),
+        source: "",
+        rowId: block.rowId,
+        col: block.col,
+        colWidths: block.colWidths,
+      };
+      commit(blocks.flatMap((item) => item.id === block.id ? [item, created] : [item]));
+      setEditingId(created.id);
       return true;
     }
 
@@ -949,7 +1129,13 @@ export function MarkdownBlockEditor({
     pushHistory();
     const head = source.slice(0, lineStart + relCaret);
     const tail = source.slice(lineStart + relCaret);
-    const created = { id: newBlockId(), source: tail };
+    const created = {
+      id: newBlockId(),
+      source: tail,
+      rowId: block.rowId,
+      col: block.col,
+      colWidths: block.colWidths,
+    };
     const next = blocks.flatMap((item) => item.id === block.id ? [{ ...item, source: withBlockStyle(head, parseStyledBlock(block.source).style) }, created] : [item]);
     commit(next);
     setEditingId(created.id);
@@ -989,6 +1175,19 @@ export function MarkdownBlockEditor({
       return null;
     }
     return items.length;
+  };
+
+  const peekColumnDrop = (clientX: number, clientY: number): { id: string; side: "left" | "right" } | null => {
+    const hit = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-markdown-block-id]");
+    const id = hit?.dataset.markdownBlockId;
+    if (!hit || !id || dragRef.current?.ids.includes(id)) return null;
+    const rect = hit.getBoundingClientRect();
+    if (rect.width <= 40) return null;
+    const gutter = Math.min(52, rect.width * 0.3);
+    const edge = Math.min(48, rect.width * 0.22);
+    if (clientX >= rect.right - edge) return { id, side: "right" };
+    if (clientX >= rect.left + gutter && clientX < rect.left + gutter + edge) return { id, side: "left" };
+    return null;
   };
 
   const updateMarqueeSelection = (clientX: number, clientY: number) => {
@@ -1048,27 +1247,56 @@ export function MarkdownBlockEditor({
   const beginDrag = (event: ReactPointerEvent<HTMLButtonElement>, id: string) => {
     if (event.button !== 0) return;
     event.stopPropagation();
-    dragRef.current = { id, ids: selectedBlockIds.includes(id) ? selectedBlockIds : [id], startY: event.clientY, moved: false };
+    dragRef.current = {
+      id,
+      ids: selectedBlockIds.includes(id) ? selectedBlockIds : [id],
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const moveDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
     if (!drag) return;
-    if (!drag.moved && Math.abs(event.clientY - drag.startY) > 4) {
+    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) {
       drag.moved = true;
       setDraggingId(drag.id);
     }
-    if (drag.moved) setDropIndex(computeDropIndex(event.clientX, event.clientY));
+    if (!drag.moved) return;
+    const column = peekColumnDrop(event.clientX, event.clientY);
+    setDropColumn(column);
+    setDropIndex(column ? null : computeDropIndex(event.clientX, event.clientY));
   };
   const finishDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
     suppressHandleClickRef.current = Boolean(drag?.moved);
-    const target = drag?.moved ? computeDropIndex(event.clientX, event.clientY) : null;
+    const column = drag?.moved ? peekColumnDrop(event.clientX, event.clientY) : null;
+    const target = drag?.moved && !column ? computeDropIndex(event.clientX, event.clientY) : null;
     dragRef.current = null;
     setDraggingId(null);
     setDropIndex(null);
-    if (!drag?.moved || target == null) return;
-    const next = moveBlockSelection(blocks, drag.ids, target);
+    setDropColumn(null);
+    if (!drag?.moved) return;
+    if (column) {
+      const next = placeBlockBeside(blocks, drag.ids, column.id, column.side);
+      if (next === blocks) return;
+      pushHistory();
+      commit(next);
+      setSelectedBlockIds([]);
+      return;
+    }
+    if (target == null) return;
+    const dest = target < blocks.length ? blocks[target] : undefined;
+    const sameColumn = Boolean(
+      dest?.rowId
+      && drag.ids.every((id) => {
+        const current = blocks.find((block) => block.id === id);
+        return current?.rowId === dest.rowId && current.col === dest.col;
+      }),
+    );
+    const prepared = sameColumn ? blocks : releaseFromRow(blocks, drag.ids);
+    const next = moveBlockSelection(prepared, drag.ids, target);
     if (next === blocks) return;
     pushHistory();
     commit(next);
@@ -1078,6 +1306,7 @@ export function MarkdownBlockEditor({
     dragRef.current = null;
     setDraggingId(null);
     setDropIndex(null);
+    setDropColumn(null);
   };
 
   const renderIndicator = (at: number) =>
@@ -1105,8 +1334,10 @@ export function MarkdownBlockEditor({
       }}
     >
       <div className="markdown-block-list" ref={listRef}>
-        {blocks.map((block, index) => {
+        {(() => {
+          const renderBlock = (block: MarkdownBlock, index: number) => {
           const styled = parseStyledBlock(block.source);
+          const attachment = parseStandaloneAttachment(styled.content);
           const derived = deriveBlockKind(styled.content);
           const { kind, level } = derived;
           const presentation = editablePresentation(styled.content, derived);
@@ -1124,16 +1355,16 @@ export function MarkdownBlockEditor({
           const commandOptions = slash ? filteredCommands(slash.query) : [];
           const showSlashMenu = slash && dismissedSlash !== `${block.id}:${styled.content}` && commandOptions.length > 0;
           return (
-          <React.Fragment key={block.id}>
-            {renderIndicator(index)}
             <article
+              key={block.id}
               data-markdown-block-id={block.id}
               data-global-select-id={block.id}
               data-global-select-kind="markdown-block"
               data-block-kind={kind}
               data-block-color={styled.style.color}
               data-block-background={styled.style.background}
-              className={`markdown-block ${kindClass} ${isEditing ? "editing" : ""} ${selectedBlockIds.includes(block.id) ? "selected" : ""} ${draggingId === block.id || (draggingId && selectedBlockIds.includes(block.id)) ? "dragging" : ""}`}
+              className={`markdown-block ${kindClass} ${isEditing ? "editing" : ""} ${selectedBlockIds.includes(block.id) ? "selected" : ""} ${draggingId === block.id || (draggingId && selectedBlockIds.includes(block.id)) ? "dragging" : ""} ${dropColumn?.id === block.id ? `drop-column-${dropColumn.side}` : ""}`}
+              style={block.rowId ? undefined : { gridColumn: "1 / -1" }}
             >
               <div className="markdown-block-tools">
                 <button
@@ -1150,7 +1381,7 @@ export function MarkdownBlockEditor({
                   className="markdown-block-grip"
                   data-markdown-drag-handle
                   aria-label={zh ? `拖曳區塊 ${index + 1}` : `Drag block ${index + 1}`}
-                  title={zh ? "拖曳排序（上下拖動）" : "Drag to reorder"}
+                  title={zh ? "拖曳排序；拖到另一塊旁邊可並排" : "Drag to reorder, or beside another block to make columns"}
                   onPointerDown={(event) => beginDrag(event, block.id)}
                   onPointerMove={moveDrag}
                   onPointerUp={finishDrag}
@@ -1281,7 +1512,13 @@ export function MarkdownBlockEditor({
                             updateBlockContent(block, "");
                             return;
                           }
-                          const created = { id: newBlockId(), source: "- [ ] " };
+                          const created = {
+                            id: newBlockId(),
+                            source: "- [ ] ",
+                            rowId: block.rowId,
+                            col: block.col,
+                            colWidths: block.colWidths,
+                          };
                           commit(blocks.flatMap((item) => item.id === block.id ? [item, created] : [item]));
                           setEditingId(created.id);
                         } else if (event.key === "Delete" && event.currentTarget.selectionStart === event.currentTarget.selectionEnd && event.currentTarget.selectionEnd === singleTaskMatch[3]!.trimStart().length) {
@@ -1418,6 +1655,22 @@ export function MarkdownBlockEditor({
                       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setEditingId(block.id); }
                     }}
                   />
+                ) : attachment ? (
+                  <div
+                    className="markdown-block-attachment"
+                    onClick={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    <VaultAttachmentView
+                      href={attachment.relativePath}
+                      alt={attachment.name}
+                      width={attachment.width}
+                      onResize={attachment.image ? (nextWidth) => {
+                        pushHistory();
+                        updateBlockContent(block, withAttachmentImageWidth(block.source, nextWidth));
+                      } : undefined}
+                    />
+                  </div>
                 ) : (
                   <div
                     className="markdown-block-preview"
@@ -1458,15 +1711,6 @@ export function MarkdownBlockEditor({
                   </div>
                 )}
               </div>
-              <button
-                type="button"
-                className="markdown-block-delete"
-                aria-label={zh ? "刪除 Markdown 區塊" : "Delete Markdown block"}
-                title={zh ? "刪除區塊（Ctrl+Z 可復原）" : "Delete block (Ctrl+Z to undo)"}
-                onClick={() => removeBlock(block.id)}
-              >
-                <Trash2 aria-hidden="true" />
-              </button>
               {blockMenuId === block.id && (
                 <div
                   className="markdown-block-menu"
@@ -1529,10 +1773,93 @@ export function MarkdownBlockEditor({
                 </div>
               )}
             </article>
-          </React.Fragment>
           );
-        })}
-        {renderIndicator(blocks.length)}
+          };
+          const nodes: React.ReactNode[] = [];
+          let cursor = 0;
+          while (cursor < blocks.length) {
+            const current = blocks[cursor]!;
+            if (!current.rowId) {
+              nodes.push(
+                <React.Fragment key={current.id}>
+                  {renderIndicator(cursor)}
+                  {renderBlock(current, cursor)}
+                </React.Fragment>,
+              );
+              cursor += 1;
+              continue;
+            }
+            const rowId = current.rowId;
+            const start = cursor;
+            const row: MarkdownBlock[] = [];
+            while (cursor < blocks.length && blocks[cursor]?.rowId === rowId) {
+              row.push(blocks[cursor]!);
+              cursor += 1;
+            }
+            const colCount = Math.max(1, ...row.map((item) => (item.col ?? 0) + 1));
+            const widths = row[0]?.colWidths ?? equalColWidths(colCount);
+            nodes.push(
+              <div
+                key={rowId}
+                className="markdown-row"
+                data-markdown-row={rowId}
+                style={{ gridColumn: "1 / -1", gridTemplateColumns: rowTemplate(widths) }}
+              >
+                {renderIndicator(start)}
+                {Array.from({ length: colCount }, (_, col) => (
+                  <React.Fragment key={`${rowId}-${col}`}>
+                    {col > 0 && (
+                      <div
+                        className="markdown-col-resizer"
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label={zh ? "調整欄寬" : "Resize column"}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          const rowEl = event.currentTarget.parentElement;
+                          if (!rowEl) return;
+                          const originX = event.clientX;
+                          const origin = [...widths];
+                          const gutters = 8 * (colCount - 1);
+                          const usable = Math.max(1, rowEl.getBoundingClientRect().width - gutters);
+                          const handle = event.currentTarget;
+                          handle.setPointerCapture(event.pointerId);
+                          const left = col - 1;
+                          const move = (next: PointerEvent) => {
+                            const delta = ((next.clientX - originX) / usable) * 100;
+                            const nextWidths = [...origin];
+                            nextWidths[left] = origin[left]! + delta;
+                            nextWidths[col] = origin[col]! - delta;
+                            if (nextWidths[left]! < 18 || nextWidths[col]! < 18) return;
+                            rowEl.style.gridTemplateColumns = rowTemplate(nextWidths);
+                            (handle as HTMLElement & { dataset: { widths?: string } }).dataset.widths = nextWidths.join(" ");
+                          };
+                          const stop = (next: PointerEvent) => {
+                            handle.releasePointerCapture(next.pointerId);
+                            handle.removeEventListener("pointermove", move);
+                            handle.removeEventListener("pointerup", stop);
+                            const raw = handle.dataset.widths;
+                            const finalWidths = raw ? raw.split(" ").map(Number) : origin;
+                            pushHistory();
+                            commit(blocks.map((block) => (block.rowId === rowId ? { ...block, colWidths: finalWidths } : block)));
+                          };
+                          handle.addEventListener("pointermove", move);
+                          handle.addEventListener("pointerup", stop);
+                        }}
+                      />
+                    )}
+                    <div className="markdown-col">
+                      {row.filter((item) => (item.col ?? 0) === col).map((item) => renderBlock(item, blocks.indexOf(item)))}
+                    </div>
+                  </React.Fragment>
+                ))}
+              </div>,
+            );
+          }
+          nodes.push(renderIndicator(blocks.length));
+          return nodes;
+        })()}
       </div>
       {marqueeBox && (
         <div

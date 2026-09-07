@@ -5,7 +5,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
 import { AttachmentProvider } from "./attachment-context";
-import { blockMenuPlacement, deriveBlockKind, MarkdownBlockEditor, parseStyledBlock, splitTaskAwareBlocks } from "./markdown-block-editor";
+import { blockMenuPlacement, deriveBlockKind, MarkdownBlockEditor, parseDocumentChunks, parseStyledBlock, splitTaskAwareBlocks } from "./markdown-block-editor";
 
 const window = new Window({ url: "http://localhost/" });
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -27,11 +27,55 @@ test("Markdown markers identify their visual block type immediately", () => {
   assert.deepEqual(deriveBlockKind("```"), { kind: "code" });
 });
 
+test("column markers become side-by-side layout metadata without extra blocks", () => {
+  const chunks = parseDocumentChunks([
+    "<!-- sbw:row row-1 50 50 -->",
+    "左邊",
+    "<!-- sbw:col -->",
+    "右邊",
+    "<!-- sbw:row-end -->",
+  ].join("\n\n"));
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks[0]?.source, "左邊");
+  assert.equal(chunks[0]?.col, 0);
+  assert.equal(chunks[1]?.source, "右邊");
+  assert.equal(chunks[1]?.col, 1);
+  assert.deepEqual(chunks[0]?.widths, [50, 50]);
+  const withEmpty = parseDocumentChunks([
+    "<!-- sbw:row row-2 50 50 -->",
+    "左邊",
+    "<!-- sbw:col -->",
+    "<!-- sbw:slot -->",
+    "<!-- sbw:row-end -->",
+  ].join("\n\n"));
+  assert.equal(withEmpty[1]?.source, "");
+  assert.equal(withEmpty[1]?.col, 1);
+});
+
 test("tight task notes split each checkbox line into its own block", () => {
   assert.deepEqual(
     splitTaskAwareBlocks("- [ ] 移植營收\n- [ ] 完成 worker\ntest123"),
     ["- [ ] 移植營收", "- [ ] 完成 worker", "test123"],
   );
+});
+
+test("tight notes split headings and bullets so clicking a row does not reveal markers", () => {
+  assert.deepEqual(
+    splitTaskAwareBlocks("## Notes\n- 縮排寫在這一則下面\n- 可直接改或刪\n這是我寫的筆記"),
+    ["## Notes", "- 縮排寫在這一則下面", "- 可直接改或刪", "這是我寫的筆記"],
+  );
+  const heading = renderEditor("## Notes\n- 縮排寫在這一則下面");
+  try {
+    assert.equal(openTextarea(heading.container, 0).value, "Notes");
+  } finally {
+    heading.container.remove();
+  }
+  const bullet = renderEditor("## Notes\n- 縮排寫在這一則下面");
+  try {
+    assert.equal(openTextarea(bullet.container, 1).value, "縮排寫在這一則下面");
+  } finally {
+    bullet.container.remove();
+  }
 });
 
 test("the block menu stays inside a narrow side panel viewport and flips above the row", () => {
@@ -43,6 +87,17 @@ test("the block menu stays inside a narrow side panel viewport and flips above t
     blockMenuPlacement({ left: 8, top: 20, bottom: 44 }, 260, 720),
     { left: 12, width: 236, maxHeight: 520, top: 48, bottom: "auto" },
   );
+});
+
+test("heading preview keeps the H2 class so leaving edit does not look like body text", () => {
+  const rendered = renderEditor("## Section");
+  try {
+    const preview = rendered.container.querySelector(".markdown-block-static");
+    assert.equal(preview?.classList.contains("kind-heading-h2"), true);
+    assert.equal(preview?.textContent?.trim(), "Section");
+  } finally {
+    rendered.container.remove();
+  }
 });
 
 test("structural Markdown markers stay in storage but disappear from the live field", () => {
@@ -297,7 +352,11 @@ test("Ctrl+Z inside the canvas undoes a reorder and Ctrl+Shift+Z reapplies it", 
 test("deleting a block is undoable inside the editor", () => {
   const rendered = renderEditor("第一段\n\n第二段");
   try {
-    const deleteButton = rendered.container.querySelectorAll<HTMLElement>(".markdown-block-delete")[1]!;
+    const handle = rendered.container.querySelectorAll<HTMLElement>("[data-markdown-drag-handle]")[1]!;
+    flushSync(() => {
+      handle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event);
+    });
+    const deleteButton = rendered.container.querySelector<HTMLElement>(".markdown-block-menu-row.danger")!;
     const section = rendered.container.querySelector<HTMLElement>(".markdown-block-editor")!;
     flushSync(() => {
       deleteButton.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event);
@@ -706,7 +765,7 @@ test("Enter on a paragraph commits it to preview and opens a fresh block below",
     const textarea = openTextarea(rendered.container, 0);
     setCaret(textarea, "第一段".length);
     pressKey(textarea, { key: "Enter" });
-    assert.equal(rendered.changes.at(-1), "第一段");
+    assert.equal(rendered.changes.at(-1), "第一段\n\n<!-- sbw:slot -->");
     assert.equal(
       rendered.container.querySelectorAll("[data-markdown-block-id]").length,
       2,

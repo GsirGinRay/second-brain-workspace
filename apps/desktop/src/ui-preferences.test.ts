@@ -87,8 +87,8 @@ test("save as knowledge and related knowledge labels stay off the main menu", ()
 test("today journal labels stay in the Today view, not a new menu item", () => {
   assert.equal(translate("zh-TW", "today.journal"), "今天的日誌");
   assert.equal(translate("en", "today.journal"), "Today's journal");
-  assert.equal(translate("zh-TW", "today.journal.hint"), "會議可放在日曆上；結論寫在這裡。");
-  assert.equal(translate("en", "today.journal.hint"), "Meetings can stay on the calendar. Write conclusions here.");
+  assert.equal(translate("zh-TW", "today.journal.hint"), "空白畫布，直接打字。小標只在空白時當提示，不會預先寫進檔案。");
+  assert.equal(translate("en", "today.journal.hint"), "A blank page. Type like Notion. Use the chips only if you want a heading.");
   assert.doesNotMatch(translate("zh-TW", "view.today"), /日誌/);
 });
 

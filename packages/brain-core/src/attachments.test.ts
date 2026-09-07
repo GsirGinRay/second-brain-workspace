@@ -9,6 +9,8 @@ import {
   canAddAttachments,
   canonicalAttachmentPath,
   extractAttachmentHrefs,
+  parseStandaloneAttachment,
+  withAttachmentImageWidth,
   isAllowedAttachmentExtension,
   isImageAttachmentPath,
   renderAttachmentMarkdown,
@@ -97,6 +99,31 @@ test("vault attachment hrefs reject escape and keep only 附件/<folder>/<file>"
   assert.equal(vaultAttachmentRelativePath("附件/開源發布/photo.exe"), null);
   assert.equal(vaultAttachmentRelativePath("https://example.com/a.png"), null);
   assert.equal(vaultAttachmentRelativePath("附件/foo/../bar/a.png"), null);
+});
+
+test("a lone vault image or file link is a standalone attachment block", () => {
+  assert.deepEqual(parseStandaloneAttachment("![](附件/測試專案/測試圖.png)"), {
+    relativePath: "附件/測試專案/測試圖.png",
+    name: "測試圖.png",
+    image: true,
+    pdf: false,
+  });
+  assert.deepEqual(parseStandaloneAttachment("[測試文件.pdf](附件/測試專案/測試文件.pdf)"), {
+    relativePath: "附件/測試專案/測試文件.pdf",
+    name: "測試文件.pdf",
+    image: false,
+    pdf: true,
+  });
+  assert.equal(parseStandaloneAttachment("見 [測試文件.pdf](附件/測試專案/測試文件.pdf)"), null);
+  assert.equal(parseStandaloneAttachment("[site](https://example.com)"), null);
+  assert.equal(
+    parseStandaloneAttachment("![](附件/測試專案/測試圖.png) <!-- sbw:img-width:320 -->")?.width,
+    320,
+  );
+  assert.match(
+    withAttachmentImageWidth("![](附件/測試專案/測試圖.png)", 480),
+    /sbw:img-width:480/,
+  );
 });
 
 test("a task may hold only one attachment link", () => {
