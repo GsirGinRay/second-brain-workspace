@@ -20,6 +20,7 @@ globals.Event = window.Event;
 globals.KeyboardEvent = window.KeyboardEvent;
 globals.MouseEvent = window.MouseEvent;
 globals.PointerEvent = window.PointerEvent;
+globals.requestAnimationFrame = (callback: (time: number) => void) => setTimeout(callback, 0);
 
 function task(id: string, title: string, startTime: string): BrainTaskSnapshot {
   return {
@@ -802,8 +803,8 @@ test("tray meta shows the start time beside complete and armed delete", () => {
 });
 
 test("the tray project picker switches a task between projects in place", () => {
-  const picks: Array<[string, string | null]> = [];
-  const { container } = renderTray({ onPickProject: (taskId, projectId) => picks.push([taskId, projectId]) });
+  const picks: Array<[string, { id: string | null; name: string } | null]> = [];
+  const { container } = renderTray({ onPickProject: (taskId, project) => picks.push([taskId, project]) });
   const chip = container.querySelector<HTMLButtonElement>(".schedule-tray-project .project-picker-chip");
   assert.ok(chip, "each tray card embeds a compact project picker");
   assert.ok(chip!.textContent?.includes("無專案"), "unassigned tasks read 無專案");
@@ -812,5 +813,5 @@ test("the tray project picker switches a task between projects in place", () => 
   assert.ok(options.some((option) => option.textContent?.includes("官網改版")), "the menu lists real projects");
   const target = options.find((option) => option.textContent?.includes("官網改版"))!;
   click(target);
-  assert.deepEqual(picks, [["a", "p1"]]);
+  assert.deepEqual(picks, [["a", { id: "p1", name: "官網改版" }]]);
 });

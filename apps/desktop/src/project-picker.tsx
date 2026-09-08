@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Check, ChevronDown, Plus, Search, X } from "lucide-react";
 import { projectColor, type BrainProjectSnapshot } from "@second-brain/brain-core";
 import { translate, type UiLanguage } from "./ui-preferences";
@@ -69,6 +69,7 @@ export function ProjectPicker({
   const [creating, setCreating] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listboxId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -108,11 +109,22 @@ export function ProjectPicker({
     ...(onCreateProject && trimmed && !hasExactMatch ? [{ kind: "create" as const, name: trimmed }] : []),
   ], [hasExactMatch, matches, onCreateProject, trimmed]);
 
+  useEffect(() => {
+    if (!open) return;
+    if (onCreateProject && trimmed && !hasExactMatch && matches.length === 0) {
+      setActiveIndex(Math.max(0, options.length - 1));
+      return;
+    }
+    setActiveIndex(0);
+  }, [hasExactMatch, matches.length, onCreateProject, open, options.length, trimmed]);
+
   const openMenu = () => {
     setQuery(initialQuery);
     setActiveIndex(0);
     setOpen(true);
-    requestAnimationFrame(() => inputRef.current?.focus());
+    const focusSearch = () => inputRef.current?.focus();
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(focusSearch);
+    else focusSearch();
   };
   const closeMenu = () => {
     setOpen(false);
@@ -150,6 +162,10 @@ export function ProjectPicker({
       setActiveIndex((index) => Math.max(index - 1, 0));
     } else if (event.key === "Enter") {
       event.preventDefault();
+      if (onCreateProject && trimmed && !hasExactMatch && matches.length === 0) {
+        void pick({ kind: "create", name: trimmed });
+        return;
+      }
       void pick(options[activeIndex] ?? { kind: "none" });
     } else if (event.key === "Escape") {
       event.stopPropagation();
@@ -163,8 +179,32 @@ export function ProjectPicker({
     return translate(locale, "picker.create", { name: option.name });
   };
 
+  const searchField = (
+    <div className="project-picker-field" onClick={(event) => event.stopPropagation()}>
+      <Search aria-hidden="true" />
+      <input
+        ref={inputRef}
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-label={ariaLabel}
+        autoComplete="off"
+        value={query}
+        placeholder={translate(locale, "picker.searchPlaceholder")}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={onInputKeyDown}
+      />
+      {open && query && (
+        <button type="button" className="project-picker-clear" aria-label={translate(locale, "app.cancel")} onClick={() => setQuery("")}>
+          <X aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+
   const menu = open && (
-    <div className="project-picker-menu" role="listbox" id="project-picker-listbox" aria-label={ariaLabel}>
+    <div className="project-picker-menu" role="listbox" id={listboxId} aria-label={ariaLabel}>
+      {searchField}
       {options.map((option, index) => {
         const isCreate = option.kind === "create";
         const isSelected = option.kind === "project"
@@ -197,7 +237,7 @@ export function ProjectPicker({
 
   if (variant === "compact") {
     return (
-      <div className="project-picker project-picker-compact" ref={rootRef}>
+      <div className="project-picker project-picker-compact" ref={rootRef} onClick={(event) => event.stopPropagation()}>
         <button
           type="button"
           className="project-picker-chip"
@@ -207,7 +247,7 @@ export function ProjectPicker({
           title={selected?.name ?? translate(locale, "picker.none")}
           onClick={() => (open ? closeMenu() : openMenu())}
           onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") return; // native click
+            if (event.key === "Enter" || event.key === " ") return;
             if (event.key === "Escape") closeMenu();
           }}
         >
@@ -226,31 +266,22 @@ export function ProjectPicker({
 
   return (
     <div className="project-picker" ref={rootRef}>
-      <div className="project-picker-field">
-        <Search aria-hidden="true" />
-        <input
-          ref={inputRef}
-          role="combobox"
-          aria-expanded={open}
-          aria-controls={open ? "project-picker-listbox" : undefined}
-          aria-label={ariaLabel}
-          autoComplete="off"
-          value={open ? query : (selected?.name ?? "")}
-          placeholder={translate(locale, "picker.searchPlaceholder")}
-          onFocus={() => !open && openMenu()}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setActiveIndex(0);
-            if (!open) setOpen(true);
-          }}
-          onKeyDown={onInputKeyDown}
-        />
-        {open && query && (
-          <button type="button" className="project-picker-clear" aria-label={translate(locale, "app.cancel")} onClick={() => setQuery("")}>
-            <X aria-hidden="true" />
-          </button>
+      <button
+        type="button"
+        className="project-picker-trigger"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => (open ? closeMenu() : openMenu())}
+      >
+        {selected && (
+          <span className="dot" style={{ background: projectColor(selected.id ?? selected.name).accent }} aria-hidden="true" />
         )}
-      </div>
+        <span className={`project-picker-trigger-label${selected ? "" : " is-placeholder"}`}>
+          {selected?.name ?? translate(locale, "picker.chooseProject")}
+        </span>
+        <ChevronDown aria-hidden="true" />
+      </button>
       {menu}
     </div>
   );

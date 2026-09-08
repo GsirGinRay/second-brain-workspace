@@ -49,7 +49,6 @@ import {
   renderPluginExport,
   extractPromptVariables,
   fillPromptVariables,
-  KNOWLEDGE_CATEGORIES,
   attachmentFolderForJournal,
   attachmentFolderForKnowledge,
   attachmentFolderForProject,
@@ -1630,6 +1629,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onOpenTask={(id) => openDetail("task", id)}
         onQuickAdd={() => setQuickAddOpen(true)}
         onOpenJournal={() => void openTodayJournal()}
+        onCreateProject={(name) => createProject(name, null, null)}
         routineTemplate={routineTemplate}
         onRoutineTemplateChange={saveRoutineTemplate}
       />
@@ -2011,6 +2011,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
               ? [...new Set(projects.map((p) => p.area).filter((a): a is string => Boolean(a)))].sort()
               : knowledgeFilterCategories(collections.map((c) => c.category))
           }
+          onCreateProject={(name) => createProject(name, null, null)}
           onClose={() => {
             setCreateEntity(null);
             setPromotedTask(null);
@@ -2561,11 +2562,12 @@ function JournalDialog({
   );
 }
 
-export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onOpenTask, onQuickAdd, onOpenJournal, routineTemplate, onRoutineTemplateChange }: {
+export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onOpenTask, onQuickAdd, onOpenJournal, onCreateProject, routineTemplate, onRoutineTemplateChange }: {
   tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; showCompleted: boolean;
   onShowCompletedChange: (value: boolean) => void;
   onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onOpenTask: (taskId: string) => void; onQuickAdd: () => void;
   onOpenJournal?: () => void;
+  onCreateProject?: (name: string) => Promise<{ id: string; name: string } | null>;
   routineTemplate: RoutineTemplate; onRoutineTemplateChange: (template: RoutineTemplate) => void;
 }) {
   const { t, preferences } = useUiPreferences();
@@ -2611,8 +2613,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     draggedItems.current = [];
   };
   const important = groups.today.find((task) => task.priority === "highest") ?? null;
-  const pickProject = (taskId: string, projectId: string | null) => {
-    const project = projects.find((item) => item.id === projectId) ?? null;
+  const pickProject = (taskId: string, project: { id: string | null; name: string } | null) => {
     onSave(tasks.map((item) => item.id === taskId
       ? { ...item, projectId: project?.id ?? null, projectName: project?.name ?? null }
       : item));
@@ -2682,6 +2683,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
         onPriority={(taskId, priority) => onSave(applyTaskPriority(tasks, taskId, priority, today))}
         onStar={(taskId) => onSave(toggleMostImportant(tasks, taskId, today))}
         onPickProject={pickProject}
+        onCreateProject={onCreateProject}
         onDelete={onDelete}
         onDeleteBatch={(selectedTasks) => removeSelectedTasks(selectedTasks.flatMap((task) => task.id ? [task.id] : []))}
         onComplete={(task) => complete(task)}
@@ -2705,15 +2707,15 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
       />
     </section>
     <button className="today-quick-add-fab" type="button" onClick={onQuickAdd} aria-label={t("app.quickAdd")} title={t("app.quickAdd")}><Plus aria-hidden="true" /></button>
-    {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} projects={projects} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} onPickProject={pickProject} />)}</div></details>}
+    {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} projects={projects} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} onPickProject={pickProject} onCreateProject={onCreateProject} />)}</div></details>}
   </section>;
 }
 
-function InlineTaskCard({ task, today, projects, onOpen, onPatch, onComplete, onDelete, onPickProject }: { task: BrainTaskSnapshot; today: string; projects?: BrainProjectSnapshot[]; onOpen: (taskId: string) => void; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void; onPickProject?: (taskId: string, projectId: string | null) => void }) {
+function InlineTaskCard({ task, today, projects, onOpen, onPatch, onComplete, onDelete, onPickProject, onCreateProject }: { task: BrainTaskSnapshot; today: string; projects?: BrainProjectSnapshot[]; onOpen: (taskId: string) => void; onPatch: (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => void; onComplete: (task: BrainTaskSnapshot) => void; onDelete: (task: BrainTaskSnapshot) => void; onPickProject?: (taskId: string, project: { id: string | null; name: string } | null) => void; onCreateProject?: (name: string) => Promise<{ id: string; name: string } | null> }) {
   const { t, preferences } = useUiPreferences();
   const overdueDays = task.status !== "done" && task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
   const important = task.priority === "highest";
-  return <article className={`inline-task-card ${important ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><TaskCompleteButton done={task.status === "done"} label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)} /><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong className="inline-task-title" title={taskLabel(task)}>{taskLabel(task)}</strong><button type="button" className={`row-star ${important ? "active" : ""}`} aria-pressed={important} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={(event) => { event.stopPropagation(); if (task.id) onPatch(task, { priority: important ? "high" : "highest", ...(important ? {} : { taskDate: today }) }); }}><Star aria-hidden="true" fill={important ? "currentColor" : "none"} /></button></div><div className="inline-task-meta"><span className="inline-project-inline">{projects && onPickProject && task.id ? <ProjectPicker variant="compact" projects={projects} valueId={task.projectId} onSelect={(project) => onPickProject(task.id!, project?.id ?? null)} locale={preferences.language} ariaLabel={`${task.title} 專案`} /> : (task.projectName ?? t("app.unassigned"))}{task.startTime ? ` · ${task.startTime}` : ""}</span></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<DangerConfirmButton armLabel="永久刪除" confirmLabel={t("confirm.deleteAgain")} onConfirm={() => onDelete(task)} /></div></article>;
+  return <article className={`inline-task-card ${important ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><TaskCompleteButton done={task.status === "done"} label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)} /><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong className="inline-task-title" title={taskLabel(task)}>{taskLabel(task)}</strong><button type="button" className={`row-star ${important ? "active" : ""}`} aria-pressed={important} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={(event) => { event.stopPropagation(); if (task.id) onPatch(task, { priority: important ? "high" : "highest", ...(important ? {} : { taskDate: today }) }); }}><Star aria-hidden="true" fill={important ? "currentColor" : "none"} /></button></div><div className="inline-task-meta"><span className="inline-project-inline">{projects && onPickProject && task.id ? <ProjectPicker variant="compact" projects={projects} valueId={task.projectId} onSelect={(project) => onPickProject(task.id!, project ? { id: project.id, name: project.name } : null)} onCreateProject={onCreateProject} locale={preferences.language} ariaLabel={`${task.title} 專案`} /> : (task.projectName ?? t("app.unassigned"))}{task.startTime ? ` · ${task.startTime}` : ""}</span></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<DangerConfirmButton armLabel="永久刪除" confirmLabel={t("confirm.deleteAgain")} onConfirm={() => onDelete(task)} /></div></article>;
 }
 
 function TaskDateInput({
@@ -4940,6 +4942,7 @@ function CreateEntityModal({
   projects = [],
   onClose,
   onCreate,
+  onCreateProject,
 }: {
   kind: "project" | "collection";
   mode?: "create" | "save-outcome";
@@ -4952,6 +4955,7 @@ function CreateEntityModal({
   projects?: BrainProjectSnapshot[];
   onClose: () => void;
   onCreate: (name: string, category: string | null, importance: number | null, body: string) => Promise<void>;
+  onCreateProject?: (name: string) => Promise<{ id: string; name: string } | null>;
 }) {
   const { t, preferences } = useUiPreferences();
   const saveOutcome = mode === "save-outcome";
@@ -4960,12 +4964,15 @@ function CreateEntityModal({
   const [importance, setImportance] = useState("");
   const [body, setBody] = useState(initialBody);
   const [relatedProjectId, setRelatedProjectId] = useState<string | null>(initialProjectId);
+  const [relatedProjectName, setRelatedProjectName] = useState<string | null>(
+    projects.find((project) => project.id === initialProjectId)?.name ?? null,
+  );
   const [submitting, setSubmitting] = useState(false);
   const submit = async () => {
     if (!name.trim() || name.trim().length > 200 || submitting) return;
     setSubmitting(true);
     try {
-      const relatedName = projects.find((project) => project.id === relatedProjectId)?.name ?? null;
+      const relatedName = relatedProjectName ?? projects.find((project) => project.id === relatedProjectId)?.name ?? null;
       const nextBody = kind === "project" ? "" : withRelatedProjectWikilink(body, relatedName);
       await onCreate(name.trim(), category.trim() || null, importance ? Number(importance) : null, nextBody);
     } finally {
@@ -4978,20 +4985,16 @@ function CreateEntityModal({
         <div className="modal-header"><div><span className="eyebrow">{kind === "project" ? "OUTCOME" : "KNOWLEDGE"}</span><h2>{t(kind === "project" ? "entity.project.title" : saveOutcome ? "knowledge.save.title" : "entity.collection.title")}</h2></div><button className="icon-button" aria-label={t("app.close")} title={t("app.close")} onClick={onClose}><X aria-hidden="true" /></button></div>
         <p className="entity-guidance">{t(kind === "project" ? "entity.project.help" : saveOutcome ? "knowledge.save.help" : "entity.collection.help")}</p>
         <label>{t("entity.field.name")}<input autoFocus maxLength={200} value={name} onChange={(event) => setName(event.target.value)} /></label>
-        {kind === "collection" ? (
-          <label>{t("entity.field.category")}<select value={category} onChange={(event) => setCategory(event.target.value)} aria-label={t("entity.field.category")}><option value="">{t("app.uncategorized")}</option>{KNOWLEDGE_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-        ) : (
-          <label>
-            {t("entity.field.category")}
-            <CategoryInput
-              value={category}
-              existingCategories={existingCategories}
-              listId={`create-entity-${kind}-category`}
-              ariaLabel={t("entity.field.category")}
-              onChange={setCategory}
-            />
-          </label>
-        )}
+        <label>
+          {t("entity.field.category")}
+          <CategoryInput
+            value={category}
+            existingCategories={existingCategories}
+            listId={`create-entity-${kind}-category`}
+            ariaLabel={t("entity.field.category")}
+            onChange={setCategory}
+          />
+        </label>
         <label>{t("entity.field.importance")}<select value={importance} onChange={(event) => setImportance(event.target.value)}><option value="">{t("project.importance.unset")}</option><option value="1">{t("project.importance.high")}</option><option value="2">{t("project.importance.medium")}</option><option value="3">{t("project.importance.low")}</option></select></label>
         {kind === "collection" && (
           <div className="quick-project-field">
@@ -4999,7 +5002,11 @@ function CreateEntityModal({
             <ProjectPicker
               projects={projects}
               valueId={relatedProjectId}
-              onSelect={(project) => setRelatedProjectId(project?.id ?? null)}
+              onSelect={(project) => {
+                setRelatedProjectId(project?.id ?? null);
+                setRelatedProjectName(project?.name ?? null);
+              }}
+              onCreateProject={onCreateProject}
               locale={preferences.language}
               ariaLabel={t("task.field.project")}
             />

@@ -14,7 +14,7 @@ import {
   timeFromSlotDrop,
 } from "./day-schedule";
 import { PriorityControl } from "./priority-control";
-import { ProjectPicker } from "./project-picker";
+import { ProjectPicker, type CreatedProject } from "./project-picker";
 import { DangerConfirmButton } from "./danger-confirm";
 import { TaskCompleteButton } from "./task-complete-button";
 import type { DropPosition } from "./task-reorder";
@@ -78,6 +78,7 @@ export function DaySchedule({
   onPriority,
   onStar,
   onPickProject,
+  onCreateProject,
   onDelete,
   onDeleteBatch,
   onComplete,
@@ -106,7 +107,8 @@ export function DaySchedule({
   /** Star toggle for “today's most important”. */
   onStar?: (taskId: string) => void;
   /** Inline project re-association straight from the row. */
-  onPickProject?: (taskId: string, projectId: string | null) => void;
+  onPickProject?: (taskId: string, project: { id: string | null; name: string } | null) => void;
+  onCreateProject?: (name: string) => Promise<CreatedProject | null>;
   onDelete?: (task: BrainTaskSnapshot) => void;
   /** Removes every selected task in one undoable step (Delete/Backspace on a marquee selection). */
   onDeleteBatch?: (tasks: BrainTaskSnapshot[]) => void;
@@ -893,7 +895,8 @@ export function DaySchedule({
                             variant="compact"
                             projects={projects}
                             valueId={task.projectId}
-                            onSelect={(project) => onPickProject(task.id!, project?.id ?? null)}
+                            onSelect={(project) => onPickProject(task.id!, project ? { id: project.id, name: project.name } : null)}
+                            onCreateProject={onCreateProject}
                             locale={locale}
                             ariaLabel={`${task.title} 專案`}
                           />

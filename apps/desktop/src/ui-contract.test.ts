@@ -294,12 +294,13 @@ test("today view can open today's journal without adding a journal menu", () => 
   assert.doesNotMatch(source, /setView\("journal"\)/);
 });
 
-test("knowledge create uses the six vault categories and optional project wikilinks", () => {
+test("knowledge create uses searchable categories and optional project wikilinks", () => {
   const source = app();
-  assert.match(source, /KNOWLEDGE_CATEGORIES/);
   assert.match(source, /canonicalKnowledgeWriteDir|collectionMatchesCategoryFilter/);
   assert.match(source, /knowledgeFilterCategories/);
   assert.match(source, /withRelatedProjectWikilink/);
+  assert.match(source, /function CreateEntityModal[\s\S]*<CategoryInput/);
+  assert.match(source, /<CreateEntityModal[\s\S]{0,1600}onCreateProject=\{\(name\) => createProject\(name, null, null\)\}/);
 });
 
 test("settings can preview a layout migrator without a new sidebar view", () => {

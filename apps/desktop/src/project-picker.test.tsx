@@ -62,10 +62,23 @@ const key = (element: Element, init: { key: string }) =>
 // Text edits ride React's continuous lane and are impractical to synthesise in
 // happy-dom, so filtering is exercised through the real `initialQuery` API.
 const openMenu = async (container: HTMLElement): Promise<HTMLInputElement> => {
-  const input = container.querySelector<HTMLInputElement>(".project-picker-field input")!;
+  const trigger = container.querySelector<HTMLElement>(".project-picker-trigger, .project-picker-chip");
+  if (trigger && !container.querySelector(".project-picker-menu")) click(trigger);
+  const input = container.querySelector<HTMLInputElement>(".project-picker-menu input")!;
   flushSync(() => input.focus());
   return input;
 };
+
+test("a closed project field shows the chosen name without a search box", () => {
+  const rendered = renderPicker({ valueId: "p-1" });
+  try {
+    assert.match(rendered.container.querySelector(".project-picker-trigger")?.textContent ?? "", /官網改版/);
+    assert.equal(rendered.container.querySelector(".project-picker-menu"), null);
+    assert.equal(rendered.container.querySelector(".project-picker-field"), null);
+  } finally {
+    rendered.container.remove();
+  }
+});
 
 test("the picker lists projects and the none option without a query", async () => {
   const rendered = renderPicker();
@@ -89,6 +102,28 @@ test("a seeded query filters projects and Enter selects the active match", async
     key(rendered.container.querySelector<HTMLInputElement>(".project-picker-field input")!, { key: "ArrowDown" });
     key(rendered.container.querySelector<HTMLInputElement>(".project-picker-field input")!, { key: "Enter" });
     assert.equal(rendered.selections.at(-1)?.name, "行事曆同步");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("Enter on a missing project name creates it without extra clicks", async () => {
+  const created: string[] = [];
+  const rendered = renderPicker({
+    initialQuery: "側邊欄重構",
+    onCreateProject: async (name) => {
+      created.push(name);
+      return { id: "p-new", name };
+    },
+  });
+  try {
+    const input = await openMenu(rendered.container);
+    assert.ok(rendered.container.querySelector(".project-picker-create"));
+    await act(async () => {
+      key(input, { key: "Enter" });
+    });
+    assert.deepEqual(created, ["側邊欄重構"]);
+    assert.equal(rendered.selections.at(-1)?.name, "側邊欄重構");
   } finally {
     rendered.container.remove();
   }
@@ -127,6 +162,31 @@ test("an exact-name query hides the create row so duplicates can never be made",
       null,
       "same-name projects would rebind scans to the wrong document",
     );
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("the compact menu searches and can create a missing project", async () => {
+  const created: string[] = [];
+  const rendered = renderPicker({
+    variant: "compact",
+    initialQuery: "側邊欄重構",
+    onCreateProject: async (name) => {
+      created.push(name);
+      return { id: "p-new", name };
+    },
+  });
+  try {
+    click(rendered.container.querySelector(".project-picker-chip")!);
+    assert.ok(rendered.container.querySelector(".project-picker-menu input"), "compact menus include a search field");
+    const createRow = rendered.container.querySelector(".project-picker-create");
+    assert.ok(createRow, "unmatched compact queries offer inline creation");
+    await act(async () => {
+      createRow!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event);
+    });
+    assert.deepEqual(created, ["側邊欄重構"]);
+    assert.equal(rendered.selections.at(-1)?.name, "側邊欄重構");
   } finally {
     rendered.container.remove();
   }
