@@ -7,6 +7,7 @@ import {
   parseCollectionFrontmatter,
   parseProjectFrontmatter,
   parseTaskLine,
+  visibleTaskTitle,
   patchTaskLine,
   updateProjectFrontmatter,
 } from "./index";
@@ -15,6 +16,32 @@ const legacyMarker =
   '<!-- publisher-task:{"id":"task-1","status":"todo","rank":"1"} -->';
 const canonicalMarker =
   '<!-- second-brain-task:{"id":"task-1","status":"todo","rank":"1"} -->';
+
+test("task titles never include the identity HTML comment", () => {
+  const marker =
+    '<!-- second-brain-task:{"id":"096de42b-6cd3-4aef-83ea-e7412c0464d3","status":"todo","rank":"00000180"} -->';
+  const parsed = parseTaskLine(`- [ ] #task 錄製影片 ${marker}`, "a.md", 0);
+  assert.equal(parsed?.title, "錄製影片");
+  assert.doesNotMatch(parsed?.title ?? "", /<!--|second-brain-task|#task/);
+  assert.equal(visibleTaskTitle(`錄製影片 ${marker}`), "錄製影片");
+  const doubled = parseTaskLine(`- [ ] #task 錄製影片 ${marker} ${marker}`, "a.md", 0);
+  assert.equal(doubled?.title, "錄製影片");
+  const rewritten = formatTaskLine({
+    id: "096de42b-6cd3-4aef-83ea-e7412c0464d3",
+    title: `錄製影片 ${marker}`,
+    status: "todo",
+    taskDate: null,
+    priority: "normal",
+    projectId: null,
+    projectName: null,
+    rank: "00000180",
+    sourcePath: "a.md",
+    sourceHeading: null,
+    completedAt: null,
+  });
+  assert.equal(rewritten.match(/<!-- second-brain-task:/g)?.length, 1);
+  assert.equal(parseTaskLine(rewritten, "a.md", 0)?.title, "錄製影片");
+});
 
 test("parseTaskLine reads both publisher-task and second-brain-task markers", () => {
   const legacy = parseTaskLine(`- [ ] #task Legacy ${legacyMarker}`, "a.md", 0);

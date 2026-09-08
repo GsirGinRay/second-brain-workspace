@@ -16,6 +16,7 @@ import {
   type BrainProjectSnapshot,
   type BrainTaskSnapshot,
   type TaskStatus,
+  visibleTaskTitle,
 } from "@second-brain/brain-core";
 import { CategoryInput } from "./category-input";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
@@ -339,10 +340,10 @@ export function TaskDetailDialog({
   onCreateProject?: (name: string) => Promise<CreatedProject | null>;
   onSaveAsKnowledge?: (task: BrainTaskSnapshot) => void;
 }) {
-  const [draft, setDraft] = useState(task);
+  const [draft, setDraft] = useState({ ...task, title: visibleTaskTitle(task.title) });
   const [saving, setSaving] = useState(false);
-  useEffect(() => setDraft(task), [task]);
-  const dirty = draft.title !== task.title
+  useEffect(() => setDraft({ ...task, title: visibleTaskTitle(task.title) }), [task]);
+  const dirty = visibleTaskTitle(draft.title) !== visibleTaskTitle(task.title)
     || (draft.body ?? "") !== (task.body ?? "")
     || draft.status !== task.status
     || draft.priority !== task.priority
@@ -365,7 +366,7 @@ export function TaskDetailDialog({
     if (!draft.title.trim() || saving) return false;
     setSaving(true);
     try {
-      return await onSave({ ...draft, title: draft.title.trim() });
+      return await onSave({ ...draft, title: visibleTaskTitle(draft.title) });
     } finally {
       setSaving(false);
     }
@@ -395,7 +396,7 @@ export function TaskDetailDialog({
   useSaveShortcut(() => void save());
 
   return (
-    <DetailDialog title={task.title} eyebrow="TASK" locale={locale} surface={surface} tabs={tabs} activeTabKey={activeTabKey} onRequestTabChange={requestTabChange} onCloseTab={onCloseTab} onRequestClose={requestClose}>
+    <DetailDialog title={visibleTaskTitle(task.title)} eyebrow="TASK" locale={locale} surface={surface} tabs={tabs} activeTabKey={activeTabKey} onRequestTabChange={requestTabChange} onCloseTab={onCloseTab} onRequestClose={requestClose}>
       <div className="detail-edit-form notion-editor">
         <div className="detail-title-row">
           <TaskCompleteButton
@@ -537,7 +538,7 @@ function ProjectTaskSection({
                 className="detail-task-title"
                 onClick={() => task.id && onOpenTask(task.id)}
                 title={t("task.hint.editTitle")}
-              >{task.title}</button>
+              >{visibleTaskTitle(task.title)}</button>
               <DangerConfirmButton
                 className="icon-button"
                 armLabel={t("task.action.delete")}

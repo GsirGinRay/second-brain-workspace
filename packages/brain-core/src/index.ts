@@ -53,6 +53,7 @@ export {
   isManagedTaskId,
   isValidTaskId,
   parseTaskLine,
+  visibleTaskTitle,
   patchTaskLine,
   patchTaskLineMinimal,
   updateProjectFrontmatter,

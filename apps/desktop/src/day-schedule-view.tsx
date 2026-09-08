@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { GripVertical, Star } from "lucide-react";
-import type { BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
+import { visibleTaskTitle, type BrainProjectSnapshot, type BrainTaskSnapshot } from "@second-brain/brain-core";
 import {
   durationFromResize,
   formatMinutesAsTime,
@@ -867,7 +867,7 @@ export function DaySchedule({
                         />
                       )}
                       {onPriority && task.id ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
-                      <strong className="inline-title-button" title={task.title}>{task.title}</strong>
+                      <strong className="inline-title-button" title={visibleTaskTitle(task.title)}>{visibleTaskTitle(task.title)}</strong>
                       {onStar && task.id && (
                         <button
                           type="button"
@@ -1097,7 +1097,7 @@ export function DaySchedule({
                     />
                   )}
                   {onPriority ? <PriorityControl priority={task.priority} compact onChange={(priority) => onPriority(task.id!, priority)} locale={locale} /> : null}
-                  <strong className="timed-block-title">{task.title}</strong>
+                  <strong className="timed-block-title">{visibleTaskTitle(task.title)}</strong>
                   <span className="timed-block-inline-actions" onClick={(event) => event.stopPropagation()}>
                     {onStar && (
                       <button

@@ -103,6 +103,14 @@ export function isManagedTaskId(value: unknown): value is string {
 const TASK_MARKER_NAME = "second-brain-task";
 const TASK_MARKER_PATTERN =
   /<!--\s*(?:publisher-task|second-brain-task):(\{[\s\S]*?\})\s*-->/;
+/** Identity comments and a leading `#task` token are not part of the visible title. */
+export function visibleTaskTitle(title: string): string {
+  return title
+    .replace(/\s*<!--\s*(?:publisher-task|second-brain-task):\{[\s\S]*?\}\s*-->\s*/g, " ")
+    .replace(/^\s*#task\b\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /** Canonical YAML key for project/collection ids. */
 const ENTITY_ID_KEY = "id";
@@ -433,7 +441,7 @@ function parsedTaskFromAnalysis(
   return {
     ...(markerIssue ? { markerIssue } : {}),
     id: markerValues.id ?? null,
-    title: titleBody.replace(/\s+/g, " ").trim(),
+    title: visibleTaskTitle(titleBody.replace(/\s+/g, " ").trim()),
     status,
     taskDate: dateValue("plannedDate") ?? dateValue("dueDate"),
     priority: analysis.priority,
@@ -465,7 +473,7 @@ export function parseTaskLine(
 export function formatTaskLine(task: TaskLineInput): string {
   const parts = [
     "- [" + (task.status === "done" ? "x" : " ") + "] #task",
-    task.title.trim() || "(無標題)",
+    visibleTaskTitle(task.title) || "(無標題)",
   ];
   if (task.projectName) parts.push("[[" + task.projectName + "]]");
   const priority = PRIORITY_TO_TOKEN[task.priority];
