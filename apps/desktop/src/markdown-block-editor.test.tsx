@@ -5,7 +5,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
 import { AttachmentProvider } from "./attachment-context";
-import { blockMenuPlacement, deriveBlockKind, MarkdownBlockEditor, parseDocumentChunks, parseStyledBlock, splitTaskAwareBlocks } from "./markdown-block-editor";
+import { blockMenuPlacement, composeTaskLine, deriveBlockKind, MarkdownBlockEditor, parseDocumentChunks, parseStyledBlock, splitTaskAwareBlocks, splitTaskIdentity } from "./markdown-block-editor";
 
 const window = new Window({ url: "http://localhost/" });
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -185,6 +185,31 @@ test("the block editor offers attach only when a vault folder and API exist", ()
   } finally {
     root.unmount();
     container.remove();
+  }
+});
+
+test("managed task identity stays in storage but not in the title", () => {
+  const marker = '<!-- second-brain-task:{"id":"11249a71-c67f-4903-ae0f-e41fde4788ae","status":"todo","rank":"00000116"} -->';
+  const source = `- [ ] #task 錄製並上傳 Skool 取消頁挽留影片 ${marker}`;
+  assert.deepEqual(splitTaskIdentity("#task 錄製並上傳 Skool 取消頁挽留影片 " + marker), {
+    lead: "#task ",
+    visible: "錄製並上傳 Skool 取消頁挽留影片",
+    trail: ` ${marker}`,
+  });
+  assert.equal(
+    composeTaskLine("- ", " ", ` #task 舊標題 ${marker}`, "新標題"),
+    `- [ ] #task 新標題 ${marker}`,
+  );
+  const rendered = renderEditor(source);
+  try {
+    const preview = rendered.container.querySelector(".markdown-task-block-row button");
+    assert.equal(preview?.textContent, "錄製並上傳 Skool 取消頁挽留影片");
+    assert.doesNotMatch(preview?.textContent ?? "", /#task|second-brain-task|<!--/);
+    const textarea = openTextarea(rendered.container, 0);
+    assert.equal(textarea.value, "錄製並上傳 Skool 取消頁挽留影片");
+    assert.doesNotMatch(textarea.value, /#task|<!--/);
+  } finally {
+    rendered.container.remove();
   }
 });
 

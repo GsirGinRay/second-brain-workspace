@@ -46,6 +46,27 @@ function withBlockStyle(content: string, style: BlockStyle): string {
 }
 
 const TASK_LINE = /^(\s*[-*+]\s+)\[([ xX])\](\s*.*)$/;
+const TASK_IDENTITY_COMMENT = /\s*<!--\s*(?:publisher-task|second-brain-task):\{[\s\S]*?\}\s*-->\s*$/;
+
+/** `#task` and the identity HTML comment stay in the file; they are not title text. */
+export function splitTaskIdentity(afterCheckbox: string): { lead: string; visible: string; trail: string } {
+  let rest = afterCheckbox.replace(/^\s+/, "");
+  const leadMatch = rest.match(/^#task\b[ \t]*/);
+  const lead = leadMatch ? leadMatch[0] : "";
+  if (leadMatch) rest = rest.slice(lead.length);
+  const trailMatch = rest.match(TASK_IDENTITY_COMMENT);
+  const trail = trailMatch ? ` ${trailMatch[0].trim()}` : "";
+  const visible = (trailMatch ? rest.slice(0, trailMatch.index) : rest).replace(/\s+$/, "");
+  return { lead, visible, trail };
+}
+
+export function composeTaskLine(prefix: string, checked: string, afterCheckbox: string, visible: string): string {
+  const { lead, trail } = splitTaskIdentity(afterCheckbox);
+  const token = lead ? "#task" : "";
+  const body = [token, visible].filter((part) => part.length > 0).join(" ");
+  if (!body && !trail) return `${prefix}[${checked}] `;
+  return `${prefix}[${checked}] ${body}${trail}`;
+}
 
 /**
  * Line-start list/quote prefixes recognised while typing. The marker includes
@@ -412,11 +433,12 @@ interface SlashCommand {
 }
 
 function stripBlockPrefix(content: string): string {
+  const task = content.match(TASK_LINE);
+  if (task) return splitTaskIdentity(task[3] ?? "").visible;
   return content
     .replace(/^\s*(```|~~~)\s*\n?/, "")
     .replace(/\n?\s*(```|~~~)\s*$/, "")
     .replace(/^\s*#{1,6}\s+/, "")
-    .replace(/^\s*[-*+]\s+\[[ xX]\]\s*/, "")
     .replace(/^\s*[-*+]\s+/, "")
     .replace(/^\s*\d+[.)、]\s+/, "")
     .replace(/^\s*>\s*/, "");
@@ -1343,6 +1365,7 @@ export function MarkdownBlockEditor({
           const presentation = editablePresentation(styled.content, derived);
           const isEditing = editingId === block.id;
           const singleTaskMatch = styled.content.includes("\n") ? null : styled.content.match(TASK_LINE);
+          const taskIdentity = singleTaskMatch ? splitTaskIdentity(singleTaskMatch[3] ?? "") : null;
           const kindClass = `kind-${kind}${level ? `-h${level}` : ""}`;
           const currentTurnValue = kind === "heading" ? `h${level}`
             : kind === "task" ? "todo"
@@ -1447,13 +1470,13 @@ export function MarkdownBlockEditor({
                     />
                     <textarea
                       autoFocus
-                      value={singleTaskMatch[3]!.trimStart()}
+                      value={taskIdentity?.visible ?? ""}
                       rows={1}
                       className="markdown-block-input markdown-task-input kind-task"
                       aria-label={zh ? "編輯待辦內容" : "Edit task content"}
                       placeholder={zh ? "輸入待辦內容" : "Type task content"}
                       onChange={(event) => {
-                        updateBlockContent(block, `${singleTaskMatch[1]}[${singleTaskMatch[2]}] ${event.target.value}`);
+                        updateBlockContent(block, composeTaskLine(singleTaskMatch[1]!, singleTaskMatch[2]!, singleTaskMatch[3] ?? "", event.target.value));
                       }}
                       onBlur={(event) => {
                         if (event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) return;
@@ -1486,7 +1509,12 @@ export function MarkdownBlockEditor({
                               : stripBlockPrefix(previousStyled.content);
                             pushHistory();
                             const remaining = blocks.filter((item) => item.id !== previousBlock.id);
-                            const merged = `${singleTaskMatch[1]}[${singleTaskMatch[2]}] ${previousBody}${singleTaskMatch[3]!.trimStart()}`;
+                            const merged = composeTaskLine(
+                              singleTaskMatch[1]!,
+                              singleTaskMatch[2]!,
+                              singleTaskMatch[3] ?? "",
+                              `${previousBody}${taskIdentity?.visible ?? ""}`,
+                            );
                             const next = remaining.map((item) => item.id === block.id
                               ? { ...item, source: withBlockStyle(merged, parseStyledBlock(block.source).style) }
                               : item);
@@ -1498,7 +1526,7 @@ export function MarkdownBlockEditor({
                                 taskTextarea.setSelectionRange(previousBody.length, previousBody.length);
                               } catch { /* unmounted */ }
                             });
-                          } else if (!singleTaskMatch[3]!.trim()) {
+                          } else if (!taskIdentity?.visible.trim() && !taskIdentity?.lead && !taskIdentity?.trail) {
                             // First block on the canvas: drop the marker.
                             event.preventDefault();
                             pushHistory();
@@ -1507,8 +1535,7 @@ export function MarkdownBlockEditor({
                         } else if (event.key === "Enter" && !event.shiftKey) {
                           event.preventDefault();
                           pushHistory();
-                          const content = singleTaskMatch[3]!.trim();
-                          if (!content) {
+                          if (!taskIdentity?.visible.trim() && !taskIdentity?.lead && !taskIdentity?.trail) {
                             updateBlockContent(block, "");
                             return;
                           }
@@ -1521,7 +1548,7 @@ export function MarkdownBlockEditor({
                           };
                           commit(blocks.flatMap((item) => item.id === block.id ? [item, created] : [item]));
                           setEditingId(created.id);
-                        } else if (event.key === "Delete" && event.currentTarget.selectionStart === event.currentTarget.selectionEnd && event.currentTarget.selectionEnd === singleTaskMatch[3]!.trimStart().length) {
+                        } else if (event.key === "Delete" && event.currentTarget.selectionStart === event.currentTarget.selectionEnd && event.currentTarget.selectionEnd === (taskIdentity?.visible.length ?? 0)) {
                           // Notion-style merge: at the end of a task, Delete
                           // folds the next block's TEXT into the current task
                           // line. The next block's own `- [ ] ` marker never
@@ -1533,10 +1560,17 @@ export function MarkdownBlockEditor({
                             event.preventDefault();
                             const nextStyled = parseStyledBlock(nextBlock.source);
                             const nextTaskMatch = nextStyled.content.match(TASK_LINE);
-                            const nextBody = nextTaskMatch ? (nextTaskMatch[3] ?? "").trim() : nextStyled.content;
+                            const nextBody = nextTaskMatch
+                              ? splitTaskIdentity(nextTaskMatch[3] ?? "").visible
+                              : nextStyled.content;
                             pushHistory();
                             const remaining = blocks.filter((item) => item.id !== nextBlock.id);
-                            const merged = `${singleTaskMatch[1]}[${singleTaskMatch[2]}] ${(singleTaskMatch[3] ?? "").trimStart()}${nextBody}`;
+                            const merged = composeTaskLine(
+                              singleTaskMatch[1]!,
+                              singleTaskMatch[2]!,
+                              singleTaskMatch[3] ?? "",
+                              `${taskIdentity?.visible ?? ""}${nextBody}`,
+                            );
                             const next = remaining.map((item) => item.id === block.id
                               ? { ...item, source: withBlockStyle(merged, parseStyledBlock(block.source).style) }
                               : item);
@@ -1546,7 +1580,7 @@ export function MarkdownBlockEditor({
                               if (!ta?.isConnected) return;
                               try {
                                 ta.focus();
-                                ta.setSelectionRange(singleTaskMatch[3]!.trimStart().length, singleTaskMatch[3]!.trimStart().length);
+                                ta.setSelectionRange(taskIdentity?.visible.length ?? 0, taskIdentity?.visible.length ?? 0);
                               } catch { /* unmounted */ }
                             });
                           }
@@ -1639,7 +1673,7 @@ export function MarkdownBlockEditor({
                             aria-label={match[2]!.toLowerCase() === "x" ? (zh ? "重新開啟" : "Reopen") : (zh ? "標記完成" : "Mark complete")}
                           />
                           <button type="button" onClick={(event) => { event.stopPropagation(); setEditingId(block.id); }}>
-                            {match[3]!.trim() || (zh ? "輸入待辦內容" : "Type task content")}
+                            {splitTaskIdentity(match[3] ?? "").visible || (zh ? "輸入待辦內容" : "Type task content")}
                           </button>
                         </div>
                       );
