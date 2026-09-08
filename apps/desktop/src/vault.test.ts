@@ -421,6 +421,154 @@ test("changing status or schedule does not move a task to another file", () => {
   assert.doesNotMatch(projectText, /Stay in inbox/);
 });
 
+test("reassigning an inbox task moves the whole block onto the project file", () => {
+  const line = `- [ ] #task Archive me custom ^block <!-- second-brain-task:{"id":"${taskId}","status":"todo","rank":"a"} -->`;
+  const files = [
+    file("專案/Launch.md", `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Launch\r\n\r\nGoal text\r\n`),
+    file("收件匣/待辦.md", `\uFEFF# 待辦\r\nkeep before\r\n${line}\r\n\r\n  ## Notes\r\n\r\n  - keep this note\r\nkeep after\r\n`),
+  ];
+  const scanned = scanStructuredVault(files);
+  const desired = {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.map((item) =>
+      item.id === taskId ? { ...item, projectId, projectName: "Launch" } : item),
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  const inboxChange = changes.find((change) => change.relativePath === "收件匣/待辦.md")!;
+  const projectChange = changes.find((change) => change.relativePath === "專案/Launch.md")!;
+  assert.ok(inboxChange && inboxChange.operation !== "delete");
+  assert.ok(projectChange && projectChange.operation !== "delete");
+  const inboxText = base64ToText(inboxChange.replacementBase64);
+  const projectText = base64ToText(projectChange.replacementBase64);
+  assert.ok(inboxText.startsWith("\uFEFF"));
+  assert.ok(inboxText.includes("\r\n"));
+  assert.match(inboxText, /keep before/);
+  assert.match(inboxText, /keep after/);
+  assert.doesNotMatch(inboxText, /Archive me/);
+  assert.doesNotMatch(inboxText, /keep this note/);
+  assert.equal(inboxText.match(new RegExp(taskId, "g")), null);
+  assert.match(projectText, /Goal text/);
+  assert.match(projectText, /Archive me/);
+  assert.match(projectText, /\[\[Launch\]\]/);
+  assert.match(projectText, /custom /);
+  assert.match(projectText, /\^block/);
+  assert.match(projectText, /keep this note/);
+  assert.equal(projectText.match(new RegExp(taskId, "g"))?.length, 1);
+  const updated = files.map((item) => {
+    const change = changes.find((candidate) => candidate.relativePath === item.relativePath);
+    return change && "replacementBase64" in change && change.replacementBase64
+      ? { ...item, bytesBase64: change.replacementBase64 }
+      : item;
+  });
+  const rescanned = scanStructuredVault(updated);
+  assert.equal(rescanned.snapshot.tasks[0]?.id, taskId);
+  assert.equal(rescanned.snapshot.tasks[0]?.sourcePath, "專案/Launch.md");
+  assert.equal(applyDesiredSnapshot(updated, {
+    ...desired,
+    projects: rescanned.snapshot.projects,
+    collections: rescanned.snapshot.collections,
+    tasks: rescanned.snapshot.tasks,
+  }).length, 0);
+});
+
+test("reassigning a task from project A to project B moves the block once", () => {
+  const projectBId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const line = formatTaskLine({
+    id: taskId, title: "Switch projects", status: "todo", taskDate: null,
+    priority: "normal", projectId, projectName: "Alpha", rank: "a",
+    sourcePath: "專案/Alpha.md", sourceHeading: null, completedAt: null,
+  });
+  const files = [
+    file("專案/Alpha.md", `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Alpha\r\n\r\n${line}\r\n\r\n  ## Notes\r\n\r\n  - from A\r\nA stays\r\n`),
+    file("專案/Beta.md", `---\r\ntype: project\r\nid: ${projectBId}\r\n---\r\n# Beta\r\n\r\nB body\r\n`),
+    file("收件匣/待辦.md", "# 待辦\r\n"),
+  ];
+  const scanned = scanStructuredVault(files);
+  const desired = {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.map((item) =>
+      item.id === taskId ? { ...item, projectId: projectBId, projectName: "Beta" } : item),
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  const alpha = changes.find((change) => change.relativePath === "專案/Alpha.md")!;
+  const beta = changes.find((change) => change.relativePath === "專案/Beta.md")!;
+  assert.equal(changes.find((change) => change.relativePath === "收件匣/待辦.md"), undefined);
+  const alphaText = base64ToText(alpha.replacementBase64);
+  const betaText = base64ToText(beta.replacementBase64);
+  assert.match(alphaText, /A stays/);
+  assert.doesNotMatch(alphaText, /Switch projects/);
+  assert.doesNotMatch(alphaText, /from A/);
+  assert.equal(alphaText.match(new RegExp(taskId, "g")), null);
+  assert.match(betaText, /B body/);
+  assert.match(betaText, /Switch projects/);
+  assert.match(betaText, /\[\[Beta\]\]/);
+  assert.doesNotMatch(betaText, /\[\[Alpha\]\]/);
+  assert.match(betaText, /from A/);
+  assert.equal(betaText.match(new RegExp(taskId, "g"))?.length, 1);
+});
+
+test("clearing a task project moves the block back to the inbox", () => {
+  const line = formatTaskLine({
+    id: taskId, title: "Unfile me", status: "todo", taskDate: null,
+    priority: "normal", projectId, projectName: "Launch", rank: "a",
+    sourcePath: "專案/Launch.md", sourceHeading: null, completedAt: null,
+  });
+  const files = [
+    file("專案/Launch.md", `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Launch\r\n\r\nGoal text\r\n${line}\r\n\r\n  ## Notes\r\n\r\n  - inbox bound\r\n`),
+    file("收件匣/待辦.md", "# 待辦\r\n\r\nkeep inbox\r\n"),
+  ];
+  const scanned = scanStructuredVault(files);
+  const desired = {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.map((item) =>
+      item.id === taskId ? { ...item, projectId: null, projectName: null } : item),
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  const projectChange = changes.find((change) => change.relativePath === "專案/Launch.md")!;
+  const inboxChange = changes.find((change) => change.relativePath === "收件匣/待辦.md")!;
+  const projectText = base64ToText(projectChange.replacementBase64);
+  const inboxText = base64ToText(inboxChange.replacementBase64);
+  assert.match(projectText, /Goal text/);
+  assert.doesNotMatch(projectText, /Unfile me/);
+  assert.doesNotMatch(projectText, /inbox bound/);
+  assert.equal(projectText.match(new RegExp(taskId, "g")), null);
+  assert.match(inboxText, /keep inbox/);
+  assert.match(inboxText, /Unfile me/);
+  assert.doesNotMatch(inboxText, /\[\[Launch\]\]/);
+  assert.match(inboxText, /inbox bound/);
+  assert.equal(inboxText.match(new RegExp(taskId, "g"))?.length, 1);
+});
+
+test("reassigning to a missing project file does not write outside the vault", () => {
+  const line = formatTaskLine({
+    id: taskId, title: "Orphan reassign", status: "todo", taskDate: null,
+    priority: "normal", projectId: null, projectName: null, rank: "a",
+    sourcePath: "收件匣/待辦.md", sourceHeading: null, completedAt: null,
+  });
+  const files = [file("收件匣/待辦.md", `# 待辦\r\n${line}\r\n`)];
+  const scanned = scanStructuredVault(files);
+  const desired = {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.map((item) =>
+      item.id === taskId ? { ...item, projectId, projectName: "Launch" } : item),
+    projects: [{
+      schemaVersion: 6 as const, id: projectId, name: "Launch", sourcePath: "專案/Launch.md",
+      status: "planning" as const, area: null, priority: null, progress: 0, focusToday: false,
+      startDate: null, endDate: null, completedAt: null,
+    }],
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  assert.equal(changes.find((change) => change.relativePath === "專案/Launch.md"), undefined);
+  assert.ok(changes.every((change) =>
+    !change.relativePath.includes("..") && !/^[A-Za-z]:/.test(change.relativePath)));
+  assert.equal(changes.length, 1);
+  const inboxText = base64ToText(changes[0]!.replacementBase64);
+  assert.equal(changes[0]?.relativePath, "收件匣/待辦.md");
+  assert.match(inboxText, /Orphan reassign/);
+  assert.match(inboxText, /\[\[Launch\]\]/);
+  assert.equal(inboxText.match(new RegExp(taskId, "g"))?.length, 1);
+});
+
 test("new tasks append to a legacy Projects/ note when that is the project source", () => {
   const files = [
     file("Projects/Launch.md", `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Launch\r\n`),
@@ -530,10 +678,14 @@ test("project deletion preserves tasks by unlinking them and deletes only the pr
   const scanned = scanStructuredVault(files);
   const changes = buildProjectDeleteChanges(files, scanned.snapshot, projectId);
   assert.equal(changes.find((change) => change.relativePath === "Projects/Launch.md")?.operation, "delete");
-  const taskChange = changes.find((change) => change.relativePath === "tasks.md")!;
-  const patchedTask = base64ToText("replacementBase64" in taskChange ? taskChange.replacementBase64 : "");
-  assert.doesNotMatch(patchedTask, /\[\[Launch\]\]/);
-  assert.match(patchedTask, /Ship/);
+  const inbox = changes.find((change) => change.relativePath === "收件匣/待辦.md")!;
+  const text = base64ToText(inbox.replacementBase64);
+  assert.match(text, /Ship/);
+  assert.doesNotMatch(text, /\[\[Launch\]\]/);
+  const leftover = changes.find((change) => change.relativePath === "tasks.md");
+  if (leftover && leftover.operation !== "delete") {
+    assert.doesNotMatch(base64ToText(leftover.replacementBase64), /Ship/);
+  }
 });
 
 test("project deletion relocates tasks stored inside the project note to the inbox", () => {
@@ -691,10 +843,10 @@ test("a duplicated task id is re-minted with a warning instead of aborting the s
   );
 });
 
-test("switching a task's project rewrites the wiki link and rescans to the new id", () => {
+test("switching a task's project moves the block and rescans to the new id", () => {
   // Regression for the detail-dialog project picker: every switch round-trips
-  // through Markdown, so the [[link]] must survive and the next scan must
-  // resolve the new project by name — including back to “no project”.
+  // through Markdown, so the [[link]] must survive on the project file and the
+  // next scan must resolve the new project by name — including back to inbox.
   const idA = "44444444-4444-4444-8444-444444444441";
   const idB = "44444444-4444-4444-8444-444444444442";
   const noteA = "---\r\ntype: project\r\nstatus: active\r\npublisher_id: " + idA + "\r\n---\r\n# 專案甲\r\n\r\n";
@@ -711,34 +863,60 @@ test("switching a task's project rewrites the wiki link and rescans to the new i
       }) + "\r\n",
     ),
   ];
-  const taskFile = () => files.find((item) => item.relativePath === "tasks.md")!;
-  const scannedProjectId = () => scanStructuredVault(files).snapshot.tasks[0]?.projectId ?? null;
+  const text = (relativePath: string) => {
+    const item = files.find((file) => file.relativePath === relativePath);
+    return item ? base64ToText(item.bytesBase64) : "";
+  };
+  const scannedTask = () => scanStructuredVault(files).snapshot.tasks[0];
 
   const switchTo = (projectName: string | null) => {
     const scanned = scanStructuredVault(files);
     assert.equal(scanned.snapshot.tasks.length, 1);
-    const desired = { ...scanned.snapshot, tasks: [{ ...scanned.snapshot.tasks[0]!, projectName }] };
+    const project = projectName
+      ? scanned.snapshot.projects.find((item) => item.name === projectName)
+      : null;
+    const desired = {
+      ...scanned.snapshot,
+      tasks: [{ ...scanned.snapshot.tasks[0]!, projectName, projectId: project?.id ?? null }],
+    };
+    const byPath = new Map(files.map((item) => [item.relativePath, item]));
     for (const change of applyDesiredSnapshot(files, desired)) {
+      if (change.operation === "delete") {
+        byPath.delete(change.relativePath);
+        continue;
+      }
       if (!change.replacementBase64) continue;
-      files = files.map((item) => item.relativePath === change.relativePath
-        ? { ...item, bytesBase64: change.replacementBase64 }
-        : item);
+      byPath.set(change.relativePath, {
+        relativePath: change.relativePath,
+        sha256: "c".repeat(64),
+        bytesBase64: change.replacementBase64,
+      });
     }
+    files = [...byPath.values()];
   };
 
-  assert.equal(scannedProjectId(), null, "starts unassigned");
+  assert.equal(scannedTask()?.projectId ?? null, null, "starts unassigned");
 
   switchTo("專案甲");
-  assert.match(base64ToText(taskFile().bytesBase64), /\[\[專案甲\]\]/, "the wiki link is rewritten in place");
-  assert.equal(scannedProjectId(), idA, "rescan resolves the new project id");
+  assert.match(text("projects/a.md"), /\[\[專案甲\]\]/);
+  assert.match(text("projects/a.md"), /自由切換/);
+  assert.doesNotMatch(text("tasks.md"), /自由切換/);
+  assert.equal(scannedTask()?.projectId, idA, "rescan resolves the new project id");
+  assert.equal(scannedTask()?.sourcePath, "projects/a.md");
 
   switchTo("專案乙");
-  assert.match(base64ToText(taskFile().bytesBase64), /\[\[專案乙\]\]/);
-  assert.equal(scannedProjectId(), idB, "switching again resolves the other project");
+  assert.match(text("projects/b.md"), /\[\[專案乙\]\]/);
+  assert.match(text("projects/b.md"), /自由切換/);
+  assert.doesNotMatch(text("projects/a.md"), /自由切換/);
+  assert.equal(scannedTask()?.projectId, idB, "switching again resolves the other project");
+  assert.equal(scannedTask()?.sourcePath, "projects/b.md");
 
   switchTo(null);
-  assert.doesNotMatch(base64ToText(taskFile().bytesBase64), /\[\[/, "clearing the project drops the link");
-  assert.equal(scannedProjectId(), null, "rescan returns to unassigned");
+  assert.match(text("收件匣/待辦.md"), /自由切換/);
+  assert.doesNotMatch(text("收件匣/待辦.md"), /\[\[/);
+  assert.doesNotMatch(text("projects/b.md"), /自由切換/);
+  assert.equal(scannedTask()?.projectId ?? null, null, "rescan returns to unassigned");
+  assert.equal(scannedTask()?.sourcePath, "收件匣/待辦.md");
 });
 
 test("first load rewrites publisher-task and publisher_id but keeps the ids", () => {

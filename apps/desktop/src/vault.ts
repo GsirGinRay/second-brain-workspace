@@ -176,6 +176,87 @@ function appendMissingTasks(
   return next;
 }
 
+function findTaskLineIndexFromSource(source: string, taskId: string, relativePath = ""): number {
+  const lines = splitLines(source);
+  const inCodeFence = createCodeFenceTracker();
+  let skipUntil = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (inCodeFence(lines[index]!)) continue;
+    if (index < skipUntil) continue;
+    const parsed = parseTaskLine(lines[index]!, relativePath, index);
+    if (!parsed?.id) continue;
+    skipUntil = endIndexOfTaskBody(lines, index);
+    if (parsed.id === taskId) return index;
+  }
+  return -1;
+}
+
+function projectIdentity(
+  task: Pick<BrainTaskSnapshot, "projectId" | "projectName">,
+  projects: readonly Pick<BrainProjectSnapshot, "id" | "name">[],
+): string {
+  if (task.projectId) return task.projectId;
+  if (!task.projectName) return "";
+  return projects.find((item) => item.name === task.projectName)?.id ?? task.projectName;
+}
+
+function existingPathFor(relativePath: string, existingPaths: readonly string[]): string | undefined {
+  const wanted = pathKey(relativePath);
+  for (const path of existingPaths) {
+    if (pathKey(path) === wanted) return path;
+  }
+  return undefined;
+}
+
+/**
+ * Later project changes relocate the whole task block. Date/status edits keep
+ * the original file. A missing project file is not invented here.
+ */
+function resolveExistingTaskHomePath(
+  task: Pick<BrainTaskSnapshot, "projectId" | "projectName">,
+  fromPath: string,
+  currentLine: string,
+  projects: readonly Pick<BrainProjectSnapshot, "id" | "name" | "sourcePath">[],
+  existingPaths: readonly string[],
+): string {
+  const current = parseTaskLine(currentLine, fromPath, 0);
+  const currentKey = projectIdentity(
+    { projectId: null, projectName: current?.projectName ?? null },
+    projects,
+  );
+  const desiredKey = projectIdentity(task, projects);
+  if (currentKey === desiredKey) return fromPath;
+  if (!desiredKey) return resolveInboxWritePath(existingPaths);
+  const dest = resolveNewTaskWritePath(task, projects, existingPaths);
+  if (pathKey(dest) === pathKey(resolveInboxWritePath(existingPaths))) {
+    const project = task.projectId
+      ? projects.find((item) => item.id === task.projectId)
+      : task.projectName
+        ? projects.find((item) => item.name === task.projectName)
+        : undefined;
+    if (!project?.sourcePath || !existingPathFor(project.sourcePath, existingPaths)) {
+      return fromPath;
+    }
+  }
+  return dest;
+}
+
+function appendTaskBlock(source: string, line: string, body: string, id: string): string {
+  if (!id || source.includes(`"id":"${id}"`)) return source;
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  let next = source;
+  if (!next.endsWith("\n")) next += newline;
+  next += line + newline;
+  if (body) next = patchTaskMarkdownContent(next, id, body);
+  return next;
+}
+
+function removeTaskBlock(source: string, id: string): string {
+  const withoutBody = patchTaskMarkdownContent(source, id, "");
+  const lineIndex = findTaskLineIndexFromSource(withoutBody, id);
+  return lineIndex >= 0 ? removeLine(withoutBody, lineIndex) : withoutBody;
+}
+
 function uniqueMarkdownPath(directory: string, title: string, existingPaths: readonly string[]): string {
   const base = safeInline(title, 100)
     .replace(/[<>:"/\\|?*]+/g, " ")
@@ -536,23 +617,36 @@ export function applyDesiredSnapshot(
     return findTaskLineIndexFromSource(source, taskId, relativePath);
   };
 
-  const findTaskLineIndexFromSource = (source: string, taskId: string, relativePath = ""): number => {
-    const lines = splitLines(source);
-    const inCodeFence = createCodeFenceTracker();
-    let skipUntil = 0;
-    for (let index = 0; index < lines.length; index += 1) {
-      if (inCodeFence(lines[index]!)) continue;
-      if (index < skipUntil) continue;
-      const parsed = parseTaskLine(lines[index]!, relativePath, index);
-      if (!parsed?.id) continue;
-      skipUntil = endIndexOfTaskBody(lines, index);
-      if (parsed.id === taskId) return index;
-    }
-    return -1;
-  };
-
+  const existingPaths = [...byPath.keys()];
+  const relocatedIds = new Set<string>();
+  const relocations: {
+    id: string;
+    fromPath: string;
+    toPath: string;
+    task: BrainTaskSnapshot;
+  }[] = [];
   for (const task of desired.tasks) {
     if (!task.id || !locations.has(task.id)) continue;
+    const fromPath = locations.get(task.id)!.relativePath;
+    const source = currentSources.get(fromPath);
+    if (!source) continue;
+    const lineIndex = findTaskLineIndex(fromPath, task.id);
+    if (lineIndex < 0) continue;
+    const currentLine = splitLines(source)[lineIndex]!;
+    const toPath = resolveExistingTaskHomePath(
+      task,
+      fromPath,
+      currentLine,
+      desired.projects,
+      existingPaths,
+    );
+    if (pathKey(toPath) === pathKey(fromPath)) continue;
+    relocatedIds.add(task.id);
+    relocations.push({ id: task.id, fromPath, toPath, task });
+  }
+
+  for (const task of desired.tasks) {
+    if (!task.id || !locations.has(task.id) || relocatedIds.has(task.id)) continue;
     const relativePath = locations.get(task.id)!.relativePath;
     const source = currentSources.get(relativePath)!;
     const lineIndex = findTaskLineIndex(relativePath, task.id);
@@ -576,17 +670,14 @@ export function applyDesiredSnapshot(
       // Re-derive the line index from the latest source so a previous
       // removeLine (which shrinks `source`) doesn't leave us with an
       // out-of-range index on the next iteration.
-      const liveSource = currentSources.get(relativePath) ?? source;
-      const withoutBody = patchTaskMarkdownContent(liveSource, id, "");
-      const lineIndex = findTaskLineIndexFromSource(withoutBody, id);
-      source = lineIndex >= 0 ? removeLine(withoutBody, lineIndex) : withoutBody;
+      source = removeTaskBlock(currentSources.get(relativePath) ?? source, id);
       currentSources.set(relativePath, source);
     }
     changed.add(relativePath);
   }
 
   for (const task of desired.tasks) {
-    if (!task.id || !locations.has(task.id) || task.body === undefined) continue;
+    if (!task.id || !locations.has(task.id) || task.body === undefined || relocatedIds.has(task.id)) continue;
     const relativePath = locations.get(task.id)!.relativePath;
     const source = currentSources.get(relativePath)!;
     const next = patchTaskMarkdownContent(source, task.id, task.body);
@@ -596,34 +687,45 @@ export function applyDesiredSnapshot(
     }
   }
 
-  const createdFiles: MarkdownChange[] = [];
+  const createdPaths = new Set<string>();
+  const commitWrite = (writePath: string, next: string) => {
+    const current = currentSources.get(writePath);
+    if (current === next) return;
+    currentSources.set(writePath, next);
+    if (byPath.has(writePath)) changed.add(writePath);
+    else createdPaths.add(writePath);
+  };
+  const sourceForWrite = (writePath: string): string => {
+    if (currentSources.has(writePath)) return currentSources.get(writePath)!;
+    createdPaths.add(writePath);
+    const blank = "# 待辦\r\n\r\n## 新增 Task\r\n";
+    currentSources.set(writePath, blank);
+    return blank;
+  };
+
+  for (const move of relocations) {
+    const source = currentSources.get(move.fromPath);
+    if (!source) continue;
+    const lineIndex = findTaskLineIndex(move.fromPath, move.id);
+    if (lineIndex < 0) continue;
+    const currentLine = splitLines(source)[lineIndex]!;
+    const patchedLine = patchTaskLineMinimal(currentLine, move.task);
+    const currentBody = extractTaskMarkdownContent(source, move.id);
+    const body = move.task.body !== undefined ? move.task.body : currentBody;
+    commitWrite(move.fromPath, removeTaskBlock(source, move.id));
+    commitWrite(move.toPath, appendTaskBlock(sourceForWrite(move.toPath), patchedLine, body, move.id));
+  }
+
   const missingTasks = desired.tasks.filter((task) => task.id && !locations.has(task.id));
   if (missingTasks.length > 0) {
-    const existingPaths = [...byPath.keys()];
+    const pathsForNew = [...byPath.keys(), ...createdPaths];
     const grouped = new Map<string, BrainTaskSnapshot[]>();
     for (const task of missingTasks) {
-      const writePath = resolveNewTaskWritePath(task, desired.projects, existingPaths);
+      const writePath = resolveNewTaskWritePath(task, desired.projects, pathsForNew);
       grouped.set(writePath, [...(grouped.get(writePath) ?? []), task]);
     }
     for (const [writePath, tasksForPath] of grouped) {
-      const existing = byPath.get(writePath);
-      const current = existing
-        ? currentSources.get(writePath)!
-        : "# 待辦\r\n\r\n## 新增 Task\r\n";
-      const source = appendMissingTasks(current, writePath, tasksForPath);
-      if (!existing) {
-        createdFiles.push({
-          relativePath: writePath,
-          expectedSha256: EMPTY_SHA256,
-          replacementBase64: encodeBase64(encoder.encode(source)),
-          operation: "create" as const,
-        });
-        continue;
-      }
-      if (source !== currentSources.get(writePath)) {
-        currentSources.set(writePath, source);
-        changed.add(writePath);
-      }
+      commitWrite(writePath, appendMissingTasks(sourceForWrite(writePath), writePath, tasksForPath));
     }
   }
 
@@ -631,7 +733,14 @@ export function applyDesiredSnapshot(
     ...[...changed]
       .sort()
       .map((relativePath) => makeChange(byPath.get(relativePath)!, currentSources.get(relativePath)!)),
-    ...createdFiles,
+    ...[...createdPaths]
+      .sort()
+      .map((relativePath) => ({
+        relativePath,
+        expectedSha256: EMPTY_SHA256,
+        replacementBase64: encodeBase64(encoder.encode(currentSources.get(relativePath)!)),
+        operation: "create" as const,
+      })),
   ];
 }
 

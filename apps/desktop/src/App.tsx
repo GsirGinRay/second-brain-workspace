@@ -1191,17 +1191,29 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     const nextTasks = promotedTask
       ? tasks.map((task) => task.id === promotedTask.id ? { ...task, projectId: id, projectName: name.trim() } : task)
       : tasks;
-    const taskChanges = promotedTask ? applyDesiredSnapshot(files, {
+    const nextProjects: BrainProjectSnapshot[] = [...projects, {
+      schemaVersion: 6, id, name: name.trim(), sourcePath: create.relativePath, status: "planning",
+      area, priority, progress: 0, focusToday: false, startDate: null, endDate: null, completedAt: null, body,
+    }];
+    const filesForWrite = promotedTask
+      ? [...files, { relativePath: create.relativePath, sha256: create.expectedSha256, bytesBase64: create.replacementBase64 }]
+      : files;
+    const taskChanges = promotedTask ? applyDesiredSnapshot(filesForWrite, {
       schemaVersion: 6,
       tasks: nextTasks,
-      projects,
+      projects: nextProjects,
       collections,
       fileHashes: {},
     }) : [];
+    const projectWrite = taskChanges.find((change) => change.relativePath === create.relativePath);
+    const otherChanges = taskChanges.filter((change) => change.relativePath !== create.relativePath);
+    const projectChange = projectWrite && projectWrite.operation !== "delete" && projectWrite.replacementBase64
+      ? { ...create, replacementBase64: projectWrite.replacementBase64 }
+      : create;
     setWorking(true);
     setError("");
     try {
-      await native.applyMarkdownChanges([...taskChanges, create]);
+      await native.applyMarkdownChanges([...otherChanges, projectChange]);
       await reloadLocal();
       setStatus(promotedTask ? "想法已升級為規劃中專案" : "已建立規劃中專案");
       return { id, name: name.trim() };

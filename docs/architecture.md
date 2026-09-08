@@ -26,7 +26,10 @@ and apply a layout migrator that moves legacy folders (`Projects/`,
 `Collections/`, `05-每日工作台/`, `10-收件匣/`, `90-模板/`, `99-附件/`, numbered
 knowledge folders) into the canonical tree. Filenames stay the same so
 `[[wikilink]]` keep working; duplicate paths are listed and never deleted.
-A verified ZIP backup is created before the move.
+A verified ZIP backup is created before the move. Reassigning a task's project
+moves the whole task block (the line and its indented notes) onto
+`專案/<name>.md` or back to `收件匣/待辦.md`. Changing date or status still
+edits in place.
 
 A private Publisher build can still embed one exact HTTPS origin. That adapter
 is not part of the public product and is not required to use the desktop app.
