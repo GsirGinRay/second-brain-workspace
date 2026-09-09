@@ -431,6 +431,11 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
    typography so typing `# `, `- `, `> `, `---` makes the line transform
    in place without leaving the block. */
 .markdown-block-editor{position:relative;display:grid;gap:6px;padding:4px 0}
+.markdown-selection-toolbar{position:sticky;bottom:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 10px;background:var(--paper);border:1px solid var(--line);border-radius:8px;font-size:13px;box-shadow:0 2px 8px #0000000d}
+.markdown-selection-toolbar,.markdown-selection-toolbar *,.markdown-block-menu,.markdown-block-menu *,.markdown-block-tools,.markdown-block-tools *{user-select:none;-webkit-user-select:none}
+.markdown-selection-toolbar select,.markdown-selection-toolbar button{width:auto;min-height:30px;margin:0;padding:4px 8px;font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:5px}
+.markdown-block-menu button:disabled,.markdown-slash-menu button:disabled{opacity:.45;cursor:not-allowed}
+.markdown-task-block-row button,.markdown-block-static-line,.markdown-block-preview .markdown-preview p{white-space:pre-wrap}
 .markdown-block-list{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:2px 12px}.markdown-block{grid-column:1/-1}.markdown-row{display:grid;align-items:start;min-width:0}.markdown-col{min-width:0;display:grid;gap:2px}.markdown-col .markdown-block{grid-column:auto}.markdown-col-resizer{width:8px;cursor:col-resize;position:relative;align-self:stretch}.markdown-col-resizer::after{content:"";position:absolute;left:3px;top:12px;bottom:12px;width:2px;border-radius:1px;background:rgba(55,53,47,.16)}.markdown-row:hover .markdown-col-resizer::after{background:rgba(55,53,47,.28)}.markdown-col-resizer:hover::after{background:#2383e2}
 .markdown-block{--block-text:var(--ink);--block-background:transparent;position:relative;display:grid;grid-template-columns:52px minmax(0,1fr);align-items:start;gap:4px;border:0;border-radius:0;padding:2px 0;background:transparent;color:var(--block-text);transition:background .12s,box-shadow .12s}
 .markdown-block:hover{background:transparent}
@@ -474,7 +479,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
    bullet/number row never nudges the text sideways. */
 .markdown-structural-edit-row>textarea{flex:1;min-width:0;font-size:15px;line-height:1.55;padding:0 4px;margin:0;background:transparent;min-height:24px}
 .markdown-structural-edit-row>textarea::placeholder{color:var(--muted)}
-.markdown-block-static{flex:1;min-width:0;font-size:15px;line-height:1.55;padding:0 4px;color:var(--ink);cursor:text;border-radius:4px;min-height:24px}
+.markdown-block-static{flex:1;min-width:0;font-size:15px;line-height:1.55;padding:0 4px;color:var(--block-text);cursor:text;border-radius:4px;min-height:24px}
 .markdown-block-static:hover{background:#f4f4f3}
 .markdown-block-static:focus-visible{outline:2px solid #2383e266;outline-offset:1px}
 .markdown-block-static .markdown-block-static-line{min-height:24px}
@@ -507,7 +512,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .markdown-task-block-row,.markdown-task-edit-row{display:flex;align-items:flex-start;gap:8px;padding:1px 0}
 .markdown-task-edit-row{padding:1px 4px}
 .markdown-task-block input[type=checkbox],.markdown-task-edit-row>input[type=checkbox]{flex:0 0 auto;width:16px;height:16px;margin:4px 0 0;padding:0;accent-color:#16834c;cursor:pointer;align-self:flex-start;border-radius:3px}
-.markdown-task-block button{flex:1;min-width:0;border:0;background:transparent;color:var(--ink);padding:0;text-align:left;font:inherit;font-size:15px;line-height:1.55;cursor:text;border-radius:4px;min-height:24px}
+.markdown-task-block button{flex:1;min-width:0;border:0;background:transparent;color:var(--block-text);padding:0;text-align:left;font:inherit;font-size:15px;line-height:1.55;cursor:text;border-radius:4px;min-height:24px}
 .markdown-task-block button:focus-visible{outline:2px solid #2383e266;outline-offset:1px}
 .markdown-task-edit-row .markdown-block-input{flex:1;min-width:0;padding:0;font-size:15px;line-height:1.55;margin:0;background:transparent;min-height:24px}
 .markdown-task-edit-row .markdown-block-input::placeholder{color:var(--muted);font-style:italic}

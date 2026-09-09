@@ -53,7 +53,7 @@ function inlineCell(value: string | null | undefined): string {
   return text || "—";
 }
 
-function toMarkdownTable(headers: string[], rows: string[][]): string {
+function toMarkdownTable(headers: string[], rows: (string | null)[][]): string {
   const header = `| ${headers.map(inlineCell).join(" | ")} |`;
   const divider = `| ${headers.map(() => "---").join(" | ")} |`;
   const body = rows.map(
@@ -140,7 +140,7 @@ function formatVisibleSchedule(task: BrainTaskSnapshot): string {
   return parts.join(" ");
 }
 
-function scheduledTaskRows(tasks: BrainTaskSnapshot[]): string[][] {
+function scheduledTaskRows(tasks: BrainTaskSnapshot[]): (string | null)[][] {
   return tasks.map((item) => [
     item.title,
     formatVisibleSchedule(item),
@@ -149,19 +149,19 @@ function scheduledTaskRows(tasks: BrainTaskSnapshot[]): string[][] {
   ]);
 }
 
-function ideaRows(tasks: BrainTaskSnapshot[]): string[][] {
+function ideaRows(tasks: BrainTaskSnapshot[]): (string | null)[][] {
   return tasks.map((item) => [item.title, item.sourcePath]);
 }
 
 function renderTaskTable(
   headers: string[],
-  rows: string[][],
+  rows: (string | null)[][],
   empty: string,
 ): string {
   return rows.length === 0 ? empty : toMarkdownTable(headers, rows);
 }
 
-function projectRows(projects: BrainProjectSnapshot[]): string[][] {
+function projectRows(projects: BrainProjectSnapshot[]): (string | null)[][] {
   const sorted = [...projects].sort(
     (a, b) =>
       a.name.localeCompare(b.name) ||
@@ -175,7 +175,7 @@ function projectRows(projects: BrainProjectSnapshot[]): string[][] {
   ]);
 }
 
-function knowledgeRows(collections: BrainCollectionSnapshot[]): string[][] {
+function knowledgeRows(collections: BrainCollectionSnapshot[]): (string | null)[][] {
   const sorted = [...collections].sort(
     (a, b) =>
       (a.category ?? "").localeCompare(b.category ?? "") ||

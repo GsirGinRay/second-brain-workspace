@@ -408,7 +408,7 @@ test("desktop branding uses the generated app logo", () => {
 
 test("beginner workflow supports Markdown drafts, onboarding and close-time folder selection", () => {
   const source = app();
-  assert.match(source, /<MarkdownEditor/);
+  assert.match(source, /<MarkdownBlockEditor/);
   assert.match(source, /loadDraftWorkspace/);
   assert.match(source, /onCloseRequested/);
   assert.match(source, /onboardingOpen/);

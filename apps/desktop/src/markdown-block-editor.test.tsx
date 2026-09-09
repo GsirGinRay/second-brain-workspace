@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
 import { AttachmentProvider } from "./attachment-context";
+import { clearGlobalSelection, GlobalShiftMarquee } from "./global-shift-marquee";
 import { blockMenuPlacement, composeTaskLine, deriveBlockKind, MarkdownBlockEditor, parseDocumentChunks, parseStyledBlock, splitTaskAwareBlocks, splitTaskIdentity } from "./markdown-block-editor";
 
 const window = new Window({ url: "http://localhost/" });
@@ -187,7 +188,13 @@ function renderEditor(value: string) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  flushSync(() => root.render(<MarkdownBlockEditor value={value} onChange={(next) => changes.push(next)} locale="zh-TW" />));
+  function ControlledEditor() {
+    const [source, setSource] = React.useState(value);
+    return <MarkdownBlockEditor value={source} onChange={(next) => { changes.push(next); setSource(next); }} locale="zh-TW" />;
+  }
+  act(() => root.render(<ControlledEditor />));
+  const remove = container.remove.bind(container);
+  container.remove = () => { act(() => root.unmount()); remove(); };
   return { container, changes };
 }
 
@@ -528,6 +535,512 @@ function setCaret(textarea: HTMLTextAreaElement, start: number) {
   Object.defineProperty(textarea, "selectionEnd", { value: start, configurable: true });
 }
 
+test("Enter splits a checked todo at the caret and resets the new checkbox", () => {
+  const rendered = renderEditor("  * [x] 買牛奶和麵包");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(3, 3);
+    pressKey(textarea, { key: "Enter" });
+    assert.equal(rendered.changes.at(-1), "  * [x] 買牛奶\n\n  * [ ] 和麵包");
+  } finally { rendered.container.remove(); }
+});
+
+test("Enter replaces selected text while splitting paragraphs and lists", () => {
+  for (const [source, expected] of [
+    ["abcDEFghi", "abc\n\nghi"],
+    ["- abcDEFghi", "- abc\n\n- ghi"],
+    ["- [ ] abcDEFghi", "- [ ] abc\n\n- [ ] ghi"],
+    ["2) abcDEFghi", "2) abc\n\n3) ghi"],
+  ]) {
+    const rendered = renderEditor(source!);
+    try {
+      const textarea = openTextarea(rendered.container, 0);
+      textarea.setSelectionRange(3, 6);
+      pressKey(textarea, { key: "Enter" });
+      assert.equal(rendered.changes.at(-1), expected);
+    } finally { rendered.container.remove(); }
+  }
+});
+
+test("split caret stays at the start of the carried text after layout settles", async () => {
+  const rendered = renderEditor("abcdef");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(3, 3);
+    pressKey(textarea, { key: "Enter" });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const next = rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")!;
+    assert.equal(next.value, "def");
+    assert.equal(next.selectionStart, 0);
+  } finally { rendered.container.remove(); }
+});
+
+test("style comments stay attached to structural blocks after reopening", () => {
+  assert.deepEqual(splitTaskAwareBlocks("- [ ] task\n<!-- sbw:block-style color=red background=yellow -->\n\nnext"),
+    ["- [ ] task\n<!-- sbw:block-style color=red background=yellow -->", "next"]);
+});
+
+test("Shift clicking text does not start block marquee selection", () => {
+  const rendered = renderEditor("abcdef");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    flushSync(() => textarea.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, shiftKey: true, button: 0 }) as unknown as Event));
+    assert.equal(rendered.container.querySelector(".markdown-block-selection-marquee"), null);
+  } finally { rendered.container.remove(); }
+});
+
+test("Shift+Enter keeps one checkbox and normal Enter continues after its soft break", () => {
+  const rendered = renderEditor("- [ ] abcdef");
+  try {
+    let textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(3, 3);
+    pressKey(textarea, { key: "Enter", shiftKey: true });
+    assert.equal(rendered.changes.at(-1), "- [ ] abc<br>def");
+    textarea = rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")!;
+    assert.equal(textarea.value, "abc\ndef");
+    assert.equal(textarea.selectionStart, 4);
+    assert.equal(rendered.container.querySelectorAll(".markdown-block").length, 1);
+    pressKey(textarea, { key: "Enter" });
+    assert.equal(rendered.changes.at(-1), "- [ ] abc<br>\n\n- [ ] def");
+  } finally { rendered.container.remove(); }
+});
+
+test("split and merge undo restores text, checkbox and caret across block boundaries", () => {
+  const rendered = renderEditor("- [x] abcdef");
+  try {
+    const original = openTextarea(rendered.container, 0);
+    original.setSelectionRange(3, 3);
+    pressKey(original, { key: "Enter" });
+    let active = rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")!;
+    pressKey(active, { key: "z", ctrlKey: true });
+    assert.equal(rendered.changes.at(-1), "- [x] abcdef");
+    active = rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")!;
+    assert.equal(active.selectionStart, 3);
+    pressKey(active, { key: "z", ctrlKey: true, shiftKey: true });
+    assert.equal(rendered.changes.at(-1), "- [x] abc\n\n- [ ] def");
+    active = rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")!;
+    assert.equal(active.selectionStart, 0);
+    pressKey(active, { key: "Backspace" });
+    assert.equal(rendered.changes.at(-1), "- [x] abcdef");
+    assert.equal(rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")!.selectionStart, 3);
+  } finally { rendered.container.remove(); }
+});
+
+test("Ctrl+B toggles selected text in todos without touching their identity", () => {
+  const marker = '<!-- second-brain-task:{"id":"synthetic-task"} -->';
+  const rendered = renderEditor(`- [ ] #task abc ${marker}`);
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(0, 3);
+    pressKey(textarea, { key: "b", ctrlKey: true });
+    assert.equal(rendered.changes.at(-1), `- [ ] #task **abc** ${marker}`);
+    pressKey(textarea, { key: "b", ctrlKey: true });
+    assert.equal(rendered.changes.at(-1), `- [ ] #task abc ${marker}`);
+  } finally { rendered.container.remove(); }
+});
+
+test("splitting tracked tasks keeps one identity and creates an ordinary unchecked item", () => {
+  const marker = '<!-- second-brain-task:{"id":"synthetic-task"} -->';
+  const rendered = renderEditor(`- [x] #task abcdef ${marker}`);
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(3, 3);
+    pressKey(textarea, { key: "Enter" });
+    assert.equal(rendered.changes.at(-1), `- [x] #task abc ${marker}\n\n- [ ] def`);
+  } finally { rendered.container.remove(); }
+});
+
+test("boundary deletion does not consume a tracked task or an adjacent column", () => {
+  for (const source of [
+    'abc\n\n- [ ] #task def <!-- second-brain-task:{"id":"synthetic-task"} -->',
+    '<!-- sbw:row row 50 50 -->\n\nabc\n\n<!-- sbw:col -->\n\ndef\n\n<!-- sbw:row-end -->',
+    'abc\n\n```\ndef\n```',
+  ]) {
+    const rendered = renderEditor(source);
+    try {
+      const textarea = openTextarea(rendered.container, 0);
+      textarea.setSelectionRange(3, 3);
+      pressKey(textarea, { key: "Delete" });
+      assert.equal(rendered.changes.length, 0);
+      assert.equal(rendered.container.querySelectorAll(".markdown-block").length, 2);
+    } finally { rendered.container.remove(); }
+  }
+});
+
+test("Delete merges heading text without leaking markers and keeps the left format", () => {
+  const rendered = renderEditor("- first\n\n## second");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(5, 5);
+    pressKey(textarea, { key: "Delete" });
+    assert.equal(rendered.changes.at(-1), "- firstsecond");
+    assert.equal(textarea.selectionStart, 5);
+  } finally { rendered.container.remove(); }
+});
+
+function selectBlockRange(container: HTMLElement, first: number, last: number) {
+  const grips = container.querySelectorAll<HTMLElement>("[data-markdown-drag-handle]");
+  act(() => { grips[first]!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, ctrlKey: true }) as unknown as Event); });
+  act(() => { grips[last]!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, shiftKey: true }) as unknown as Event); });
+}
+
+function selectBlockText(container: HTMLElement, first: number, last: number) {
+  const content = container.querySelectorAll(".markdown-block-content");
+  const range = document.createRange();
+  range.setStart(content[first]!, 0);
+  range.setEnd(content[last]!, content[last]!.childNodes.length);
+  act(() => {
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new window.Event("selectionchange") as unknown as Event);
+  });
+}
+
+test("native text selection across blocks converts the entire range after the toolbar takes focus", () => {
+  const source = "outside\n\nfirst **bold**\n\n## second\n\n- third\n\noutside end";
+  const rendered = renderEditor(source);
+  try {
+    selectBlockText(rendered.container, 1, 3);
+    const select = rendered.container.querySelector<HTMLSelectElement>('[aria-label="批次轉換成"]');
+    assert.ok(select, "cross-block text selection exposes batch actions");
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 3);
+    // Native controls can collapse the browser selection before change fires.
+    act(() => select.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0 }) as unknown as Event));
+    act(() => {
+      document.getSelection()!.removeAllRanges();
+      document.dispatchEvent(new window.Event("selectionchange") as unknown as Event);
+      select.focus();
+    });
+    act(() => { select.value = "todo"; select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event); });
+    assert.equal(rendered.changes.at(-1), "outside\n\n- [ ] first **bold**\n\n- [ ] second\n\n- [ ] third\n\noutside end");
+    assert.equal(rendered.changes.length, 1);
+    act(() => rendered.container.querySelector(".markdown-block-editor")!.dispatchEvent(new window.KeyboardEvent("keydown", {
+      bubbles: true, key: "z", ctrlKey: true,
+    }) as unknown as Event));
+    assert.equal(rendered.changes.at(-1), source);
+  } finally { act(() => document.getSelection()?.removeAllRanges()); rendered.container.remove(); }
+});
+
+test("the click ending a native text drag does not replace the range with one editing block", () => {
+  const rendered = renderEditor("first\n\nsecond\n\nthird");
+  try {
+    selectBlockText(rendered.container, 0, 2);
+    const preview = rendered.container.querySelectorAll(".markdown-block-preview")[2]!;
+    act(() => preview.dispatchEvent(new window.MouseEvent("click", { bubbles: true, detail: 1 }) as unknown as Event));
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 3);
+    assert.ok(!rendered.container.querySelector("textarea"), "the trailing click must not enter single-block editing");
+  } finally { act(() => document.getSelection()?.removeAllRanges()); rendered.container.remove(); }
+});
+
+test("clicking outside the conversion menu dismisses it without changing content", () => {
+  const rendered = renderEditor("first\n\nsecond");
+  const click = (element: Element) => act(() => element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+  try {
+    click(rendered.container.querySelector("[data-markdown-drag-handle]")!);
+    const turn = Array.from(rendered.container.querySelectorAll(".markdown-block-menu button"))
+      .find((button) => button.querySelector("strong")?.textContent === "轉換成")!;
+    click(turn);
+    assert.ok(rendered.container.querySelector('.markdown-block-menu [role="menuitemradio"]'));
+    act(() => document.body.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0 }) as unknown as Event));
+    assert.ok(!rendered.container.querySelector(".markdown-block-menu"), "outside pointer press closes the menu");
+    assert.equal(rendered.changes.length, 0);
+  } finally { rendered.container.remove(); }
+});
+
+test("native selection ending at the next block's start excludes that block", () => {
+  const rendered = renderEditor("first\n\nsecond\n\nthird");
+  try {
+    const content = rendered.container.querySelectorAll(".markdown-block-content");
+    const range = document.createRange();
+    range.setStart(content[0]!, 0);
+    range.setEnd(content[2]!.querySelector("p")!.firstChild!, 0);
+    act(() => {
+      document.getSelection()!.removeAllRanges();
+      document.getSelection()!.addRange(range);
+      document.dispatchEvent(new window.Event("selectionchange") as unknown as Event);
+    });
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 2);
+    const select = rendered.container.querySelector<HTMLSelectElement>('[aria-label="批次轉換成"]')!;
+    act(() => { select.value = "h2"; select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event); });
+    assert.equal(rendered.changes.at(-1), "## first\n\n## second\n\nthird");
+  } finally { act(() => document.getSelection()?.removeAllRanges()); rendered.container.remove(); }
+});
+
+test("single-block text selection remains text editing and collapsing a cross-block range clears it", () => {
+  const rendered = renderEditor("first\n\nsecond\n\nthird");
+  try {
+    selectBlockText(rendered.container, 0, 0);
+    assert.ok(!rendered.container.querySelector(".markdown-selection-toolbar"));
+    selectBlockText(rendered.container, 0, 2);
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 3);
+    act(() => {
+      document.getSelection()!.collapseToStart();
+      document.dispatchEvent(new window.Event("selectionchange") as unknown as Event);
+    });
+    assert.ok(!rendered.container.querySelector(".markdown-selection-toolbar"));
+    assert.equal(rendered.changes.length, 0);
+  } finally { act(() => document.getSelection()?.removeAllRanges()); rendered.container.remove(); }
+});
+
+test("120 text-selected blocks retain their range when a block menu opens", () => {
+  const content = Array.from({ length: 120 }, (_, index) => `item ${index + 1}`);
+  const rendered = renderEditor(content.join("\n\n"));
+  const click = (element: Element) => act(() => element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+  try {
+    selectBlockText(rendered.container, 0, 119);
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 120);
+    click(rendered.container.querySelectorAll("[data-markdown-drag-handle]")[40]!);
+    const menuButton = (label: string) => Array.from(rendered.container.querySelectorAll(".markdown-block-menu button"))
+      .find((button) => button.querySelector("strong")?.textContent === label)!;
+    click(menuButton("轉換成"));
+    click(menuButton("待辦清單"));
+    assert.equal(rendered.changes.at(-1), content.map((text) => `- [ ] ${text}`).join("\n\n"));
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 120);
+    act(() => rendered.container.querySelector(".markdown-block-editor")!.dispatchEvent(new window.KeyboardEvent("keydown", {
+      bubbles: true, key: "z", ctrlKey: true,
+    }) as unknown as Event));
+    assert.equal(rendered.changes.at(-1), content.join("\n\n"));
+  } finally { act(() => document.getSelection()?.removeAllRanges()); rendered.container.remove(); }
+});
+
+for (const count of [3, 120]) test(`${count} globally marquee-selected blocks all convert through a selected block's menu`, () => {
+  const content = Array.from({ length: count }, (_, index) => `item ${index + 1}`);
+  const source = content.join("\n\n");
+  const rendered = renderEditor(source);
+  const overlay = document.createElement("div");
+  document.body.appendChild(overlay);
+  const root = createRoot(overlay);
+  act(() => root.render(<GlobalShiftMarquee />));
+  const click = (element: Element) => act(() => {
+    Object.assign(element, { setPointerCapture: () => undefined, releasePointerCapture: () => undefined });
+    element.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, button: 0 }) as unknown as Event);
+    element.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, button: 0 }) as unknown as Event);
+    element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event);
+  });
+  try {
+    const blocks = rendered.container.querySelectorAll<HTMLElement>("[data-markdown-block-id]");
+    blocks.forEach((block, index) => {
+      block.getBoundingClientRect = () => new window.DOMRect(20, 20 + index * 50, 200, 40) as unknown as DOMRect;
+    });
+    for (const [type, x, y] of [["pointerdown", 10, 10], ["pointermove", 230, count * 50 + 20], ["pointerup", 230, count * 50 + 20]] as const) {
+      act(() => document.body.dispatchEvent(new window.PointerEvent(type, {
+        bubbles: true, button: 0, shiftKey: true, clientX: x, clientY: y, pointerId: 41,
+      }) as unknown as Event));
+    }
+    assert.equal(rendered.container.querySelectorAll(".global-shift-selected").length, count);
+    click(blocks[1]!.querySelector("[data-markdown-drag-handle]")!);
+    const menuButton = (label: string) => Array.from(rendered.container.querySelectorAll(".markdown-block-menu button"))
+      .find((button) => button.querySelector("strong")?.textContent === label)!;
+    click(menuButton("轉換成"));
+    click(menuButton("待辦清單"));
+    assert.equal(rendered.changes.at(-1), content.map((text) => `- [ ] ${text}`).join("\n\n"));
+    assert.equal(rendered.changes.length, 1);
+    act(() => rendered.container.querySelector(".markdown-block-editor")!.dispatchEvent(new window.KeyboardEvent("keydown", {
+      bubbles: true, key: "z", ctrlKey: true,
+    }) as unknown as Event));
+    assert.equal(rendered.changes.at(-1), source, "one undo restores the whole selection");
+  } finally {
+    clearGlobalSelection();
+    act(() => root.unmount());
+    overlay.remove();
+    rendered.container.remove();
+  }
+});
+
+test("range selection converts mixed blocks together and one undo restores them", () => {
+  const source = "## heading\n\n- bullet\n\nplain";
+  const rendered = renderEditor(source);
+  try {
+    selectBlockRange(rendered.container, 0, 2);
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 3);
+    const select = rendered.container.querySelector<HTMLSelectElement>('[aria-label="批次轉換成"]')!;
+    act(() => { select.value = "todo"; select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event); });
+    assert.equal(rendered.changes.at(-1), "- [ ] heading\n\n- [ ] bullet\n\n- [ ] plain");
+    const section = rendered.container.querySelector<HTMLElement>(".markdown-block-editor")!;
+    act(() => { section.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "z", ctrlKey: true }) as unknown as Event); });
+    assert.equal(rendered.changes.at(-1), source);
+  } finally { rendered.container.remove(); }
+});
+
+test("marquee conversion after editing keeps the entire selection for another conversion", () => {
+  const rendered = renderEditor("first\n\nsecond\n\nthird");
+  try {
+    act(() => { openTextarea(rendered.container, 0); });
+    const section = rendered.container.querySelector<HTMLElement>(".markdown-block-editor")!;
+    rendered.container.querySelectorAll<HTMLElement>("[data-markdown-block-id]").forEach((block, index) => {
+      block.getBoundingClientRect = () => new window.DOMRect(20, 20 + index * 50, 200, 40) as unknown as DOMRect;
+    });
+    for (const [type, x, y] of [["pointerdown", 10, 10], ["pointermove", 230, 170], ["pointerup", 230, 170]] as const) {
+      act(() => section.dispatchEvent(new window.PointerEvent(type, {
+        bubbles: true, button: 0, shiftKey: true, clientX: x, clientY: y, pointerId: 42,
+      }) as unknown as Event));
+    }
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 3);
+    const select = rendered.container.querySelector<HTMLSelectElement>('[aria-label="批次轉換成"]')!;
+    act(() => { select.value = "todo"; select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event); });
+    assert.equal(rendered.changes.at(-1), "- [ ] first\n\n- [ ] second\n\n- [ ] third");
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 3);
+    const nextSelect = rendered.container.querySelector<HTMLSelectElement>('[aria-label="批次轉換成"]')!;
+    act(() => { nextSelect.value = "h2"; nextSelect.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event); });
+    assert.equal(rendered.changes.at(-1), "## first\n\n## second\n\n## third");
+  } finally { rendered.container.remove(); }
+});
+
+test("holding Shift on a batch select control preserves the selected blocks", () => {
+  const rendered = renderEditor("first\n\nsecond\n\nthird");
+  try {
+    selectBlockRange(rendered.container, 0, 2);
+    const select = rendered.container.querySelector<HTMLSelectElement>('[aria-label="批次轉換成"]')!;
+    act(() => select.dispatchEvent(new window.PointerEvent("pointerdown", {
+      bubbles: true, button: 0, shiftKey: true, pointerId: 43,
+    }) as unknown as Event));
+    assert.ok(!rendered.container.querySelector("[data-markdown-selection-marquee]"), "batch controls must not start a marquee");
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 3);
+    act(() => { select.value = "todo"; select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event); });
+    assert.equal(rendered.changes.at(-1), "- [ ] first\n\n- [ ] second\n\n- [ ] third");
+  } finally { rendered.container.remove(); }
+});
+
+test("120 mixed blocks retain their content through consecutive batch conversions and reopening", () => {
+  const content = Array.from({ length: 120 }, (_, index) => `內容 ${index + 1}`);
+  const formats = [
+    ["text", (text: string) => text],
+    ["h1", (text: string) => `# ${text}`],
+    ["h2", (text: string) => `## ${text}`],
+    ["h3", (text: string) => `### ${text}`],
+    ["h4", (text: string) => `#### ${text}`],
+    ["todo", (text: string) => `- [ ] ${text}`],
+    ["bullet", (text: string) => `- ${text}`],
+    ["number", (text: string, index: number) => `${index + 1}. ${text}`],
+    ["quote", (text: string) => `> ${text}`],
+    ["code", (text: string) => `\`\`\`\n${text}\n\`\`\``],
+  ] as const;
+  const rendered = renderEditor(content.map((text, index) => formats[index % formats.length]![1](text, index)).join("\n\n"));
+  try {
+    selectBlockRange(rendered.container, 0, content.length - 1);
+    for (const [command, format] of formats) {
+      const select = rendered.container.querySelector<HTMLSelectElement>('[aria-label="批次轉換成"]')!;
+      assert.ok(select, `${command}: batch toolbar remains available`);
+      act(() => { select.value = command; select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event); });
+      assert.equal(rendered.changes.at(-1), content.map(format).join("\n\n"), `${command}: every block keeps its text`);
+      assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, content.length);
+      const reopened = renderEditor(rendered.changes.at(-1)!);
+      try {
+        assert.equal(reopened.container.querySelectorAll(".markdown-block").length, content.length);
+        const previews = reopened.container.querySelectorAll<HTMLElement>(".markdown-block-content");
+        previews.forEach((block, index) => assert.ok(block.textContent?.includes(content[index]!), `${command}: visible text ${index + 1}`));
+      } finally { reopened.container.remove(); }
+    }
+  } finally { rendered.container.remove(); }
+});
+
+test("batch text color preserves each block's own background", () => {
+  const rendered = renderEditor("one\n<!-- sbw:block-style color=red background=yellow -->\n\ntwo\n<!-- sbw:block-style color=red background=green -->");
+  try {
+    selectBlockRange(rendered.container, 0, 1);
+    const select = rendered.container.querySelector<HTMLSelectElement>('[aria-label="批次文字顏色"]')!;
+    act(() => { select.value = "blue"; select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event); });
+    assert.equal(rendered.changes.at(-1), "one\n<!-- sbw:block-style color=blue background=yellow -->\n\ntwo\n<!-- sbw:block-style color=blue background=green -->");
+  } finally { rendered.container.remove(); }
+});
+
+test("Enter preserves BOM and CRLF in the emitted document", () => {
+  const rendered = renderEditor("\uFEFF- [ ] first\r\n\r\nsecond");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(2, 2);
+    pressKey(textarea, { key: "Enter" });
+    assert.equal(rendered.changes.at(-1), "\uFEFF- [ ] fi\r\n\r\n- [ ] rst\r\n\r\nsecond");
+  } finally { rendered.container.remove(); }
+});
+
+test("an intentional Enter 120ms after composition end is not swallowed", () => {
+  const rendered = renderEditor("- [ ] 內容");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    dispatchWithTimeStamp(textarea, new window.Event("compositionend", { bubbles: true }), 1000);
+    dispatchWithTimeStamp(textarea, new window.KeyboardEvent("keydown", { bubbles: true, key: "Enter", cancelable: true }), 1120);
+    assert.equal(rendered.changes.at(-1), "- [ ] 內容\n\n- [ ] ");
+  } finally { rendered.container.remove(); }
+});
+
+test("inserting and merging numbered items keeps subsequent numbers sequential", () => {
+  const rendered = renderEditor("1) abcdef\n\n2) next");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(3, 3);
+    pressKey(textarea, { key: "Enter" });
+    assert.equal(rendered.changes.at(-1), "1) abc\n\n2) def\n\n3) next");
+    const active = rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")!;
+    pressKey(active, { key: "Backspace" });
+    assert.equal(rendered.changes.at(-1), "1) abcdef\n\n2) next");
+  } finally { rendered.container.remove(); }
+});
+
+test("format conversion keeps a todo's soft line break within the same item", () => {
+  const rendered = renderEditor("- [ ] one<br>two\n\n- three");
+  try {
+    selectBlockRange(rendered.container, 0, 1);
+    const select = rendered.container.querySelector<HTMLSelectElement>('[aria-label="批次轉換成"]')!;
+    act(() => { select.value = "number"; select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event); });
+    assert.equal(rendered.changes.at(-1), "1. one<br>two\n\n2. three");
+    assert.equal(rendered.container.querySelectorAll(".markdown-block.selected").length, 2);
+  } finally { rendered.container.remove(); }
+});
+
+test("Delete inside selected text never deletes selected blocks", () => {
+  const rendered = renderEditor("first\n\nsecond");
+  try {
+    selectBlockRange(rendered.container, 0, 1);
+    const textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(2, 2);
+    const event = new window.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Delete" });
+    act(() => { textarea.dispatchEvent(event as unknown as Event); });
+    assert.equal(event.defaultPrevented, false, "native deletion owns the text field");
+    assert.equal(rendered.container.querySelectorAll(".markdown-block").length, 2);
+  } finally { rendered.container.remove(); }
+});
+
+test("Tab indentation is visible and Shift+Tab reverses it without moving the caret", () => {
+  const rendered = renderEditor("- [ ] content");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    textarea.setSelectionRange(2, 2);
+    pressKey(textarea, { key: "Tab" });
+    assert.equal(rendered.changes.at(-1), "  - [ ] content");
+    assert.equal(rendered.container.querySelector<HTMLElement>(".markdown-block")!.style.paddingLeft, "20px");
+    assert.equal(textarea.selectionStart, 2);
+    pressKey(textarea, { key: "Tab", shiftKey: true });
+    assert.equal(rendered.changes.at(-1), "- [ ] content");
+  } finally { rendered.container.remove(); }
+});
+
+test("duplicating tracked tasks preserves the task token without copying the old identity", () => {
+  const marker = '<!-- second-brain-task:{"id":"synthetic-original"} -->';
+  const rendered = renderEditor(`- [ ] #task content ${marker}`);
+  try {
+    const grip = rendered.container.querySelector<HTMLElement>("[data-markdown-drag-handle]")!;
+    act(() => { grip.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event); });
+    const duplicate = Array.from(rendered.container.querySelectorAll<HTMLButtonElement>(".markdown-block-menu button"))
+      .find((button) => button.textContent?.includes("建立複本"))!;
+    act(() => { duplicate.click(); });
+    assert.equal(rendered.changes.at(-1), `- [ ] #task content ${marker}\n\n- [ ] #task content`);
+  } finally { rendered.container.remove(); }
+});
+
+test("undo can return to an empty document from inside the text field", () => {
+  const rendered = renderEditor("");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    pressKey(textarea, { key: "b", ctrlKey: true });
+    assert.equal(rendered.changes.at(-1), "****");
+    pressKey(textarea, { key: "z", ctrlKey: true });
+    assert.equal(rendered.changes.at(-1), "");
+    assert.equal(rendered.container.querySelector<HTMLTextAreaElement>(".markdown-block-input")!.selectionStart, 0);
+  } finally { rendered.container.remove(); }
+});
+
 test("a complete checkbox marker immediately exposes a live checkbox and content field", () => {
   const rendered = renderEditor("- [ ]");
   try {
@@ -848,7 +1361,7 @@ test("``` plus Enter and --- plus Enter produce code and divider blocks", () => 
     const textarea = openTextarea(divider.container, 0);
     setCaret(textarea, 3);
     pressKey(textarea, { key: "Enter" });
-    assert.equal(divider.changes.at(-1), "---");
+    assert.equal(divider.changes.at(-1), "---\n\n<!-- sbw:slot -->", "Enter after a divider keeps writing in a new paragraph");
   } finally {
     divider.container.remove();
   }

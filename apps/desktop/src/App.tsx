@@ -135,7 +135,6 @@ import {
 } from "./ui-preferences";
 import appLogo from "./assets/app-logo.png";
 import { AttachmentProvider, createAttachmentApi } from "./attachment-context";
-import { MarkdownEditor } from "./markdown-editor";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
 import { formatMinutesAsTime, minutesFromOffset, snapMinutes, timeFromSlotDrop } from "./day-schedule";
 import { DaySchedule } from "./day-schedule-view";
@@ -2237,7 +2236,7 @@ function TaskEditor({
         value={value.title}
         onChange={(event) => setValue({ ...value, title: event.target.value })}
       />
-      <MarkdownEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} attachmentFolder={attachmentFolderForTask(value.projectName)} maxAttachments={1} />
+      <MarkdownBlockEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} attachmentFolder={attachmentFolderForTask(value.projectName)} maxAttachments={1} />
       <div className="form-row">
         <select
           aria-label={t("task.field.status")}
@@ -4513,7 +4512,7 @@ function ProjectEditor({
           <DangerConfirmButton className="danger icon-action" armLabel={t("project.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={onDelete} />
         </div>
       </div>
-      <MarkdownEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} minRows={8} attachmentFolder={attachmentFolderForProject(value.name)} />
+      <MarkdownBlockEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} attachmentFolder={attachmentFolderForProject(value.name)} />
     </article>
   );
 }

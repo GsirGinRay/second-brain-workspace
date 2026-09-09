@@ -30,7 +30,7 @@ function encodeBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function decodeAttachmentBytes(value: string): Uint8Array {
+export function decodeAttachmentBytes(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value);
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
