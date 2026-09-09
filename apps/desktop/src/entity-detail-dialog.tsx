@@ -6,6 +6,7 @@ import {
   FolderKanban,
   Maximize2,
   Minimize2,
+  Plus,
   RotateCcw,
   Save,
   X,
@@ -526,6 +527,9 @@ function ProjectTaskSection({
           }}
           onBlur={() => submit()}
         />
+        <button type="submit" className="detail-task-add" aria-label={t("project.tasks.create")} title={t("project.tasks.create")}>
+          <Plus aria-hidden="true" />
+        </button>
       </form>
       {tasks.length === 0 ? (
         <p className="detail-task-empty">{locale === "zh-TW" ? "這個專案還沒有未完成任務。" : "No open tasks in this project yet."}</p>

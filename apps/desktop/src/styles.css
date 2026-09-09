@@ -629,8 +629,12 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .detail-task-section>header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .detail-task-section h3{margin:0;font-size:13px}
 .detail-task-section small{background:#eee;padding:3px 8px;border-radius:20px;color:#555;font-weight:800}
+.detail-task-composer{display:flex;align-items:center;gap:8px}
 .detail-task-composer input{flex:1;min-width:0;border:1px solid #bfc1c3;border-radius:8px;background:#fff;color:var(--ink);padding:9px 10px;font:inherit}
 .detail-task-composer input:focus{border-color:var(--ink);outline:none;box-shadow:0 0 0 2px #fff,0 0 0 4px #353638}
+.detail-task-add{flex:0 0 36px;display:grid;place-items:center;width:36px;height:36px;padding:0;border:1px solid var(--ink);border-radius:8px;background:var(--ink);color:var(--paper);cursor:pointer}
+.detail-task-add svg{width:16px;height:16px}
+.detail-task-add:hover,.detail-task-add:focus-visible{opacity:.88;outline:none}
 .detail-task-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .detail-task-list li{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-left-width:3px;border-left-color:var(--project-accent,#777);border-radius:9px;background:#fff;padding:7px 9px}
 .detail-task-check{flex:0 0 20px;display:grid;place-items:center;width:20px;height:20px;border:1.5px solid #666;border-radius:4px;background:var(--paper);color:#fff;font-size:12px;font-weight:900;padding:0;cursor:pointer}

@@ -532,9 +532,12 @@ test("capture, detail and project surfaces accept tasks and projects inline", ()
   assert.match(source, /onCreateProject=\{\(name\) => createProject\(name, null, null\)\}/);
   // Stray clicks and Escape auto-save a titled draft instead of discarding it.
   assert.match(source, /const closeGracefully = \(\) => \{[\s\S]{0,200}if \(!submit\(\)\) onClose\(\);/);
-  // Project dialog binds new tasks to the open project.
-  assert.match(source, /projectName: selectedProjectDetail\.name/);
+  // Project dialog and filtered board bind new tasks to the open project.
+  assert.match(source, /project: selectedProjectDetail/);
+  assert.match(source, /initialProjectId=\{selectedProjectDetail\?\.id \?\? \(view === "board" \? selectedBoardProjectId : null\)\}/);
+  assert.match(source, /const \[projectId, setProjectId\] = useState\(initialProjectId \?\? ""\)/);
   assert.match(styles, /\.detail-task-composer/);
+  assert.match(styles, /\.detail-task-add/);
 });
 
 test("today's focus panel widens the tray and surfaces star, time and delete inline", () => {
@@ -574,5 +577,7 @@ test("board lanes offer an inline add button bound to the active project filter"
   assert.match(source, /t\("board\.lane\.add"\)/);
   assert.match(source, /createInLane\(lane\.id/);
   assert.match(source, /moveTaskToLane\(base, lane, today\)/);
+  assert.match(source, /t\("project\.tasks\.create"\)/);
+  assert.match(source, /onQuickAdd=\{\(\) => setQuickAddOpen\(true\)\}/);
   assert.match(styles, /\.lane-composer input/);
 });

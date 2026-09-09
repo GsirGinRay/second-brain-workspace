@@ -285,6 +285,8 @@ test("project detail lists its tasks and the composer adds one bound to the proj
     assert.ok(section, "a dedicated project tasks section exists");
     assert.ok(section!.textContent?.includes("設計導覽列"), "the project's open tasks are listed");
     const composer = container.querySelector<HTMLInputElement>(".detail-task-composer input")!;
+    const addButton = container.querySelector<HTMLButtonElement>(".detail-task-add");
+    assert.ok(addButton, "the composer has an explicit create button, not only a picker of existing tasks");
     composer.value = "撰寫驗收清單";
     // Native form submit is the one event path that reliably reaches React here.
     flushSync(() => container.querySelector<HTMLFormElement>(".detail-task-composer")!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }) as unknown as Event));

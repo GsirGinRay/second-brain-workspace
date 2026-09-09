@@ -1591,6 +1591,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         selectedProjectId={selectedBoardProjectId}
         onProjectFilterChange={setSelectedBoardProjectId}
         onBackToProjects={() => setView("projects")}
+        onQuickAdd={() => setQuickAddOpen(true)}
       />
     ) : view === "projects" ? (
       <Projects
@@ -1778,6 +1779,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           tasks={tasks}
           projects={projects}
           templates={templates}
+          initialProjectId={selectedProjectDetail?.id ?? (view === "board" ? selectedBoardProjectId : null)}
           onClose={() => setQuickAddOpen(false)}
           onCreateProject={(name) => createProject(name, null, null)}
           onSave={(next) => {
@@ -1865,13 +1867,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           t={t}
           onClose={() => { if (activeDetailKey) closeDetail(activeDetailKey); }}
           onAddProjectTask={(title) => {
-            const base = newTask(title, { taskDate: undefined });
-            const bound = {
-              ...base,
-              projectId: selectedProjectDetail.id,
-              projectName: selectedProjectDetail.name,
+            const bound = newTask(title, {
               taskDate: null,
-            };
+              project: selectedProjectDetail,
+            });
             void persistLocal([...tasks, bound]);
           }}
           onToggleProjectTask={(task) => void persistLocal(tasks.map((item) => item.id === task.id
@@ -2831,6 +2830,7 @@ function QuickAddModal({
   templates = [],
   initialDate,
   initialStartTime,
+  initialProjectId,
   forceDate,
   onClose,
   onSave,
@@ -2841,6 +2841,8 @@ function QuickAddModal({
   templates?: { name: string; body: string }[];
   initialDate?: string;
   initialStartTime?: string;
+  /** Pre-select this project when capturing from a project window or board. */
+  initialProjectId?: string | null;
   /** When true the date input is locked to `initialDate` (e.g. calendar quick add). */
   forceDate?: boolean;
   onClose: () => void;
@@ -2851,7 +2853,7 @@ function QuickAddModal({
   const { t, preferences } = useUiPreferences();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(initialProjectId ?? "");
   const [ideaInbox, setIdeaInbox] = useState(false);
   const [taskDate, setTaskDate] = useState(initialDate ?? taipeiDateKey());
   const [startTime, setStartTime] = useState(initialStartTime ?? "");
@@ -3070,6 +3072,7 @@ function Board({
   selectedProjectId,
   onProjectFilterChange,
   onBackToProjects,
+  onQuickAdd,
 }: {
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
@@ -3081,6 +3084,7 @@ function Board({
   selectedProjectId: string | null;
   onProjectFilterChange: (projectId: string | null) => void;
   onBackToProjects: () => void;
+  onQuickAdd: () => void;
 }) {
   const { t, preferences } = useUiPreferences();
   const [drag, setDrag] = useState<string | null>(null);
@@ -3164,6 +3168,11 @@ function Board({
         </div>
         <div>
           {selectedProject && <button className="secondary-button" onClick={onBackToProjects}>{t("board.back")}</button>}
+          {selectedProject && (
+            <button type="button" className="primary action-with-icon" onClick={onQuickAdd} aria-label={t("project.tasks.create")} title={t("project.tasks.create")}>
+              <Plus aria-hidden="true" />{t("project.tasks.create")}
+            </button>
+          )}
           <select
             aria-label={t("board.projectFilter")}
             value={selectedProjectId ?? "all"}
