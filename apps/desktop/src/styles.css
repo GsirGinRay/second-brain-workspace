@@ -420,7 +420,8 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .detail-checkbox-property input{width:17px;height:17px;accent-color:var(--ink)}
 .detail-task-count{align-self:end;padding:8px;color:var(--muted);font-size:12px}
 .detail-dialog-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-top:4px}
-.detail-dialog-actions.split-actions{justify-content:space-between;flex-wrap:wrap}
+.detail-dialog-actions.split-actions{position:sticky;bottom:0;z-index:3;justify-content:space-between;flex-wrap:wrap;margin:8px -34px -24px;padding:12px 34px 16px;border-top:1px solid var(--line);background:var(--paper)}
+.detail-dialog-panel .detail-dialog-actions.split-actions{margin:8px -24px -24px;padding:12px 24px 16px}
 .detail-dialog-actions>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .detail-dialog-actions svg{width:16px;height:16px}
 .surface-choice{display:grid;gap:8px;margin-top:12px}
@@ -538,6 +539,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .project-summary-card{display:grid;gap:12px;cursor:pointer;transition:transform .14s,box-shadow .14s}
 .project-summary-card:hover,.project-summary-card:focus-visible{transform:translateY(-2px);box-shadow:0 10px 26px #00000016;outline:none}
 .project-summary-status{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted);font-size:11px}
+.project-summary-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-self:start}
 .project-board-button{justify-self:start}
 .agenda .task-title-row{flex-wrap:nowrap}.agenda .task-title-row .task-complete{flex:0 0 auto}.agenda-task-title{flex:1;min-width:0;border:0;background:transparent;color:var(--ink);padding:2px 0;text-align:left;font:inherit;font-weight:800}
 .schedule-tray-actions{display:flex;align-items:center;gap:5px;margin-left:auto}
@@ -588,12 +590,13 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .schedule-tray-actions .danger-confirm:hover,.schedule-tray-actions .danger-confirm:focus-visible,
 .inline-task-actions .danger-confirm:hover,.inline-task-actions .danger-confirm:focus-visible{background:#fde8e5;border-color:#b42318;color:var(--ink)}
 .danger-confirm.has-label{display:inline-flex;align-items:center;gap:6px;padding:7px 12px}
-.delete-confirm-backdrop{z-index:130}
-.delete-confirm-dialog{max-width:420px}
-.delete-confirm-dialog h2{margin:0 0 8px}
-.delete-confirm-dialog p{margin:0 0 18px;color:var(--muted);line-height:1.5}
+.delete-confirm-backdrop,.action-confirm-backdrop{z-index:130}
+.delete-confirm-dialog,.action-confirm-dialog{max-width:420px}
+.delete-confirm-dialog h2,.action-confirm-dialog h2{margin:0 0 8px}
+.delete-confirm-dialog p,.action-confirm-dialog p{margin:0 0 18px;color:var(--muted);line-height:1.5}
 .delete-confirm-accept{min-height:38px;padding:8px 14px;border:1px solid #b42318;border-radius:9px;background:#b42318;color:#fff;font:inherit;font-weight:750;cursor:pointer}
 .delete-confirm-accept:hover,.delete-confirm-accept:focus-visible{background:#8f1c13;border-color:#8f1c13;outline:none}
+.action-confirm-accept{min-height:38px;padding:8px 14px}
 .task-date-field{position:relative;display:flex;align-items:center;min-width:0;width:100%}
 .task-date-text{min-width:0;flex:1;width:100%;border:1px solid #c7c8c9;border-radius:8px;background:#fff;padding:7px 8px;color:var(--ink);font:inherit;cursor:pointer}
 .task-date-text:hover,.task-date-text:focus{border-color:var(--ink);outline:none;box-shadow:0 0 0 2px #fff,0 0 0 4px #353638}

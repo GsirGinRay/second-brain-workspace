@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   Archive,
   BookPlus,
@@ -141,7 +141,7 @@ function DetailDialog({
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target as Element | null;
       if (!target || dialogRef.current?.contains(target)) return;
-      if (target.closest(".delete-confirm-backdrop, .delete-confirm-dialog")) return;
+      if (target.closest(".delete-confirm-backdrop, .delete-confirm-dialog, .action-confirm-backdrop, .action-confirm-dialog")) return;
       event.preventDefault();
       event.stopPropagation();
       if (forwardingOutsideClickRef.current) return;
@@ -618,8 +618,19 @@ export function ProjectDetailDialog({
 }) {
   const [draft, setDraft] = useState(project);
   const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    setDraft((current) => (current.id === project.id ? current : project));
+  useLayoutEffect(() => {
+    setDraft((current) => {
+      if (current.id !== project.id) return project;
+      // Completing/archiving from the board (or another tab) must replace a
+      // stale draft; otherwise Save would overwrite the finished project.
+      if (
+        (project.status === "done" || project.status === "archived")
+        && current.status !== project.status
+      ) {
+        return project;
+      }
+      return current;
+    });
   }, [project]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(project);
   const save = async (): Promise<boolean> => {
@@ -705,7 +716,7 @@ export function ProjectDetailDialog({
         <div className="detail-dialog-actions split-actions">
           <div>
             <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onOpenBoard}><FolderKanban aria-hidden="true" />{t("project.action.open")}</button>
-            {project.status === "done" || project.status === "archived" ? <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onReopen}><RotateCcw aria-hidden="true" />{t("project.action.reopen")}</button> : <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onComplete}><CheckCircle2 aria-hidden="true" />{t("project.action.complete")}</button>}
+            {project.status === "done" || project.status === "archived" ? <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onReopen}><RotateCcw aria-hidden="true" />{t("project.action.reopen")}</button> : <button type="button" className="secondary-button action-with-icon" data-complete-project disabled={dirty} onClick={onComplete}><CheckCircle2 aria-hidden="true" />{t("project.action.complete")}</button>}
             {project.status !== "archived" && <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onArchive}><Archive aria-hidden="true" />{t("project.action.archive")}</button>}
             <DangerConfirmButton
               className="action-with-icon danger"

@@ -8,6 +8,97 @@ function currentLanguage(): UiLanguage {
 }
 
 /**
+ * Shared confirmation sheet. Delete uses the danger tone; completing a
+ * project uses primary so the dialog matches the rest of the app instead
+ * of a native window.confirm.
+ */
+export function ActionConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel,
+  cancelLabel,
+  tone = "danger",
+  busy = false,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  tone?: "danger" | "primary";
+  busy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
+  const danger = tone === "danger";
+
+  useEffect(() => {
+    if (!open) return;
+    cancelRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!busy) onCancel();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, busy, onCancel]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <div
+      className={`modal-backdrop ${danger ? "delete-confirm-backdrop" : "action-confirm-backdrop"}`}
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <section
+        className={`modal ${danger ? "delete-confirm-dialog" : "action-confirm-dialog"}`}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <h2 id={titleId}>{title}</h2>
+        <p id={descriptionId}>{message}</p>
+        <div className="modal-actions">
+          <button
+            ref={cancelRef}
+            type="button"
+            className="secondary-button"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            className={danger ? "danger delete-confirm-accept" : "primary action-confirm-accept"}
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+/**
  * Permanent delete asks in a dialog so a first click never looks like it
  * already worked. The compact trash control stays in the list; confirmation
  * happens in a modal that names the action and mentions Ctrl+Z undo.
@@ -31,26 +122,9 @@ export function DangerConfirmButton({
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const titleId = useId();
-  const descriptionId = useId();
   const language = currentLanguage();
   const message = translate(language, "confirm.deleteMessage");
   const cancelLabel = translate(language, "app.cancel");
-
-  useEffect(() => {
-    if (!open) return;
-    cancelRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        setOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [open]);
 
   const hasLabel = Boolean(children);
   return (
@@ -72,49 +146,19 @@ export function DangerConfirmButton({
         <Trash2 aria-hidden="true" />
         {children}
       </button>
-      {open && createPortal(
-        <div
-          className="modal-backdrop delete-confirm-backdrop"
-          onMouseDown={(event) => {
-            event.stopPropagation();
-            if (event.target === event.currentTarget) setOpen(false);
-          }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <section
-            className="modal delete-confirm-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
-            aria-describedby={descriptionId}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <h2 id={titleId}>{armLabel}</h2>
-            <p id={descriptionId}>{message}</p>
-            <div className="modal-actions">
-              <button
-                ref={cancelRef}
-                type="button"
-                className="secondary-button"
-                onClick={() => setOpen(false)}
-              >
-                {cancelLabel}
-              </button>
-              <button
-                type="button"
-                className="danger delete-confirm-accept"
-                onClick={() => {
-                  setOpen(false);
-                  onConfirm();
-                }}
-              >
-                {confirmLabel}
-              </button>
-            </div>
-          </section>
-        </div>,
-        document.body,
-      )}
+      <ActionConfirmDialog
+        open={open}
+        title={armLabel}
+        message={message}
+        confirmLabel={confirmLabel}
+        cancelLabel={cancelLabel}
+        tone="danger"
+        onCancel={() => setOpen(false)}
+        onConfirm={() => {
+          setOpen(false);
+          onConfirm();
+        }}
+      />
     </>
   );
 }

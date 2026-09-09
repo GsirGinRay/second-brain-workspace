@@ -142,7 +142,7 @@ import { formatMinutesAsTime, minutesFromOffset, snapMinutes, timeFromSlotDrop }
 import { DaySchedule } from "./day-schedule-view";
 import { ProjectDetailDialog, TaskDetailDialog, type DetailTab } from "./entity-detail-dialog";
 import { ProjectPicker } from "./project-picker";
-import { DangerConfirmButton } from "./danger-confirm";
+import { ActionConfirmDialog, DangerConfirmButton } from "./danger-confirm";
 import { TaskCompleteButton } from "./task-complete-button";
 import { hasDraftContent, loadDraftWorkspace, saveDraftWorkspace } from "./draft-workspace";
 import {
@@ -301,6 +301,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [onboardingOpen, setOnboardingOpen] = useState(() => localStorage.getItem("second-brain.onboardingCompleted") !== "true");
   const [closeGuardOpen, setCloseGuardOpen] = useState(false);
   const [selectedBoardProjectId, setSelectedBoardProjectId] = useState<string | null>(null);
+  const [pendingCompleteProjectId, setPendingCompleteProjectId] = useState<string | null>(null);
+  const [revealCompletedToken, setRevealCompletedToken] = useState(0);
   const [detailTargets, setDetailTargets] = useState<DetailTarget[]>([]);
   const [activeDetailKey, setActiveDetailKey] = useState<string | null>(null);
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
@@ -362,6 +364,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const activeDetail = detailTargets.find((target) => target.key === activeDetailKey) ?? null;
   const selectedTask = activeDetail?.kind === "task" ? tasks.find((task) => task.id === activeDetail.id) ?? null : null;
   const selectedProjectDetail = activeDetail?.kind === "project" ? projects.find((project) => project.id === activeDetail.id) ?? null : null;
+  const pendingCompleteProject = pendingCompleteProjectId
+    ? projects.find((project) => project.id === pendingCompleteProjectId) ?? null
+    : null;
+  const pendingCompleteOpenCount = pendingCompleteProject
+    ? tasks.filter((task) => task.projectId === pendingCompleteProject.id && task.status !== "done").length
+    : 0;
   const detailTabs: DetailTab[] = detailTargets.flatMap((target) => {
     const title = target.kind === "task"
       ? tasks.find((task) => task.id === target.id)?.title
@@ -1123,6 +1131,29 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     return ok;
   }
 
+  function requestCompleteProject(projectId: string) {
+    setPendingCompleteProjectId(projectId);
+  }
+
+  async function finishCompleteProject(project: BrainProjectSnapshot): Promise<void> {
+    const completed = completeProject(project, tasks, taipeiDateKey());
+    const ok = await persistLocal(
+      completed.tasks,
+      projects.map((item) => item.id === project.id ? completed.project : item),
+    );
+    if (!ok) return;
+    setPendingCompleteProjectId(null);
+    if (project.id) closeDetail(`project:${project.id}`);
+    if (view === "board" && selectedBoardProjectId === project.id) {
+      setSelectedBoardProjectId(null);
+      setView("projects");
+      setRevealCompletedToken((token) => token + 1);
+    } else if (view === "projects") {
+      setRevealCompletedToken((token) => token + 1);
+    }
+    setStatus(t("project.complete.done", { name: project.name }));
+  }
+
   // Plain functions (not memoised): applyPersistLocal closes over the latest vault
   // scan/files each render, so restoring must always call the current instance.
   function restoreWorkspace(snapshot: WorkspaceSnapshot, message: string): void {
@@ -1594,16 +1625,19 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onProjectFilterChange={setSelectedBoardProjectId}
         onBackToProjects={() => setView("projects")}
         onQuickAdd={() => setQuickAddOpen(true)}
+        onCompleteProject={selectedBoardProjectId ? () => requestCompleteProject(selectedBoardProjectId) : undefined}
       />
     ) : view === "projects" ? (
       <Projects
         projects={projects}
         tasks={tasks}
+        revealCompletedToken={revealCompletedToken}
         onOpenProject={(id) => openDetail("project", id)}
         onOpenBoard={(projectId) => {
           setSelectedBoardProjectId(projectId);
           setView("board");
         }}
+        onCompleteProject={requestCompleteProject}
         onCreate={() => { setKnowledgeSeed(null); setCreateEntity("project"); }}
       />
     ) : view === "collections" ? (
@@ -1890,10 +1924,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             setView("board");
           }}
           onComplete={() => {
-            const openCount = tasks.filter((task) => task.projectId === selectedProjectDetail.id && task.status !== "done").length;
-            if (!window.confirm(`完成「${selectedProjectDetail.name}」？\n\n將同時完成 ${openCount} 項未完成任務，並保留完整歷史。`)) return;
-            const completed = completeProject(selectedProjectDetail, tasks, taipeiDateKey());
-            void persistLocal(completed.tasks, projects.map((project) => project.id === selectedProjectDetail.id ? completed.project : project));
+            if (selectedProjectDetail.id) requestCompleteProject(selectedProjectDetail.id);
           }}
           onReopen={() => void persistLocal(tasks, projects.map((project) => project.id === selectedProjectDetail.id ? { ...project, status: "active", completedAt: null, focusToday: false } : project))}
           onArchive={() => void persistLocal(tasks, projects.map((project) => project.id === selectedProjectDetail.id ? { ...project, status: "archived", focusToday: false } : project))}
@@ -1907,6 +1938,21 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           }}
         />
       )}
+      <ActionConfirmDialog
+        open={Boolean(pendingCompleteProject)}
+        title={t("project.complete.title")}
+        message={pendingCompleteProject
+          ? (pendingCompleteOpenCount > 0
+            ? t("project.complete.message", { name: pendingCompleteProject.name, count: pendingCompleteOpenCount })
+            : t("project.complete.messageNone", { name: pendingCompleteProject.name }))
+          : ""}
+        confirmLabel={t("project.complete.confirm")}
+        cancelLabel={t("app.cancel")}
+        tone="primary"
+        busy={working}
+        onCancel={() => setPendingCompleteProjectId(null)}
+        onConfirm={() => { if (pendingCompleteProject) void finishCompleteProject(pendingCompleteProject); }}
+      />
       {createEntity && (
         <CreateEntityModal
           kind={createEntity}
@@ -3103,6 +3149,7 @@ export function Board({
   onProjectFilterChange,
   onBackToProjects,
   onQuickAdd,
+  onCompleteProject,
 }: {
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
@@ -3115,6 +3162,7 @@ export function Board({
   onProjectFilterChange: (projectId: string | null) => void;
   onBackToProjects: () => void;
   onQuickAdd: () => void;
+  onCompleteProject?: () => void;
 }) {
   const { t, preferences } = useUiPreferences();
   const [drag, setDrag] = useState<string | null>(null);
@@ -3258,6 +3306,11 @@ export function Board({
             <button type="button" className={viewMode === "list" ? "active" : ""} data-board-view-option="list" aria-label={t("board.view.list")} title={t("board.view.list")} onClick={() => setBoardView("list")}><List aria-hidden="true" /></button>
           </div>
           {selectedProject && <button className="secondary-button" onClick={onBackToProjects}>{t("board.back")}</button>}
+          {selectedProject && selectedProject.status !== "done" && selectedProject.status !== "archived" && onCompleteProject && (
+            <button type="button" className="secondary-button action-with-icon" data-complete-project onClick={onCompleteProject} aria-label={t("project.action.complete")} title={t("project.action.complete")}>
+              <CheckCircle2 aria-hidden="true" />{t("project.action.complete")}
+            </button>
+          )}
           {selectedProject && (
             <button type="button" className="primary action-with-icon" onClick={onQuickAdd} aria-label={t("project.tasks.create")} title={t("project.tasks.create")}>
               <Plus aria-hidden="true" />{t("project.tasks.create")}
@@ -4821,18 +4874,25 @@ function ProjectEditor({
 function Projects({
   projects,
   tasks,
+  revealCompletedToken = 0,
   onOpenProject,
   onOpenBoard,
+  onCompleteProject,
   onCreate,
 }: {
   projects: BrainProjectSnapshot[];
   tasks: BrainTaskSnapshot[];
+  revealCompletedToken?: number;
   onOpenProject: (projectId: string) => void;
   onOpenBoard: (projectId: string) => void;
+  onCompleteProject: (projectId: string) => void;
   onCreate: () => void;
 }) {
   const { t } = useUiPreferences();
   const [tab, setTab] = useState<"current" | "completed" | "archived">("current");
+  useEffect(() => {
+    if (revealCompletedToken > 0) setTab("completed");
+  }, [revealCompletedToken]);
   const [mode, setMode] = useState<"list" | "status">(() => localStorage.getItem("second-brain.projectView") === "status" ? "status" : "list");
   const [statusFilter, setStatusFilter] = useState(() => localStorage.getItem("second-brain.projectStatusFilter") ?? "all");
   const [priorityFilter, setPriorityFilter] = useState(() => localStorage.getItem("second-brain.projectPriorityFilter") ?? "all");
@@ -4867,7 +4927,12 @@ function Projects({
       <div className="project-summary-status"><span>{t(`project.status.${project.status}`)}</span><span>{project.priority ? `${project.priority} · ${project.priority === 1 ? t("project.importance.high") : project.priority === 2 ? t("project.importance.medium") : t("project.importance.low")}` : t("project.importance.unset")}</span></div>
       <div className="progress"><i style={{ width: `${project.progress ?? 0}%` }} /></div>
       <div className="project-meta"><span>{project.progress ?? 0}%</span><span>{t("task.count.open", { count: openTasks })}</span><span>{t("task.count.doing", { count: doingTasks })}</span><span>{project.startDate || project.endDate ? `${project.startDate ?? t("project.date.undecided")} → ${project.endDate ?? t("project.date.undecided")}` : t("project.period.none")}</span></div>
-      <button type="button" className="secondary-button action-with-icon project-board-button" onClick={(event) => { event.stopPropagation(); if (project.id) onOpenBoard(project.id); }}><FolderKanban aria-hidden="true" />{t("project.action.open")}</button>
+      <div className="project-summary-actions">
+        <button type="button" className="secondary-button action-with-icon project-board-button" onClick={(event) => { event.stopPropagation(); if (project.id) onOpenBoard(project.id); }}><FolderKanban aria-hidden="true" />{t("project.action.open")}</button>
+        {project.status !== "done" && project.status !== "archived" && (
+          <button type="button" className="secondary-button action-with-icon" data-complete-project onClick={(event) => { event.stopPropagation(); if (project.id) onCompleteProject(project.id); }}><CheckCircle2 aria-hidden="true" />{t("project.action.complete")}</button>
+        )}
+      </div>
     </article>;
   };
   return (

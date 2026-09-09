@@ -372,3 +372,41 @@ test("project detail lists related knowledge and opens the selected note", () =>
     container.remove();
   }
 });
+
+test("project detail adopts an externally completed project instead of keeping a stale draft", () => {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  const props = {
+    openTasks: 1,
+    doingTasks: 0,
+    existingAreas: [] as string[],
+    projectTasks: [] as BrainTaskSnapshot[],
+    locale: "zh-TW" as const,
+    t: (key: string) => key,
+    onClose: () => undefined,
+    onSave: () => true,
+    onOpenBoard: () => undefined,
+    onComplete: () => undefined,
+    onReopen: () => undefined,
+    onArchive: () => undefined,
+    onDelete: () => undefined,
+    onAddProjectTask: () => undefined,
+    onToggleProjectTask: () => undefined,
+    onOpenProjectTask: () => undefined,
+    onDeleteProjectTask: () => undefined,
+  };
+  try {
+    flushSync(() => root.render(<ProjectDetailDialog project={projectDetail()} {...props} />));
+    const status = container.querySelector<HTMLSelectElement>("select");
+    assert.equal(status?.value, "active");
+    assert.ok(container.querySelector("[data-complete-project]"), "complete stays reachable without scrolling past the canvas");
+    flushSync(() => root.render(<ProjectDetailDialog project={projectDetail({ status: "done", progress: 100, completedAt: "2026-08-22" })} {...props} />));
+    assert.equal(container.querySelector<HTMLSelectElement>("select")?.value, "done", "external completion replaces the stale active draft");
+    assert.equal(container.querySelector("[data-complete-project]"), null);
+    assert.ok([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("project.action.reopen")));
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});

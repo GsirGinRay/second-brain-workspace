@@ -39,6 +39,10 @@ test("translations preserve stable data values while localizing visible labels",
   assert.equal(translate("en", "task.status.waiting"), "Waiting");
   assert.equal(translate("en", "task.status.waitingHelp"), "Waiting for a reply, material, approval, date, or another external condition");
   assert.equal(translate("en", "project.action.delete"), "Delete permanently");
+  assert.equal(translate("zh-TW", "project.complete.confirm"), "確定完成");
+  assert.equal(translate("en", "project.complete.confirm"), "Complete project");
+  assert.match(translate("zh-TW", "project.complete.message", { name: "示範", count: 2 }), /示範/);
+  assert.match(translate("zh-TW", "project.complete.message", { name: "示範", count: 2 }), /2 項/);
   assert.equal(translate("en", "missing.key"), "missing.key");
 });
 

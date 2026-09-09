@@ -79,7 +79,11 @@ interface Rendered {
 
 function renderBoard(
   tasks: BrainTaskSnapshot[],
-  options: { showCompleted?: boolean } = {},
+  options: {
+    showCompleted?: boolean;
+    selectedProjectId?: string | null;
+    onCompleteProject?: () => void;
+  } = {},
 ): Rendered {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -96,10 +100,11 @@ function renderBoard(
         onSave={(next) => { saved.push(next.map((item) => ({ ...item }))); }}
         onDelete={() => undefined}
         onOpenTask={(taskId) => opened.push(taskId)}
-        selectedProjectId={null}
+        selectedProjectId={options.selectedProjectId ?? null}
         onProjectFilterChange={() => undefined}
         onBackToProjects={() => undefined}
         onQuickAdd={() => undefined}
+        onCompleteProject={options.onCompleteProject}
       />,
     );
   });
@@ -171,6 +176,33 @@ test("table view edits status in place and opens the task from the title", () =>
     assert.ok(title);
     flushSync(() => clickEvent(title!));
     assert.deepEqual(rendered.opened, ["task-1"]);
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("a filtered project board offers a complete-project control without opening detail", () => {
+  window.localStorage.clear();
+  let completed = 0;
+  const rendered = renderBoard([task("a", "寫規格", { projectId: "proj-1", projectName: "示範專案" })], {
+    selectedProjectId: "proj-1",
+    onCompleteProject: () => { completed += 1; },
+  });
+  try {
+    const complete = rendered.container.querySelector<HTMLButtonElement>("[data-complete-project]");
+    assert.ok(complete, "complete project is available on the board toolbar");
+    flushSync(() => clickEvent(complete!));
+    assert.equal(completed, 1);
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("the unfiltered board does not show complete project", () => {
+  window.localStorage.clear();
+  const rendered = renderBoard([task("a", "寫規格")]);
+  try {
+    assert.equal(rendered.container.querySelector("[data-complete-project]"), null);
   } finally {
     rendered.container.remove();
   }

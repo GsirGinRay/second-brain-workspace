@@ -570,6 +570,22 @@ test("calendar and board delete hover keeps the trash contrasting", () => {
   assert.match(styles, /\.task-action-button\.danger:hover,\.task-action-button\.danger:focus-visible\{[^}]*color:#fff/);
 });
 
+test("completing a project uses an in-app dialog instead of window.confirm and is available on the board", () => {
+  const source = app();
+  const styles = css();
+  const detailSource = detail();
+  assert.doesNotMatch(source, /window\.confirm\(`完成/);
+  assert.match(source, /ActionConfirmDialog/);
+  assert.match(source, /pendingCompleteProjectId/);
+  assert.match(source, /data-complete-project/);
+  assert.match(source, /finishCompleteProject/);
+  assert.match(source, /setRevealCompletedToken/);
+  assert.match(detailSource, /data-complete-project/);
+  assert.match(styles, /\.action-confirm-dialog/);
+  assert.match(styles, /\.action-confirm-backdrop/);
+  assert.match(styles, /\.detail-dialog-actions\.split-actions\{[^}]*position:sticky/);
+});
+
 test("board offers Notion-style board, table and list presentations of the same tasks", () => {
   const source = app();
   const styles = css();
