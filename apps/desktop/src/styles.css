@@ -245,8 +245,8 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 /* Keep daily routine management visible as a first-class Command Center action. */
 .routine-template-card{display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:14px;border:1px solid #bbbdb9;border-left:4px solid #171817;border-radius:16px;background:#fff;padding:14px 16px;box-shadow:0 5px 18px #0000000a}.routine-template-card>div:nth-child(2){display:grid;gap:4px}.routine-template-card strong{font-size:18px}.routine-template-card small{color:var(--muted)}.routine-template-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:#171817;color:#fff}.routine-template-icon svg{width:21px}.routine-template-action{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;border:1px solid #171817;border-radius:10px;background:#fff;padding:9px 14px;font-weight:800}.routine-template-action:hover,.routine-template-action:focus-visible{background:#171817;color:#fff;outline:none}.routine-template-action svg{width:18px}
 
-[data-theme="dark"] :is(.topbar,.quick-add-button,.add-task-panel,.overview-card,.command-summary>article,.template-settings-button,.routine-items article,.secondary,.timeline-section,.today-panel,.inline-task-card,.clear-check,.inline-fields input,.inline-fields select,.task-card,.check,.priority-badge,.edit-button,.important-button,.archive-button,.secondary-button,.browse-button,.task-editor input,.input-action input,.quick-add-modal input,.quick-add-modal select,.form-row input,.form-row select,.agenda input,.board-toolbar select,.board-card,.board-actions select,.board-actions button,.project-editor-grid input,.project-editor-grid select,.calendar-card,.agenda,.project-card,.settings-card,.calendar-toolbar button,.idea-count-button,.idea-expand-button,.idea-drawer article,.idea-context-menu,.idea-context-menu button,.task-action-button,.board-date-input,.search-button,.search-input-row input,.search-toolbar select,.segmented-control button,.search-results>button,.collection-list>button,.collection-preview,.entity-modal input,.entity-modal select,.modal,.conflict-row button,.routine-template-card,.routine-template-action,.mobile-nav,.day-schedule-tray,.day-schedule-main,.timed-block,.schedule-tray-card,.all-day-chip,.day-schedule-composer,.week-plan-button,.project-picker-field,.project-picker-trigger,.project-picker-chip,.project-picker-menu,.detail-task-composer input,.detail-task-list li,.detail-knowledge-list li,.lane-composer input,.lane-add-button,kbd) { background:var(--paper);color:var(--ink);border-color:var(--line); }
-[data-theme="dark"] :is(.board-column,.project-status-board>section,.idea-drawer,.routine-editor,.task-editor,.search-toolbar,.capture-guidance span,.pair-code,.completed-task,.all-day-row,.hour-slot) { background:#202327!important; }
+[data-theme="dark"] :is(.topbar,.quick-add-button,.add-task-panel,.overview-card,.command-summary>article,.template-settings-button,.routine-items article,.secondary,.timeline-section,.today-panel,.inline-task-card,.clear-check,.inline-fields input,.inline-fields select,.task-card,.check,.priority-badge,.edit-button,.important-button,.archive-button,.secondary-button,.browse-button,.task-editor input,.input-action input,.quick-add-modal input,.quick-add-modal select,.form-row input,.form-row select,.agenda input,.board-toolbar select,.board-card,.board-actions select,.board-actions button,.project-editor-grid input,.project-editor-grid select,.calendar-card,.agenda,.project-card,.settings-card,.calendar-toolbar button,.idea-count-button,.idea-expand-button,.idea-drawer article,.idea-context-menu,.idea-context-menu button,.task-action-button,.board-date-input,.search-button,.search-input-row input,.search-toolbar select,.segmented-control button,.search-results>button,.collection-list>button,.collection-preview,.entity-modal input,.entity-modal select,.modal,.conflict-row button,.routine-template-card,.routine-template-action,.mobile-nav,.day-schedule-tray,.day-schedule-main,.timed-block,.schedule-tray-card,.all-day-chip,.day-schedule-composer,.week-plan-button,.project-picker-field,.project-picker-trigger,.project-picker-chip,.project-picker-menu,.detail-task-composer input,.detail-task-list li,.detail-knowledge-list li,.lane-composer input,.lane-add-button,.board-table-wrap,.board-table select,.board-list-row,.board-table-title,.board-table-add,kbd) { background:var(--paper);color:var(--ink);border-color:var(--line); }
+[data-theme="dark"] :is(.board-column,.project-status-board>section,.idea-drawer,.routine-editor,.task-editor,.search-toolbar,.capture-guidance span,.pair-code,.completed-task,.all-day-row,.hour-slot,.board-list-group,.board-table th) { background:#202327!important; }
 /* The action row grows every time a control is added - undo/redo pushed it past the
    viewport - so it folds to its own line, and at the 320px minimum window the seven
    fixed icons shrink rather than letting the first one slide off the left edge. */
@@ -284,6 +284,8 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .calendar-stage { overflow-y:auto;overflow-x:hidden; }
 @media (max-width: 760px) {
   .board { grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+  .board-list-row { grid-template-columns:22px 20px auto minmax(0,1fr); }
+  .board-list-row small,.board-list-row .board-date-field { grid-column:4; }
   .calendar-card { max-height:calc(100vh - 240px); }
   .workspace { padding-bottom:78px; }
   .mobile-nav button { flex-direction:column;gap:2px;padding:6px 1px;line-height:1.2;white-space:normal; }
@@ -309,6 +311,8 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 [data-density="compact"] .task-card { padding: 10px 12px; }
 [data-density="compact"] .board-card { padding: 10px; }
 [data-density="compact"] .board-column { padding: 8px; }
+[data-density="compact"] .board-table th,[data-density="compact"] .board-table td { padding: 5px 8px; }
+[data-density="compact"] .board-list-row { padding: 6px 8px; }
 [data-density="compact"] .calendar-day { min-height: 96px; padding: 5px 6px; }
 [data-density="compact"] .task-list { gap: 6px; margin-top: 10px; }
 [data-density="compact"] .project-card, [data-density="compact"] .collection-preview { padding: 12px; }
@@ -650,10 +654,10 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .detail-knowledge-list small{background:#eee;padding:3px 8px;border-radius:20px;color:#555;font-weight:800}
 
 /* Board lane header "+" and its inline composer. */
-.board-column>header>.lane-add-button{order:0;margin-left:auto;display:grid;place-items:center;width:26px;height:26px;padding:0;border:1px solid #b9bbbd;border-radius:8px;background:#fff;color:var(--ink);cursor:pointer}
-.board-column>header>.lane-add-button svg{width:14px;height:14px}
-.board-column>header>.lane-add-button:hover,.board-column>header>.lane-add-button:focus-visible{background:var(--ink);color:#fff;border-color:var(--ink);outline:none}
-.board-column>header>.lane-add-button+small{margin-left:0}
+.board-column>header>.lane-add-button,.board-list-group>header>.lane-add-button{order:0;margin-left:auto;display:grid;place-items:center;width:26px;height:26px;padding:0;border:1px solid #b9bbbd;border-radius:8px;background:#fff;color:var(--ink);cursor:pointer}
+.board-column>header>.lane-add-button svg,.board-list-group>header>.lane-add-button svg{width:14px;height:14px}
+.board-column>header>.lane-add-button:hover,.board-column>header>.lane-add-button:focus-visible,.board-list-group>header>.lane-add-button:hover,.board-list-group>header>.lane-add-button:focus-visible{background:var(--ink);color:#fff;border-color:var(--ink);outline:none}
+.board-column>header>.lane-add-button+small,.board-list-group>header>.lane-add-button+small{margin-left:0}
 .lane-composer{margin:-4px 0 9px}
 .lane-composer input{width:100%;border:1px solid var(--ink);border-radius:9px;background:#fff;color:var(--ink);padding:8px 10px;font-size:12px;outline:none;box-shadow:0 0 0 3px #35363822}
 
@@ -667,6 +671,35 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .board-card .task-title-row .clear-check,.board-card .task-title-row .task-complete{flex:0 0 20px;width:20px;height:20px;font-size:12px}
 .board-date-field { margin-top:6px; }
 .board-date-field .task-date-text { border-color:transparent;background:transparent;padding:3px 4px; }
+
+/* Notion-style board / table / list presentations of the same tasks. */
+.board-table-wrap{overflow:auto;border:1px solid var(--line);border-radius:14px;background:#fff;max-height:78vh}
+.board-table{width:100%;border-collapse:separate;border-spacing:0;min-width:720px}
+.board-table th,.board-table td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:middle}
+.board-table th{position:sticky;top:0;z-index:1;background:#f4f4f1;font-size:11px;color:var(--muted);font-weight:750;white-space:nowrap}
+.board-table th button{border:0;background:transparent;color:inherit;font:inherit;font-weight:750;padding:0;cursor:pointer}
+.board-table tbody tr{cursor:pointer}
+.board-table tbody tr:hover td{background:#f7f7f5}
+.board-table-title{border:0;background:transparent;padding:0;font:inherit;font-weight:750;color:var(--ink);text-align:left;cursor:pointer}
+.board-table-title:hover{text-decoration:underline}
+.board-table select{border:1px solid #d0d1d1;border-radius:7px;background:#fff;padding:5px 7px;max-width:160px}
+.board-table .board-date-field{margin:0}
+.board-table-add{width:100%;border:0;background:transparent;color:var(--muted);text-align:left;padding:8px 2px;cursor:pointer}
+.board-table-add:hover{color:var(--ink)}
+.board-table-composer-row td{padding:6px 10px}
+.board-table tr.most-important td{background:var(--red-soft)}
+.board-list{display:grid;gap:16px}
+.board-list-group{border:1px solid var(--line);border-radius:14px;background:#efefed;padding:10px}
+.board-list-group>header{display:flex;align-items:flex-start;gap:8px;padding:6px 4px 10px}
+.board-list-group>header div{display:grid;gap:2px}
+.board-list-group>header em{font-size:9px;color:var(--muted);font-style:normal}
+.board-list-group>header small{margin-left:auto;background:#fff;padding:3px 7px;border-radius:20px}
+.board-list-group.drag-active{outline:2px dashed #aaa;outline-offset:-5px}
+.board-list-row{display:grid;grid-template-columns:22px 20px auto minmax(0,1fr) minmax(72px,16%) minmax(120px,18%);align-items:center;gap:8px;background:#fff;border:1px solid #d6d7d7;border-left:4px solid var(--project-accent,#555);border-radius:10px;padding:8px 10px;margin-bottom:6px;cursor:pointer}
+.board-list-row.most-important{border-color:var(--accent-red);background:var(--red-soft)}
+.board-list-row .board-inline-title{font-weight:750}
+.board-list-row small{color:var(--project-text,var(--muted));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.board-list-row .board-date-field{margin:0}
 
 /* Quick-add modal inline project field. */
 .quick-project-field{display:grid;gap:5px;margin-top:13px;font-size:11px;font-weight:700;color:#555}
@@ -802,7 +835,9 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 [data-theme="dark"] .icon-action.active,
 [data-theme="dark"] .top-icon-action.active,
 [data-theme="dark"] .add-task-panel > span { background:#e9eaec;color:#16181a; }
-[data-theme="dark"] .board-column > header small { background:#2b2f34;color:var(--ink); }
+[data-theme="dark"] .board-column > header small,
+[data-theme="dark"] .board-list-group > header small { background:#2b2f34;color:var(--ink); }
+[data-theme="dark"] .board-table tbody tr:hover td { background:#292c30; }
 [data-theme="dark"] .completed-visibility-toggle input { accent-color:#c4554a; }
 
 /* The calendar toolbar was a rigid 1fr / auto / 1fr grid, so the date range and the view

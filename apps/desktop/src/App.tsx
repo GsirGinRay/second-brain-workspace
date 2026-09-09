@@ -25,6 +25,7 @@ import {
   Settings2,
   Star,
   Sun,
+  Table2,
   Trash2,
   Undo2,
   Redo2,
@@ -131,6 +132,7 @@ import {
   normalizeUiPreferences,
   translate,
   UI_PREFERENCES_KEY,
+  type UiLanguage,
   type UiPreferences,
 } from "./ui-preferences";
 import appLogo from "./assets/app-logo.png";
@@ -3061,7 +3063,35 @@ function newTask(
   };
 }
 
-function Board({
+type BoardViewMode = "board" | "table" | "list";
+type BoardSortKey = "rank" | "title" | "status" | "project" | "date" | "priority";
+const BOARD_VIEW_KEY = "second-brain.boardView";
+const BOARD_LANE_ORDER: Record<BoardLane, number> = { idea: 0, todo: 1, doing: 2, waiting: 3, done: 4 };
+const BOARD_PRIORITY_ORDER: Record<BrainTaskSnapshot["priority"], number> = {
+  highest: 0,
+  high: 1,
+  medium: 2,
+  normal: 3,
+  low: 4,
+};
+function readBoardViewMode(): BoardViewMode {
+  try {
+    const saved = localStorage.getItem(BOARD_VIEW_KEY);
+    return saved === "table" || saved === "list" ? saved : "board";
+  } catch {
+    return "board";
+  }
+}
+function compareBoardTasks(left: BrainTaskSnapshot, right: BrainTaskSnapshot, key: BoardSortKey, language: UiLanguage): number {
+  const byRank = left.rank.localeCompare(right.rank);
+  if (key === "title") return taskLabel(left).localeCompare(taskLabel(right), language) || byRank;
+  if (key === "status") return (BOARD_LANE_ORDER[boardLane(left)] - BOARD_LANE_ORDER[boardLane(right)]) || byRank;
+  if (key === "project") return (left.projectName ?? "").localeCompare(right.projectName ?? "", language) || byRank;
+  if (key === "date") return (left.taskDate ?? "9999-12-31").localeCompare(right.taskDate ?? "9999-12-31") || byRank;
+  if (key === "priority") return (BOARD_PRIORITY_ORDER[left.priority] - BOARD_PRIORITY_ORDER[right.priority]) || byRank;
+  return byRank;
+}
+export function Board({
   tasks,
   projects,
   showCompleted,
@@ -3090,8 +3120,16 @@ function Board({
   const [drag, setDrag] = useState<string | null>(null);
   const boardDrag = useRef<{ id: string; ids: string[]; x: number; y: number; moved: boolean } | null>(null);
   const [composingLane, setComposingLane] = useState<BoardLane | null>(null);
+  const [viewMode, setViewMode] = useState<BoardViewMode>(() => readBoardViewMode());
+  const [sortKey, setSortKey] = useState<BoardSortKey>("rank");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const today = taipeiDateKey();
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const setBoardView = (mode: BoardViewMode) => {
+    setViewMode(mode);
+    setComposingLane(null);
+    localStorage.setItem(BOARD_VIEW_KEY, mode);
+  };
   const lanes: Array<{ id: BoardLane; label: string; hint: string }> = [
     { id: "idea", label: t("task.status.idea"), hint: t("task.status.ideaHelp") },
     { id: "todo", label: t("task.status.todo"), hint: t("task.status.todoHelp") },
@@ -3159,14 +3197,66 @@ function Board({
       ),
     );
   };
+  const visibleLanes = lanes.filter((lane) => lane.id !== "done" || showCompleted);
+  const tableTasks = [...filtered]
+    .filter((task) => showCompleted || boardLane(task) !== "done")
+    .sort((left, right) => {
+      const compared = compareBoardTasks(left, right, sortKey, preferences.language);
+      return sortDir === "asc" ? compared : -compared;
+    });
+  const toggleSort = (key: BoardSortKey) => {
+    if (sortKey === key) setSortDir((current) => current === "asc" ? "desc" : "asc");
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+  const sortMark = (key: BoardSortKey) => sortKey === key ? (sortDir === "asc" ? " \u2191" : " \u2193") : "";
+  const viewDescription = selectedProject
+    ? t("board.filteredDescription")
+    : viewMode === "table"
+      ? t("board.table.description")
+      : viewMode === "list"
+        ? t("board.list.description")
+        : t("board.description");
+  const laneComposer = (lane: BoardLane) => (
+    <form
+      className="lane-composer"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const input = event.currentTarget.querySelector("input");
+        createInLane(lane, input?.value ?? "");
+        if (input) input.value = "";
+        setComposingLane(null);
+      }}
+    >
+      <input
+        autoFocus
+        aria-label={t("board.lane.placeholder")}
+        placeholder={t("board.lane.placeholder")}
+        onBlur={(event) => {
+          createInLane(lane, event.target.value);
+          setComposingLane(null);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setComposingLane(null);
+        }}
+      />
+    </form>
+  );
   return (
-    <section data-global-marquee-scope="board">
+    <section data-global-marquee-scope="board" data-board-view={viewMode}>
       <div className="board-toolbar">
         <div>
           <h2>{selectedProject ? t("board.filteredTitle", { name: selectedProject.name }) : t("board.title")}</h2>
-          <p>{selectedProject ? t("board.filteredDescription") : t("board.description")}</p>
+          <p>{viewDescription}</p>
         </div>
         <div>
+          <div className="segmented-control icon-segmented-control" aria-label={t("board.view")}>
+            <button type="button" className={viewMode === "board" ? "active" : ""} data-board-view-option="board" aria-label={t("board.view.board")} title={t("board.view.board")} onClick={() => setBoardView("board")}><Columns3 aria-hidden="true" /></button>
+            <button type="button" className={viewMode === "table" ? "active" : ""} data-board-view-option="table" aria-label={t("board.view.table")} title={t("board.view.table")} onClick={() => setBoardView("table")}><Table2 aria-hidden="true" /></button>
+            <button type="button" className={viewMode === "list" ? "active" : ""} data-board-view-option="list" aria-label={t("board.view.list")} title={t("board.view.list")} onClick={() => setBoardView("list")}><List aria-hidden="true" /></button>
+          </div>
           {selectedProject && <button className="secondary-button" onClick={onBackToProjects}>{t("board.back")}</button>}
           {selectedProject && (
             <button type="button" className="primary action-with-icon" onClick={onQuickAdd} aria-label={t("project.tasks.create")} title={t("project.tasks.create")}>
@@ -3188,9 +3278,201 @@ function Board({
           <CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} />
         </div>
       </div>
+      {viewMode === "table" ? (
+        <div className="board-table-wrap">
+          <table className="board-table">
+            <thead>
+              <tr>
+                <th aria-hidden="true" />
+                <th aria-sort={sortKey === "title" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+                  <button type="button" onClick={() => toggleSort("title")}>{t("task.field.title")}{sortMark("title")}</button>
+                </th>
+                <th aria-sort={sortKey === "status" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+                  <button type="button" onClick={() => toggleSort("status")}>{t("task.field.status")}{sortMark("status")}</button>
+                </th>
+                <th aria-sort={sortKey === "project" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+                  <button type="button" onClick={() => toggleSort("project")}>{t("task.field.project")}{sortMark("project")}</button>
+                </th>
+                <th aria-sort={sortKey === "date" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+                  <button type="button" onClick={() => toggleSort("date")}>{t("task.field.date")}{sortMark("date")}</button>
+                </th>
+                <th aria-sort={sortKey === "priority" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+                  <button type="button" onClick={() => toggleSort("priority")}>{t("task.field.priority")}{sortMark("priority")}</button>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableTasks.map((task) => (
+                <tr
+                  key={task.id ?? task.title}
+                  data-global-select-id={task.id ?? undefined}
+                  className={`${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
+                  style={taskProjectStyle(task)}
+                  onClick={(event) => {
+                    if (!(event.target as HTMLElement).closest("button,input,select,textarea,a") && task.id) onOpenTask(task.id);
+                  }}
+                >
+                  <td>
+                    <TaskCompleteButton
+                      done={task.status === "done"}
+                      label={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                      onClick={() => moveToLane(task.id, task.status === "done" ? "todo" : "done")}
+                    />
+                  </td>
+                  <td>
+                    <button type="button" className="board-table-title" onClick={() => task.id && onOpenTask(task.id)}>{taskLabel(task)}</button>
+                  </td>
+                  <td>
+                    <select
+                      aria-label={`${task.title} ${t("task.field.status")}`}
+                      value={boardLane(task)}
+                      onChange={(event) => moveToLane(task.id, event.target.value as BoardLane)}
+                    >
+                      {lanes.map((lane) => <option key={lane.id} value={lane.id}>{lane.label}</option>)}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      aria-label={`${task.title} ${t("task.field.project")}`}
+                      value={task.projectId ?? ""}
+                      onChange={(event) => {
+                        const project = projects.find((item) => item.id === event.target.value);
+                        void onSave(tasks.map((item) => item.id === task.id ? { ...item, projectId: project?.id ?? null, projectName: project?.name ?? null } : item));
+                      }}
+                    >
+                      <option value="">{t("app.unassigned")}</option>
+                      {projects.filter((project) => project.id).sort((a, b) => a.name.localeCompare(b.name)).map((project) => (
+                        <option key={project.id!} value={project.id!}>{project.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <TaskDateInput
+                      className="board-date-input"
+                      ariaLabel={`${t("task.field.date")} ${task.title}`}
+                      value={task.taskDate ?? null}
+                      onCommit={(next) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, taskDate: next } : item))}
+                    />
+                  </td>
+                  <td>
+                    <PriorityControl
+                      priority={task.priority}
+                      compact
+                      locale={preferences.language}
+                      onChange={(priority) => task.id && void onSave(applyTaskPriority(tasks, task.id, priority, task.taskDate ?? today))}
+                    />
+                  </td>
+                </tr>
+              ))}
+              <tr className="board-table-composer-row">
+                <td colSpan={6}>
+                  {composingLane === "todo" ? laneComposer("todo") : (
+                    <button type="button" className="board-table-add" onClick={() => setComposingLane("todo")}>{t("board.lane.placeholder")}</button>
+                  )}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ) : viewMode === "list" ? (
+        <div className="board-list">
+          {visibleLanes.map((lane) => {
+            const laneTasks = filtered
+              .filter((task) => boardLane(task) === lane.id)
+              .sort((a, b) => a.rank.localeCompare(b.rank));
+            return (
+              <section
+                className={`board-list-group lane-${lane.id} ${drag ? "drag-active" : ""}`}
+                key={lane.id}
+                data-board-lane={lane.id}
+              >
+                <header>
+                  <span className={`dot ${lane.id}`} />
+                  <div>
+                    <strong>{lane.label}</strong>
+                    <em>{lane.hint}</em>
+                  </div>
+                  {lane.id !== "done" && (
+                    <button
+                      type="button"
+                      className="lane-add-button"
+                      aria-label={`${t("board.lane.add")} \u00b7 ${lane.label}`}
+                      title={t("board.lane.add")}
+                      onClick={() => setComposingLane((current) => current === lane.id ? null : lane.id)}
+                    >
+                      <Plus aria-hidden="true" />
+                    </button>
+                  )}
+                  <small>{laneTasks.length}</small>
+                </header>
+                {composingLane === lane.id && laneComposer(lane.id)}
+                {laneTasks.length === 0 && (
+                  <div className="lane-empty">{t("board.dropHere")}</div>
+                )}
+                {laneTasks.map((task) => (
+                  <article
+                    key={task.id ?? task.title}
+                    className={`board-list-row ${task.priority === "highest" ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`}
+                    style={taskProjectStyle(task)}
+                    data-global-select-id={task.id ?? undefined}
+                    tabIndex={0}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0 || !task.id || !(event.target as HTMLElement).closest("[data-drag-handle]")) return;
+                      boardDrag.current = { id: task.id, ids: getGlobalSelectedIds(task.id), x: event.clientX, y: event.clientY, moved: false };
+                      setDrag(task.id);
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    }}
+                    onPointerMove={(event) => {
+                      if (!boardDrag.current) return;
+                      if (Math.abs(event.clientX - boardDrag.current.x) > 4 || Math.abs(event.clientY - boardDrag.current.y) > 4) {
+                        boardDrag.current = { ...boardDrag.current, moved: true };
+                      }
+                    }}
+                    onPointerUp={(event) => finishBoardPointer(event, task.id)}
+                    onPointerCancel={() => { boardDrag.current = null; setDrag(null); }}
+                    onClick={(event) => {
+                      if (!(event.target as HTMLElement).closest("button,input,select,textarea,a") && task.id) onOpenTask(task.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if ((event.key === "Enter" || event.key === " ") && !event.altKey && task.id) {
+                        event.preventDefault();
+                        onOpenTask(task.id);
+                      }
+                    }}
+                  >
+                    <button type="button" className="board-drag-handle" data-drag-handle aria-label={`${t("board.view.list")} ${task.title}`} onClick={(event) => event.stopPropagation()}>
+                      <GripVertical aria-hidden="true" />
+                    </button>
+                    <TaskCompleteButton
+                      done={task.status === "done"}
+                      label={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                      onClick={() => moveToLane(task.id, task.status === "done" ? "todo" : "done")}
+                    />
+                    <PriorityControl
+                      priority={task.priority}
+                      compact
+                      locale={preferences.language}
+                      onChange={(priority) => task.id && void onSave(applyTaskPriority(tasks, task.id, priority, task.taskDate ?? today))}
+                    />
+                    <strong className="board-inline-title">{taskLabel(task)}</strong>
+                    <small>{task.projectName ?? t("app.unassigned")}</small>
+                    <div className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
+                      <TaskDateInput
+                        className="board-date-input"
+                        ariaLabel={`${t("task.field.date")} ${task.title}`}
+                        value={task.taskDate ?? null}
+                        onCommit={(next) => void onSave(tasks.map((item) => item.id === task.id ? { ...item, taskDate: next } : item))}
+                      />
+                    </div>
+                  </article>
+                ))}
+              </section>
+            );
+          })}
+        </div>
+      ) : (
       <div className="board five-lanes">
-        {lanes
-          .filter((lane) => lane.id !== "done" || showCompleted)
+        {visibleLanes
           .map((lane) => {
             const laneTasks = filtered
               .filter((task) => boardLane(task) === lane.id)
@@ -3361,6 +3643,7 @@ function Board({
             );
           })}
       </div>
+      )}
     </section>
   );
 }

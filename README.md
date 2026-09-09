@@ -8,7 +8,7 @@ Markdown files. Use it with Obsidian, VS Code, Typora, Notepad++, or any editor.
 ## What the public app does
 
 - Windows desktop application
-- Today, month/week calendar, task board, project list/status views, and local collections
+- Today, month/week calendar, task board (board/table/list views), project list/status views, and local collections
 - Traditional Chinese and English UI with persistent light and dark themes
 - Cross-field search with `+` for OR, `&` (or spaces) for AND, and quoted phrases
 - Full Markdown editing and safe preview for tasks, projects, and collections

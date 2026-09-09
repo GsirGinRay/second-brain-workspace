@@ -570,6 +570,19 @@ test("calendar and board delete hover keeps the trash contrasting", () => {
   assert.match(styles, /\.task-action-button\.danger:hover,\.task-action-button\.danger:focus-visible\{[^}]*color:#fff/);
 });
 
+test("board offers Notion-style board, table and list presentations of the same tasks", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /second-brain\.boardView/);
+  assert.match(source, /t\("board\.view\.table"\)/);
+  assert.match(source, /t\("board\.view\.list"\)/);
+  assert.match(source, /data-board-view-option="table"/);
+  assert.match(source, /className="board-table"/);
+  assert.match(source, /className="board-list"/);
+  assert.match(styles, /\.board-table-wrap/);
+  assert.match(styles, /\.board-list-row/);
+});
+
 test("board lanes offer an inline add button bound to the active project filter", () => {
   const source = app();
   const styles = css();

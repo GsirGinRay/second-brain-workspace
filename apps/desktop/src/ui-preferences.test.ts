@@ -49,6 +49,17 @@ test("Traditional Chinese project view labels do not mix in English View", () =>
   assert.doesNotMatch(translate("zh-TW", "project.view.board"), /View/i);
 });
 
+test("Traditional Chinese board view labels do not mix in English View", () => {
+  assert.equal(translate("zh-TW", "board.view"), "檢視樣式");
+  assert.equal(translate("zh-TW", "board.view.board"), "看板");
+  assert.equal(translate("zh-TW", "board.view.table"), "表格");
+  assert.equal(translate("zh-TW", "board.view.list"), "清單");
+  assert.equal(translate("en", "board.view.table"), "Table");
+  assert.doesNotMatch(translate("zh-TW", "board.view.board"), /View/i);
+  assert.doesNotMatch(translate("zh-TW", "board.view.table"), /View/i);
+  assert.doesNotMatch(translate("zh-TW", "board.view.list"), /View/i);
+});
+
 test("detail surface accepts the panel and rejects unknown persisted values", () => {
   assert.equal(normalizeUiPreferences({ language: "en", theme: "dark", detailSurface: "panel" }).detailSurface, "panel");
   assert.equal(normalizeUiPreferences({ language: "en", theme: "dark", detailSurface: "drawer" }).detailSurface, "dialog");
