@@ -2353,6 +2353,7 @@ function TaskActionBar({
   onEdit,
   onDelete,
   showEdit = true,
+  showComplete = true,
 }: {
   task: BrainTaskSnapshot;
   important: boolean;
@@ -2361,6 +2362,7 @@ function TaskActionBar({
   onEdit?: () => void;
   onDelete: (task: BrainTaskSnapshot) => void;
   showEdit?: boolean;
+  showComplete?: boolean;
 }) {
   const { t } = useUiPreferences();
   const done = task.status === "done";
@@ -2369,12 +2371,14 @@ function TaskActionBar({
       <button className={`task-action-button ${important ? "active" : ""}`} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={onImportant}>
         <Star aria-hidden="true" fill={important ? "currentColor" : "none"} />
       </button>
-      <TaskCompleteButton
-        size="lg"
-        done={done}
-        label={done ? t("task.action.reopen") : t("task.action.complete")}
-        onClick={onComplete}
-      />
+      {showComplete && (
+        <TaskCompleteButton
+          size="lg"
+          done={done}
+          label={done ? t("task.action.reopen") : t("task.action.complete")}
+          onClick={onComplete}
+        />
+      )}
       {showEdit && <button className="task-action-button" aria-label={t("task.action.edit")} title={t("task.action.edit")} onClick={onEdit}>
         <Pencil aria-hidden="true" />
       </button>}
@@ -4281,6 +4285,11 @@ export function Calendar({
                 </button>
                 <div>
                   <div className="task-title-row">
+                    <TaskCompleteButton
+                      done={task.status === "done"}
+                      label={task.status === "done" ? t("task.action.reopen") : t("task.action.complete")}
+                      onClick={() => complete(task.id)}
+                    />
                     <PriorityControl
                       priority={task.priority}
                       compact
@@ -4329,6 +4338,7 @@ export function Calendar({
                     onComplete={() => complete(task.id)}
                     onEdit={() => task.id && openTask(task.id)}
                     onDelete={remove}
+                    showComplete={false}
                   />
                 </div>
               </article>

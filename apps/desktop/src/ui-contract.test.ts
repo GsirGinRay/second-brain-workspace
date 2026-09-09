@@ -158,7 +158,10 @@ test("task actions are compact accessible icons and permanent delete is never ar
   assert.match(source, /onDelete=\{onDelete\}/);
   assert.doesNotMatch(source, /永久刪除[\s\S]{0,180}archive\(/);
   assert.match(styles, /\.task-action-button[^}]*min-width:\s*40px/);
-  assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(4/);
+  assert.match(styles, /\.agenda-actions[^}]*grid-template-columns:\s*repeat\(3/);
+  assert.match(styles, /\.agenda-actions button:not\(\.task-complete\)/);
+  assert.match(source, /<TaskCompleteButton[\s\S]{0,350}onClick=\{\(\) => complete\(task\.id\)\}[\s\S]{0,450}className="agenda-task-title"/);
+  assert.match(source, /showComplete=\{false\}/);
   assert.match(source, /onOpenTask=\{\(id\) => openDetail\("task", id\)\}/);
   assert.match(source, /className="week-task-actions"/);
   assert.match(source, /className="calendar-quick-check"/);

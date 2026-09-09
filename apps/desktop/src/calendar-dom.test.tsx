@@ -111,6 +111,26 @@ function pointerDragTo(source: Element, target: HTMLElement) {
   }
 }
 
+test("agenda complete is the same square checkbox as other surfaces, on the title row", () => {
+  const t = task("task-1", "買牛奶", today);
+  const rendered = renderCalendar([t]);
+  try {
+    const cell = dayCell(rendered.container, today);
+    assert.ok(cell, `day cell ${today} exists`);
+    flushSync(() => {
+      clickEvent(cell!, "click");
+    });
+    const agenda = rendered.container.querySelector(".agenda");
+    assert.ok(agenda, "day plan sidebar is open");
+    const titleCheck = agenda!.querySelector<HTMLButtonElement>(".task-title-row .task-complete");
+    assert.ok(titleCheck, "complete sits on the title row like board and week");
+    assert.equal(titleCheck!.classList.contains("task-complete-md"), true, "agenda uses the shared medium square checkbox");
+    assert.equal(agenda!.querySelector(".agenda-actions .task-complete"), null, "complete is not restyled as an action-bar button");
+  } finally {
+    rendered.container.remove();
+  }
+});
+
 test("agenda shows the selected day's tasks with a date input bound to the task date", () => {
   const t = task("task-1", "買牛奶", today);
   const rendered = renderCalendar([t]);
