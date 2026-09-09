@@ -797,6 +797,37 @@ test("the click ending a native text drag does not replace the range with one ed
   } finally { act(() => document.getSelection()?.removeAllRanges()); rendered.container.remove(); }
 });
 
+test("selecting text inside a code preview keeps the fenced style so the range does not need re-selecting", () => {
+  const rendered = renderEditor("```\nconst x = 1;\nconst y = 2;\n```");
+  try {
+    assert.ok(rendered.container.querySelector(".code-block"), "code starts in the fenced preview");
+    const code = rendered.container.querySelector("code")!;
+    const text = code.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, "const x = 1;".length);
+    act(() => {
+      document.getSelection()!.removeAllRanges();
+      document.getSelection()!.addRange(range);
+      document.dispatchEvent(new window.Event("selectionchange") as unknown as Event);
+    });
+    const preview = rendered.container.querySelector(".markdown-block-preview")!;
+    act(() => preview.dispatchEvent(new window.MouseEvent("click", { bubbles: true, detail: 1 }) as unknown as Event));
+    assert.ok(!rendered.container.querySelector("textarea"), "copying must not swap in the editing field");
+    assert.ok(rendered.container.querySelector(".code-block"), "the fenced preview stays put");
+    assert.equal(document.getSelection()?.toString(), "const x = 1;");
+  } finally { act(() => document.getSelection()?.removeAllRanges()); rendered.container.remove(); }
+});
+
+test("a plain click on a code preview still opens the editing field", () => {
+  const rendered = renderEditor("```\nconst x = 1;\n```");
+  try {
+    assert.ok(rendered.container.querySelector(".code-block"));
+    const textarea = openTextarea(rendered.container, 0);
+    assert.equal(textarea.value, "const x = 1;");
+  } finally { rendered.container.remove(); }
+});
+
 test("clicking outside the conversion menu dismisses it without changing content", () => {
   const rendered = renderEditor("first\n\nsecond");
   const click = (element: Element) => act(() => element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
@@ -1161,6 +1192,36 @@ test("block background colors persist in an ignored Markdown comment", () => {
   } finally {
     rendered.container.remove();
   }
+});
+
+test("turn-into and slash menus show a checkbox and list marks instead of label initials", () => {
+  const click = (element: Element) => act(() => element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+  const menu = renderEditor("hello");
+  try {
+    click(menu.container.querySelector("[data-markdown-drag-handle]")!);
+    click(Array.from(menu.container.querySelectorAll(".markdown-block-menu button"))
+      .find((button) => button.querySelector("strong")?.textContent === "轉換成")!);
+    const todo = Array.from(menu.container.querySelectorAll(".markdown-block-menu button"))
+      .find((button) => button.querySelector("strong")?.textContent === "待辦清單")!;
+    const bullet = Array.from(menu.container.querySelectorAll(".markdown-block-menu button"))
+      .find((button) => button.querySelector("strong")?.textContent === "項目符號清單")!;
+    const number = Array.from(menu.container.querySelectorAll(".markdown-block-menu button"))
+      .find((button) => button.querySelector("strong")?.textContent === "編號清單")!;
+    assert.ok(todo.querySelector(".markdown-type-checkbox"), "todo uses a checkbox mark");
+    assert.equal(bullet.querySelector(".markdown-block-type-icon")?.textContent, "•");
+    assert.equal(number.querySelector(".markdown-block-type-icon")?.textContent, "1.");
+    assert.equal(todo.querySelector(".markdown-block-type-icon")?.textContent?.trim(), "");
+  } finally { menu.container.remove(); }
+  const slash = renderEditor("/");
+  try {
+    openTextarea(slash.container, 0);
+    const todo = Array.from(slash.container.querySelectorAll(".markdown-slash-menu button"))
+      .find((button) => button.textContent?.includes("待辦清單"))!;
+    const bullet = Array.from(slash.container.querySelectorAll(".markdown-slash-menu button"))
+      .find((button) => button.textContent?.includes("項目符號清單"))!;
+    assert.ok(todo.querySelector(".markdown-type-checkbox"), "slash todo uses a checkbox mark");
+    assert.match(bullet.querySelector(".markdown-command-swatch")?.textContent ?? "", /•/);
+  } finally { slash.container.remove(); }
 });
 
 test("the six-dot menu exposes nested Notion-style block actions", () => {

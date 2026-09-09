@@ -549,6 +549,32 @@ function withVisibleBlockText(source: string, text: string): string {
   return withBlockStyle(next, style);
 }
 
+/** Visual marks for turn-into / slash menus: a checkbox, bullets and numbers
+ *  instead of the first letter of the label (e.g. 待 / 項). */
+function blockTypeGlyph(value: string): React.ReactNode {
+  if (value === "todo") return <span className="markdown-type-checkbox" />;
+  if (value === "bullet") return "•";
+  if (value === "number") return "1.";
+  if (value === "quote") return "\u201c";
+  if (value === "code") return <Code2 aria-hidden="true" />;
+  if (value === "divider") return "—";
+  if (value === "text") return "Aa";
+  if (/^h[1-6]$/.test(value)) return value.toUpperCase();
+  return "A";
+}
+
+function nativeSelectionIsRange(editor: HTMLElement | null): boolean {
+  const selection = editor?.ownerDocument.getSelection();
+  return Boolean(
+    editor
+    && selection
+    && !selection.isCollapsed
+    && selection.rangeCount > 0
+    && editor.contains(selection.anchorNode)
+    && editor.contains(selection.focusNode),
+  );
+}
+
 function hasTaskIdentity(source: string): boolean {
   const match = parseStyledBlock(source).content.match(TASK_LINE);
   if (!match) return false;
@@ -718,9 +744,10 @@ export function MarkdownBlockEditor({
   };
   const beginPointerEdit = (event: React.MouseEvent, block: MarkdownBlock) => {
     if (editingId === block.id || event.detail === 0) return;
+    if (nativeSelectionIsRange(editorRef.current)) return;
     const target = event.target as HTMLElement;
     const surface = target.closest<HTMLElement>(".markdown-task-block button,.markdown-block-static,.markdown-block-preview");
-    if (!surface || target.closest("a,input,.markdown-code-copy")) return;
+    if (!surface || target.closest("a,input,.code-copy")) return;
     const caretDocument = document as Document & {
       caretRangeFromPoint?: (x: number, y: number) => Range | null;
       caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
@@ -1450,8 +1477,11 @@ export function MarkdownBlockEditor({
       onPointerUp={endMarqueeSelection}
       onPointerCancel={cancelMarqueeSelection}
       onClickCapture={(event) => {
+        const onContent = Boolean((event.target as HTMLElement).closest(".markdown-block-content"));
+        // A drag-select (even inside one code block) must not enter edit mode:
+        // that swaps the preview for a textarea and drops the copied range.
         if (performance.now() < suppressCanvasClickUntilRef.current
-          || ((event.target as HTMLElement).closest(".markdown-block-content") && selectedTextBlockIds(editorRef.current).length > 1)) {
+          || (onContent && (nativeSelectionIsRange(editorRef.current) || selectedTextBlockIds(editorRef.current).length > 1))) {
           event.preventDefault();
           event.stopPropagation();
         }
@@ -1729,7 +1759,9 @@ export function MarkdownBlockEditor({
                     role="button"
                     tabIndex={0}
                     onClick={(event) => {
-                      if (!(event.target as HTMLElement).closest("a,button,input")) setEditingId(block.id);
+                      if ((event.target as HTMLElement).closest("a,button,input")) return;
+                      if (nativeSelectionIsRange(editorRef.current)) return;
+                      setEditingId(block.id);
                     }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
@@ -1757,7 +1789,7 @@ export function MarkdownBlockEditor({
                         disabled={!canRunCommand(block, command)}
                         onClick={() => runSlashCommand(block, command, true)}
                       >
-                        <span className={`markdown-command-swatch command-${command.action.kind}-${command.action.value}`} aria-hidden="true">A</span>
+                        <span className={`markdown-command-swatch command-${command.action.kind}-${command.action.value}`} aria-hidden="true">{command.action.kind === "turn" ? blockTypeGlyph(command.action.value) : "A"}</span>
                         <span><strong>{command.label}</strong><small>{command.hint}</small></span>
                       </button>
                     ))}
@@ -1806,7 +1838,7 @@ export function MarkdownBlockEditor({
                         if (command.action.kind !== "turn") return null;
                         const active = command.action.value === currentTurnValue;
                         return <button type="button" role="menuitemradio" aria-checked={active} disabled={!canRunCommand(block, command)} title={!canRunCommand(block, command) ? (zh ? "追蹤中的任務需保留待辦格式" : "Tracked tasks must keep their checkbox") : undefined} className="markdown-block-menu-row" key={command.id} onClick={() => { runSlashCommand(block, command); setBlockMenuId(null); }}>
-                          {command.action.value === "code" ? <Code2 aria-hidden="true" /> : <span className="markdown-block-type-icon" aria-hidden="true">{command.action.value.startsWith("h") ? command.action.value.toUpperCase() : command.label.slice(0, 1)}</span>}
+                          <span className={`markdown-block-type-icon type-${command.action.value}`} aria-hidden="true">{blockTypeGlyph(command.action.value)}</span>
                           <span><strong>{command.label}</strong><small>{command.hint}</small></span>{active && <Check aria-hidden="true" />}
                         </button>;
                       })}
