@@ -342,7 +342,12 @@ export function TaskDetailDialog({
 }) {
   const [draft, setDraft] = useState({ ...task, title: visibleTaskTitle(task.title) });
   const [saving, setSaving] = useState(false);
-  useEffect(() => setDraft({ ...task, title: visibleTaskTitle(task.title) }), [task]);
+  useEffect(() => {
+    setDraft((current) => {
+      if (current.id === task.id) return current;
+      return { ...task, title: visibleTaskTitle(task.title) };
+    });
+  }, [task]);
   const dirty = visibleTaskTitle(draft.title) !== visibleTaskTitle(task.title)
     || (draft.body ?? "") !== (task.body ?? "")
     || draft.status !== task.status
@@ -609,7 +614,9 @@ export function ProjectDetailDialog({
 }) {
   const [draft, setDraft] = useState(project);
   const [saving, setSaving] = useState(false);
-  useEffect(() => setDraft(project), [project]);
+  useEffect(() => {
+    setDraft((current) => (current.id === project.id ? current : project));
+  }, [project]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(project);
   const save = async (): Promise<boolean> => {
     if (!draft.name.trim() || saving) return false;

@@ -100,6 +100,37 @@ test("heading preview keeps the H2 class so leaving edit does not look like body
   }
 });
 
+test("code fences stay in storage but disappear from the live field so copy is plain text", () => {
+  const rendered = renderEditor("```\nconst x = 1;\n```");
+  try {
+    const textarea = openTextarea(rendered.container, 0);
+    assert.equal(textarea.value, "const x = 1;");
+    assert.doesNotMatch(textarea.value, /```/);
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("turning a block into code does not put fences in the editable field", () => {
+  const rendered = renderEditor("hello world");
+  const click = (element: Element) => flushSync(() => element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+  try {
+    click(rendered.container.querySelector("[data-markdown-drag-handle]")!);
+    const turn = Array.from(rendered.container.querySelectorAll<HTMLButtonElement>(".markdown-block-menu button"))
+      .find((button) => button.textContent?.includes("轉換成"));
+    click(turn!);
+    const code = Array.from(rendered.container.querySelectorAll<HTMLButtonElement>(".markdown-block-menu button"))
+      .find((button) => button.textContent?.includes("程式碼"));
+    click(code!);
+    assert.equal(rendered.changes.at(-1), "```\nhello world\n```");
+    const textarea = openTextarea(rendered.container, 0);
+    assert.equal(textarea.value, "hello world");
+    assert.doesNotMatch(textarea.value, /```/);
+  } finally {
+    rendered.container.remove();
+  }
+});
+
 test("structural Markdown markers stay in storage but disappear from the live field", () => {
   const heading = renderEditor("# The idea");
   try {

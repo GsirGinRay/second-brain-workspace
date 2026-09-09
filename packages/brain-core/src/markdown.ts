@@ -1092,15 +1092,14 @@ function replaceIndentedTaskBody(
   const end = endIndexOfTaskBody(lines, taskLineIndex);
   const next = lines.slice(0, taskLineIndex + 1);
   if (body.trim()) {
+    // Keep blank lines: the block editor uses them as paragraph separators.
+    // Collapsing them used to reopen two notes as a single block.
     const normalized = body
       .replace(/\r?\n/g, newline)
-      .replace(/^\r?\n+|\r?\n+$/g, "")
-      .split(new RegExp(`(?:${newline}){2,}`))
-      .map((part) => part.replace(/[ \t]+$/gm, "").trimEnd())
-      .filter(Boolean)
-      .join(newline);
+      .replace(/^\r?\n+|\r?\n+$/g, "");
     for (const line of normalized.split(newline)) {
-      next.push(line.length ? TASK_BODY_INDENT + line : TASK_BODY_INDENT);
+      const trimmed = line.replace(/[ \t]+$/g, "");
+      next.push(trimmed.length ? TASK_BODY_INDENT + trimmed : TASK_BODY_INDENT);
     }
   }
   next.push(...lines.slice(end));
@@ -1149,6 +1148,50 @@ export function replaceMarkdownDocumentBody(source: string, body: string): strin
   const prefix = lines.slice(0, headingIndex + 1).join(newline);
   const normalizedBody = body.replace(/\r?\n/g, newline).replace(/^\r?\n+|\r?\n+$/g, "");
   return bom + prefix + newline + (normalizedBody ? newline + normalizedBody + newline : newline);
+}
+
+/** Body lines that are not a `#task` line or its indented notes. */
+export function extractNonTaskMarkdown(body: string): string {
+  const newline = body.includes("\r\n") ? "\r\n" : "\n";
+  const lines = body.split(/\r?\n/);
+  const notes: string[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    if (parseTaskLine(lines[index]!, "", index)) {
+      index = endIndexOfTaskBody(lines, index);
+      continue;
+    }
+    notes.push(lines[index]!);
+    index += 1;
+  }
+  while (notes.length > 0 && notes[0]!.trim() === "") notes.shift();
+  while (notes.length > 0 && notes[notes.length - 1]!.trim() === "") notes.pop();
+  return notes.join(newline);
+}
+
+/** `#task` lines plus their indented notes, in file order. */
+export function extractTaskBlocks(body: string): string {
+  const newline = body.includes("\r\n") ? "\r\n" : "\n";
+  const lines = body.split(/\r?\n/);
+  const blocks: string[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    if (!parseTaskLine(lines[index]!, "", index)) {
+      index += 1;
+      continue;
+    }
+    const end = endIndexOfTaskBody(lines, index);
+    blocks.push(lines.slice(index, end).join(newline));
+    index = end;
+  }
+  return blocks.join(newline + newline);
+}
+
+export function mergeNotesAndTaskBlocks(notes: string, taskBlocks: string, newline = "\n"): string {
+  const trimmedNotes = notes.replace(/^\r?\n+|\r?\n+$/g, "");
+  const trimmedTasks = taskBlocks.replace(/^\r?\n+|\r?\n+$/g, "");
+  if (trimmedNotes && trimmedTasks) return trimmedNotes + newline + newline + trimmedTasks;
+  return trimmedNotes || trimmedTasks;
 }
 
 export function replaceMarkdownDocumentTitle(source: string, title: string): string {

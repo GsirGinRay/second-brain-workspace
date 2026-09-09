@@ -331,7 +331,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .markdown-preview{min-height:220px;padding:16px;line-height:1.65;overflow:auto}
 .markdown-preview pre{padding:12px;border-radius:10px;overflow:auto;background:var(--soft)}
 .markdown-preview .code-block{margin:14px 0;border-radius:10px;overflow:hidden;background:var(--soft);border:1px solid var(--line);display:grid}
-.code-block-header{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:rgba(0,0,0,.04);border-bottom:1px solid var(--line)}
+.code-block-header{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:rgba(0,0,0,.04);border-bottom:1px solid var(--line);user-select:none}
 .code-block-lang{font-size:11px;font-weight:750;color:var(--muted);letter-spacing:.5px}
 .code-copy{display:inline-flex;align-items:center;gap:5px;margin:0;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--muted);padding:3px 8px;font-size:11px;font-weight:700;line-height:1;cursor:pointer}
 .code-copy svg{width:12px;height:12px}
@@ -468,7 +468,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
    rendered preview while editing — so the row never shifts vertically
    when the user clicks into it. */
 .markdown-structural-edit-row{display:flex;align-items:flex-start;gap:4px;min-height:24px}
-.markdown-structural-edit-row>span{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:18px;min-height:24px;color:var(--block-text);font-size:15px;line-height:1.55;font-weight:600;border-radius:4px;padding:0 4px}
+.markdown-structural-edit-row>span{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:18px;min-height:24px;color:var(--block-text);font-size:15px;line-height:1.55;font-weight:600;border-radius:4px;padding:0 4px;user-select:none}
 /* The textarea inset must mirror .markdown-block-static's `0 4px` exactly:
    preview text and edit text have to start at the same x so clicking a
    bullet/number row never nudges the text sideways. */

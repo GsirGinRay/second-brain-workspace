@@ -67,20 +67,16 @@ export function collectionMatchesCategoryFilter(
   return knowledgeCategoryFolder(trimmed) === filter;
 }
 
-/** Always list the six vault categories, then leftover legacy labels. */
+/** Categories the vault already uses. Do not invent FAQ/產業/… before the user does. */
 export function knowledgeFilterCategories(
   existing: readonly (string | null | undefined)[],
 ): string[] {
-  const extras = new Set<string>();
+  const seen = new Set<string>();
   for (const cat of existing) {
     const trimmed = (cat ?? "").trim();
-    if (!trimmed) continue;
-    if (knowledgeCategoryFolder(trimmed) === null) extras.add(trimmed);
+    if (trimmed) seen.add(trimmed);
   }
-  return [
-    ...KNOWLEDGE_CATEGORIES,
-    ...[...extras].sort((a, b) => a.localeCompare(b, "zh-Hant-TW")),
-  ];
+  return [...seen].sort((a, b) => a.localeCompare(b, "zh-Hant-TW"));
 }
 
 export const LEGACY_PROJECTS_DIR = "Projects";

@@ -1,6 +1,9 @@
 import {
   formatTaskLine,
   extractTaskMarkdownContent,
+  extractNonTaskMarkdown,
+  extractTaskBlocks,
+  mergeNotesAndTaskBlocks,
   parseProjectFrontmatter,
   parseCollectionFrontmatter,
   createCodeFenceTracker,
@@ -124,7 +127,7 @@ function removeLine(source: string, lineIndex: number): string {
 
 function makeChange(file: LocalMarkdownFile, replacement: string): MarkdownChange {
   return {
-    relativePath: file.relativePath,
+    relativePath: file.relativePath.replace(/\\/g, "/"),
     expectedSha256: file.sha256,
     replacementBase64: encodeBase64(encoder.encode(replacement)),
   };
@@ -559,6 +562,15 @@ export function applyDesiredSnapshot(
 ): MarkdownChange[] {
   const byPath = new Map(files.map((file) => [file.relativePath, file]));
   const currentSources = new Map(files.map((file) => [file.relativePath, decodeFile(file)]));
+  const resolvePath = (relativePath: string | null | undefined): string | undefined => {
+    if (!relativePath) return undefined;
+    if (byPath.has(relativePath)) return relativePath;
+    const wanted = pathKey(relativePath);
+    for (const path of byPath.keys()) {
+      if (pathKey(path) === wanted) return path;
+    }
+    return undefined;
+  };
   const locations = taskLocations(files);
   const changed = new Set<string>();
   const desiredTaskIds = new Set(desired.tasks.flatMap((task) => task.id ? [task.id] : []));
@@ -567,9 +579,12 @@ export function applyDesiredSnapshot(
   // Their document-level rewrites below are built from the scanned snapshot, so
   // they must run BEFORE task line edits: running them afterwards would revert
   // freshly patched task lines and turn the whole batch into a no-op write.
+  // Notes (attachments, prose) are compared without task lines so saving a
+  // picture cannot wait on a byte-identical round-trip of every `#task` line.
   for (const project of desired.projects) {
-    if (!project.id || !project.sourcePath || !byPath.has(project.sourcePath)) continue;
-    const source = currentSources.get(project.sourcePath)!;
+    const relativePath = resolvePath(project.sourcePath);
+    if (!project.id || !relativePath) continue;
+    const source = currentSources.get(relativePath)!;
     let next = updateProjectFrontmatter(source, {
       id: project.id,
       status: project.status,
@@ -582,29 +597,40 @@ export function applyDesiredSnapshot(
       target_date: null,
       completed_at: project.completedAt ?? null,
     });
-    const parsed = parseProjectFrontmatter(source, project.sourcePath);
+    const parsed = parseProjectFrontmatter(source, relativePath);
     if (parsed?.name !== project.name) next = replaceMarkdownDocumentTitle(next, project.name);
-    if (project.body !== undefined && parsed?.body !== project.body) next = replaceMarkdownDocumentBody(next, project.body);
+    if (project.body !== undefined) {
+      const desiredNotes = extractNonTaskMarkdown(project.body);
+      const fileNotes = extractNonTaskMarkdown(parsed?.body ?? "");
+      if (desiredNotes !== fileNotes) {
+        const newline = next.includes("\r\n") ? "\r\n" : "\n";
+        next = replaceMarkdownDocumentBody(
+          next,
+          mergeNotesAndTaskBlocks(desiredNotes, extractTaskBlocks(parsed?.body ?? ""), newline),
+        );
+      }
+    }
     if (next !== source) {
-      currentSources.set(project.sourcePath, next);
-      changed.add(project.sourcePath);
+      currentSources.set(relativePath, next);
+      changed.add(relativePath);
     }
   }
 
   for (const collection of desired.collections ?? []) {
-    if (!collection.id || !collection.sourcePath || !byPath.has(collection.sourcePath)) continue;
-    const source = currentSources.get(collection.sourcePath)!;
+    const relativePath = resolvePath(collection.sourcePath);
+    if (!collection.id || !relativePath) continue;
+    const source = currentSources.get(relativePath)!;
     let next = updateProjectFrontmatter(source, {
       id: collection.id,
       category: collection.category,
       importance: collection.importance,
     });
-    const parsed = parseCollectionFrontmatter(source, collection.sourcePath);
+    const parsed = parseCollectionFrontmatter(source, relativePath);
     if (parsed?.name !== collection.name) next = replaceMarkdownDocumentTitle(next, collection.name);
     if (parsed?.body !== collection.body) next = replaceMarkdownDocumentBody(next, collection.body);
     if (next !== source) {
-      currentSources.set(collection.sourcePath, next);
-      changed.add(collection.sourcePath);
+      currentSources.set(relativePath, next);
+      changed.add(relativePath);
     }
   }
 

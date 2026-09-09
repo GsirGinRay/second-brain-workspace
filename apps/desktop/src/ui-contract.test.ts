@@ -280,16 +280,11 @@ test("desktop separates collections from outcome projects and supports promotion
   assert.match(source, /search\.placeholder/);
 });
 
-test("today view can open today's journal without adding a journal menu", () => {
+test("today view does not add a journal menu or today's journal button", () => {
   const source = app();
-  assert.match(source, /today\.journal/);
-  assert.match(source, /buildJournalCreateChange/);
-  assert.match(source, /resolveDailyJournal/);
-  assert.match(source, /onOpenJournal/);
-  assert.match(source, /function JournalDialog/);
-  assert.match(source, /isBlankDailyJournal/);
-  assert.match(source, /DAILY_JOURNAL_HEADINGS/);
-  assert.match(source, /<MarkdownBlockEditor value=\{value\}/);
+  assert.doesNotMatch(source, /onOpenJournal/);
+  assert.doesNotMatch(source, /function JournalDialog/);
+  assert.doesNotMatch(source, /today\.journal/);
   assert.doesNotMatch(source, /type View = [^;]*"journal"/);
   assert.doesNotMatch(source, /setView\("journal"\)/);
 });
@@ -313,13 +308,12 @@ test("settings can preview a layout migrator without a new sidebar view", () => 
   assert.doesNotMatch(source, /setView\("layout"\)/);
 });
 
-test("task and journal can save an outcome as knowledge without a new menu or auto-promoting done tasks", () => {
+test("task can save an outcome as knowledge without a new menu or auto-promoting done tasks", () => {
   const source = app();
   const detailSource = detail();
   assert.match(source, /openSaveAsKnowledge/);
-  assert.match(source, /journalUpgradeContent/);
   assert.match(source, /relatedKnowledgeForProject/);
-  assert.match(source, /knowledge\.action\.save/);
+  assert.match(detailSource, /knowledge\.action\.save/);
   assert.match(detailSource, /onSaveAsKnowledge/);
   assert.match(detailSource, /project\.relatedKnowledge/);
   assert.doesNotMatch(source, /type View = [^;]*"knowledge"/);

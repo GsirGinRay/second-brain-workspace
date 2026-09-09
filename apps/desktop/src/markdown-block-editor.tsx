@@ -463,28 +463,52 @@ function trailingSlash(content: string): { start: number; query: string } | null
 interface EditablePresentation {
   value: string;
   sourcePrefix: string;
+  sourceSuffix: string;
   marker: string;
 }
 
+function splitFencedCode(content: string): { inner: string; prefix: string; suffix: string } | null {
+  const normalized = content.replace(/\r\n/g, "\n");
+  const closed = normalized.match(/^(```|~~~)([^\n]*)\n([\s\S]*?)\n?(```|~~~)\s*$/);
+  if (closed) {
+    return {
+      inner: closed[3] ?? "",
+      prefix: `${closed[1]}${closed[2]}\n`,
+      suffix: `\n${closed[4]}`,
+    };
+  }
+  const open = normalized.match(/^(```|~~~)([^\n]*)$/);
+  if (!open) return null;
+  return {
+    inner: "",
+    prefix: `${open[1]}${open[2]}\n`,
+    suffix: `\n${open[1]}`,
+  };
+}
+
 function editablePresentation(content: string, derived: DerivedBlock): EditablePresentation {
-  if (content.includes("\n")) return { value: content, sourcePrefix: "", marker: "" };
+  if (derived.kind === "code") {
+    const fenced = splitFencedCode(content);
+    if (fenced) return { value: fenced.inner, sourcePrefix: fenced.prefix, sourceSuffix: fenced.suffix, marker: "" };
+  }
+  if (content.includes("\n")) return { value: content, sourcePrefix: "", sourceSuffix: "", marker: "" };
   if (derived.kind === "heading") {
     const match = content.match(/^(\s*#{1,6}\s+)(.*)$/);
-    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, marker: "" };
+    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, sourceSuffix: "", marker: "" };
   }
   if (derived.kind === "bullet") {
     const match = content.match(/^(\s*[-*+]\s+)(.*)$/);
-    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, marker: "•" };
+    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, sourceSuffix: "", marker: "•" };
   }
   if (derived.kind === "ordered") {
     const match = content.match(/^(\s*\d+[.)、]\s+)(.*)$/);
-    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, marker: match[1]!.trim() };
+    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, sourceSuffix: "", marker: match[1]!.trim() };
   }
   if (derived.kind === "quote") {
     const match = content.match(/^(\s*>\s*)(.*)$/);
-    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, marker: "" };
+    if (match) return { value: match[2] ?? "", sourcePrefix: match[1]!, sourceSuffix: "", marker: "" };
   }
-  return { value: content, sourcePrefix: "", marker: "" };
+  return { value: content, sourcePrefix: "", sourceSuffix: "", marker: "" };
 }
 
 export function MarkdownBlockEditor({
@@ -938,12 +962,13 @@ export function MarkdownBlockEditor({
   ): boolean => {
     const textarea = event.currentTarget;
     const source = parseStyledBlock(block.source).content;
+    const blockKind = deriveBlockKind(source).kind;
     // Chinese/Japanese IME confirmations arrive as Enter with isComposing set;
     // they must never be read as structural edits. (The IME gate in the
     // textarea's onKeyDown already routed composing/echo Enters away, so this
     // is only a safety net and never cancels the browser default.)
 
-    const slash = trailingSlash(source);
+    const slash = blockKind === "code" ? null : trailingSlash(source);
     const commandOptions = slash ? filteredCommands(slash.query) : [];
     const slashKey = slash ? `${block.id}:${source}` : null;
     if (slash && slashKey !== dismissedSlash && commandOptions.length > 0) {
@@ -964,6 +989,10 @@ export function MarkdownBlockEditor({
         return true;
       }
     }
+
+    // A closed code fence stays one block: Enter inserts a newline inside it.
+    // A lone ``` still uses the conversion below.
+    if (blockKind === "code" && event.key === "Enter" && !event.shiftKey && source.includes("\n")) return false;
 
     if (event.key === "Backspace" && textarea.selectionStart === 0 && textarea.selectionEnd === 0) {
       const previousIndex = blocks.findIndex((item) => item.id === block.id) - 1;
@@ -1374,7 +1403,7 @@ export function MarkdownBlockEditor({
             : kind;
           const currentBlockLabel = blockCommands.find((command) => command.action.kind === "turn" && command.action.value === currentTurnValue)?.label
             ?? (zh ? "文字" : "Text");
-          const slash = isEditing ? trailingSlash(styled.content) : null;
+          const slash = isEditing && kind !== "code" ? trailingSlash(styled.content) : null;
           const commandOptions = slash ? filteredCommands(slash.query) : [];
           const showSlashMenu = slash && dismissedSlash !== `${block.id}:${styled.content}` && commandOptions.length > 0;
           return (
@@ -1603,7 +1632,7 @@ export function MarkdownBlockEditor({
                       placeholder={zh ? "輸入文字，或輸入 / 使用指令" : "Type text, or press / for commands"}
                       onChange={(event) => {
                         setActiveCommand(0);
-                        updateTypedBlock(block, presentation.sourcePrefix + event.target.value);
+                        updateTypedBlock(block, presentation.sourcePrefix + event.target.value + presentation.sourceSuffix);
                       }}
                       onBlur={() => finishEditing(block.id)}
                       ref={bindTextareaRef(block.id)}

@@ -77,13 +77,12 @@ function startDay(rendered: Rendered) {
   });
 }
 
-test("today view exposes a button to open today's journal", () => {
+test("today view does not expose a journal button", () => {
   const rendered = renderToday([], createDefaultRoutineTemplate("t"));
   try {
     const button = [...rendered.container.querySelectorAll("button")]
       .find((el) => el.textContent?.includes("今天的日誌"));
-    assert.ok(button, "today's journal button is rendered");
-    assert.equal(button?.getAttribute("aria-label"), "今天的日誌");
+    assert.equal(button, undefined);
   } finally {
     rendered.container.remove();
   }

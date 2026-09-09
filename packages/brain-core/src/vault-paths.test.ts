@@ -171,6 +171,7 @@ test("knowledge category filter keeps unknown and uncategorized notes listable",
   assert.equal(collectionMatchesCategoryFilter("參考", "參考"), true);
   assert.deepEqual(
     knowledgeFilterCategories(["FAQ", "提示詞/寫作", "參考", null, ""]),
-    ["FAQ", "產業", "社群", "影片", "方法", "提示詞", "參考"],
+    ["FAQ", "參考", "提示詞/寫作"].sort((a, b) => a.localeCompare(b, "zh-Hant-TW")),
   );
+  assert.deepEqual(knowledgeFilterCategories([null, "", undefined]), []);
 });

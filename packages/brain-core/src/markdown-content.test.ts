@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  extractNonTaskMarkdown,
+  extractTaskBlocks,
   extractTaskMarkdownContent,
   parseProjectFrontmatter,
   patchTaskMarkdownContent,
@@ -27,8 +29,8 @@ test("task Markdown content round-trips as indented notes under the list item", 
   const source = `# Tasks\r\n${taskLine}\r\n`;
   const body = "## Notes\r\n\r\n- Preserve **Markdown**";
   const next = patchTaskMarkdownContent(source, taskId, body);
-  assert.equal(extractTaskMarkdownContent(next, taskId), "## Notes\r\n- Preserve **Markdown**");
-  assert.match(next, /\r\n  ## Notes\r\n  - Preserve \*\*Markdown\*\*\r\n/);
+  assert.equal(extractTaskMarkdownContent(next, taskId), "## Notes\r\n\r\n- Preserve **Markdown**");
+  assert.match(next, /\r\n  ## Notes\r\n  \r\n  - Preserve \*\*Markdown\*\*\r\n/);
   assert.doesNotMatch(next, /second-brain-task-content/);
   assert.equal(patchTaskMarkdownContent(next, taskId, ""), source);
 });
@@ -38,7 +40,7 @@ test("task Markdown content still reads a legacy HTML comment block", () => {
   assert.equal(extractTaskMarkdownContent(source, taskId), "## Notes\r\n\r\nlegacy");
   const next = patchTaskMarkdownContent(source, taskId, "## Notes\r\n\r\nlegacy");
   assert.doesNotMatch(next, /second-brain-task-content/);
-  assert.match(next, /  ## Notes\r\n  legacy\r\n/);
+  assert.match(next, /  ## Notes\r\n  \r\n  legacy\r\n/);
 });
 
 test("indented task notes keep nested #task examples inside the parent body", () => {
@@ -67,4 +69,29 @@ test("notes parked in a trailing HTML comment join the outline under the same ta
   assert.match(next, /#task Draft[\s\S]*keep this outline item[\s\S]*test123[\s\S]*#task Next/);
   assert.match(next, /keep this outline item\r\n  test123/);
   assert.doesNotMatch(next, /keep this outline item\r\n  \r\n  test123/);
+});
+
+test("two paragraph task notes keep the blank line so they reopen as two blocks", () => {
+  const source = `# Tasks\r\n${taskLine}\r\n`;
+  const body = "第一段\r\n\r\n第二段";
+  const next = patchTaskMarkdownContent(source, taskId, body);
+  assert.equal(extractTaskMarkdownContent(next, taskId), "第一段\r\n\r\n第二段");
+  assert.match(next, /\r\n  第一段\r\n  \r\n  第二段\r\n/);
+});
+
+test("project notes keep attachments without swallowing the task lines", () => {
+  const body = "封面\n\n![](附件/test0909/cover.png)\n\n- [ ] #task Stay <!-- publisher-task:{\"id\":\"11111111-1111-4111-8111-111111111111\"} -->\n  note";
+  assert.equal(extractNonTaskMarkdown(body), "封面\n\n![](附件/test0909/cover.png)");
+  assert.match(extractTaskBlocks(body), /#task Stay/);
+});
+
+test("task notes keep a vault attachment link", () => {
+  const source = `# Tasks\r\n${taskLine}\r\n`;
+  const body = "說明\r\n\r\n![](附件/test0909/shot.png)";
+  const next = patchTaskMarkdownContent(source, taskId, body);
+  assert.match(next, /  !\[\]\(附件\/test0909\/shot\.png\)/);
+  assert.equal(
+    extractTaskMarkdownContent(next, taskId),
+    "說明\r\n\r\n![](附件/test0909/shot.png)",
+  );
 });

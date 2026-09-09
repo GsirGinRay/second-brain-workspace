@@ -84,13 +84,6 @@ test("save as knowledge and related knowledge labels stay off the main menu", ()
   assert.doesNotMatch(translate("zh-TW", "view.projects"), /知識/);
 });
 
-test("today journal labels stay in the Today view, not a new menu item", () => {
-  assert.equal(translate("zh-TW", "today.journal"), "今天的日誌");
-  assert.equal(translate("en", "today.journal"), "Today's journal");
-  assert.equal(translate("zh-TW", "today.journal.hint"), "空白畫布，直接打字。小標只在空白時當提示，不會預先寫進檔案。");
-  assert.equal(translate("en", "today.journal.hint"), "A blank page. Type like Notion. Use the chips only if you want a heading.");
-  assert.doesNotMatch(translate("zh-TW", "view.today"), /日誌/);
-});
 
 test("layout migrator copy stays in settings and does not invent a menu item", () => {
   assert.equal(translate("zh-TW", "layout.title"), "整理成新架構");

@@ -421,6 +421,62 @@ test("changing status or schedule does not move a task to another file", () => {
   assert.doesNotMatch(projectText, /Stay in inbox/);
 });
 
+test("saving a task writes attachment notes and status onto the project file", () => {
+  const embedded = formatTaskLine({
+    id: taskId, title: "Stay in project", status: "todo", taskDate: null,
+    priority: "normal", projectId, projectName: "test0909", rank: "a",
+    sourcePath: "專案/test0909.md", sourceHeading: null, completedAt: null,
+  });
+  const files = [
+    file("專案/test0909.md", `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# test0909\r\n\r\n${embedded}\r\n`),
+  ];
+  const scanned = scanStructuredVault(files);
+  const desired = {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.map((item) => item.id === taskId
+      ? { ...item, status: "doing" as const, body: "![](附件/test0909/shot.png)" }
+      : item),
+    projects: scanned.snapshot.projects.map((item) => item.id === projectId
+      ? { ...item, body: `${embedded}\n\n![](附件/test0909/cover.png)` }
+      : item),
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  const projectChange = changes.find((change) => change.relativePath === "專案/test0909.md");
+  assert.ok(projectChange && projectChange.operation !== "delete");
+  const text = base64ToText(projectChange.replacementBase64);
+  assert.match(text, /!\[\]\(附件\/test0909\/cover\.png\)/);
+  assert.match(text, /  !\[\]\(附件\/test0909\/shot\.png\)/);
+  assert.match(text, /"status":"doing"/);
+});
+
+test("project notes attachments write even when sourcePath slashes differ from the file map", () => {
+  const embedded = formatTaskLine({
+    id: taskId, title: "Stay in project", status: "todo", taskDate: null,
+    priority: "normal", projectId, projectName: "test0909", rank: "a",
+    sourcePath: "專案/test0909.md", sourceHeading: null, completedAt: null,
+  });
+  const files = [
+    file("專案/test0909.md", `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# test0909\r\n\r\nintro\r\n\r\n${embedded}\r\n`),
+  ];
+  const scanned = scanStructuredVault(files);
+  const desired = {
+    ...scanned.snapshot,
+    projects: scanned.snapshot.projects.map((item) => item.id === projectId
+      ? { ...item, sourcePath: "專案\\test0909.md", body: "intro\n\n![](附件/test0909/cover.png)" }
+      : item),
+    tasks: scanned.snapshot.tasks.map((item) => item.id === taskId
+      ? { ...item, status: "doing" as const }
+      : item),
+  };
+  const changes = applyDesiredSnapshot(files, desired);
+  const projectChange = changes.find((change) => change.relativePath.replace(/\\/g, "/") === "專案/test0909.md");
+  assert.ok(projectChange && projectChange.operation !== "delete");
+  const text = base64ToText(projectChange.replacementBase64);
+  assert.match(text, /!\[\]\(附件\/test0909\/cover\.png\)/);
+  assert.match(text, /Stay in project/);
+  assert.match(text, /"status":"doing"/);
+});
+
 test("reassigning an inbox task moves the whole block onto the project file", () => {
   const line = `- [ ] #task Archive me custom ^block <!-- second-brain-task:{"id":"${taskId}","status":"todo","rank":"a"} -->`;
   const files = [
