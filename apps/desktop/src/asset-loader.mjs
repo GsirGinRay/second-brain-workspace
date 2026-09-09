@@ -27,7 +27,7 @@ export async function load(url, context, nextLoad) {
     return {
       format: "module",
       shortCircuit: true,
-      source: "export async function invoke() { throw new Error('TAURI_INVOKE_STUBBED'); }",
+      source: "export function isTauri() { return false; } export async function invoke() { throw new Error('TAURI_INVOKE_STUBBED'); }",
     };
   }
   return nextLoad(url, context);

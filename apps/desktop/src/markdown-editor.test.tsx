@@ -21,6 +21,14 @@ test("Markdown preview renders fenced code blocks with a copy control", () => {
   assert.match(html, /複製<\/button>/);
 });
 
+test("Markdown web links reject executable URLs while keeping their labels", () => {
+  for (const href of ["javascript:alert%281%29", "file:///C:/Windows/notepad.exe", "ms-settings:display", "https://user:password@example.com/"]) {
+    const html = renderToStaticMarkup(<MarkdownPreview value={`[Link](${href})`} />);
+    assert.match(html, /Link/);
+    assert.doesNotMatch(html, /<a\b/);
+  }
+});
+
 test("fenced code insertion and preview drop a leading blank line", () => {
   assert.deepEqual(fencedCodeInsertion("", "code"), {
     insertion: "```\ncode\n```",

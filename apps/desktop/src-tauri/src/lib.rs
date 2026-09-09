@@ -3,6 +3,7 @@ pub mod backup;
 pub mod canonical;
 pub mod diagnostics;
 pub mod error;
+mod external_url;
 pub mod key_store;
 pub mod path_policy;
 pub mod publisher;
@@ -813,6 +814,7 @@ pub fn run() -> tauri::Result<()> {
             sign_canonical_request,
             publisher_http_request,
             open_publisher_pairing,
+            external_url::open_external_url,
             pick_vault_folder,
             select_vault,
             scan_vault,

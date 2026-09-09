@@ -198,6 +198,70 @@ function renderEditor(value: string) {
   return { container, changes };
 }
 
+test("web links invoke the desktop browser command without entering edit mode", async () => {
+  const calls: unknown[] = [];
+  const nativeWindow = window as unknown as Record<string, unknown>;
+  globals.isTauri = true;
+  nativeWindow.__TAURI_INTERNALS__ = { invoke: async (command: string, args: unknown) => { calls.push({ command, args }); } };
+  const href = "https://example.com/page?q=hello%20world&n=2#section";
+  const rendered = renderEditor(`[**Open website**](${href})\n\n${href}`);
+  try {
+    const links = rendered.container.querySelectorAll("a");
+    assert.equal(links.length, 2, "Markdown links and bare URLs both render as links");
+    for (const link of links) {
+      const key = new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      act(() => { link.dispatchEvent(key as unknown as Event); });
+      assert.equal(key.defaultPrevented, false, "Enter keeps the anchor's native activation");
+      const click = new window.MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 });
+      await act(async () => { (link.querySelector("strong") ?? link).dispatchEvent(click as unknown as Event); });
+      assert.equal(click.defaultPrevented, true, "the desktop WebView must not navigate");
+    }
+    assert.deepEqual(calls, Array.from({ length: 2 }, () => ({ command: "open_external_url", args: { url: href } })));
+    assert.equal(rendered.container.querySelector("textarea"), null);
+    assert.deepEqual(rendered.changes, []);
+  } finally {
+    rendered.container.remove();
+    delete globals.isTauri;
+    delete nativeWindow.__TAURI_INTERNALS__;
+  }
+});
+
+test("web preview links retain normal new-tab navigation", () => {
+  const rendered = renderEditor("[Website](https://example.com/)");
+  try {
+    const link = rendered.container.querySelector("a")!;
+    const click = new window.MouseEvent("click", { bubbles: true, cancelable: true });
+    act(() => { link.dispatchEvent(click as unknown as Event); });
+    assert.equal(click.defaultPrevented, false);
+    assert.equal(link.target, "_blank");
+    assert.equal(link.rel, "noopener noreferrer");
+    assert.equal(rendered.container.querySelector("textarea"), null);
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("desktop browser failures show a message and allow retry", async () => {
+  const nativeWindow = window as unknown as Record<string, unknown>;
+  globals.isTauri = true;
+  let attempts = 0;
+  nativeWindow.__TAURI_INTERNALS__ = { invoke: async () => { if (++attempts === 1) throw new Error("unavailable"); } };
+  const rendered = renderEditor("[Website](https://example.com/)");
+  try {
+    const link = rendered.container.querySelector("a")!;
+    await act(async () => { link.click(); });
+    assert.match(rendered.container.querySelector('[role="alert"]')?.textContent ?? "", /無法開啟連結/);
+    await act(async () => { link.click(); });
+    assert.equal(attempts, 2);
+    assert.equal(rendered.container.querySelector('[role="alert"]'), null);
+    assert.equal(rendered.container.querySelector("textarea"), null);
+  } finally {
+    rendered.container.remove();
+    delete globals.isTauri;
+    delete nativeWindow.__TAURI_INTERNALS__;
+  }
+});
+
 test("the block editor offers attach only when a vault folder and API exist", () => {
   const without = renderEditor("note");
   try {

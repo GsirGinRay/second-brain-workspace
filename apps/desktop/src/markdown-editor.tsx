@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ExternalWebLink } from "./external-web-link";
 import {
   ATTACHMENT_ACCEPT,
   attachmentExtension,
@@ -111,13 +112,14 @@ function CodeBlock({ children, locale }: { children: ReactNode; locale: Markdown
   );
 }
 
-export function VaultAttachmentView({ href, alt, children, as = "link", width, onResize }: {
+export function VaultAttachmentView({ href, alt, children, as = "link", width, onResize, locale }: {
   href?: string;
   alt?: string;
   children?: ReactNode;
   as?: "image" | "link";
   width?: number;
   onResize?: (width: number) => void;
+  locale?: MarkdownEditorLocale;
 }) {
   const api = useVaultAttachments();
   const relative = href ? vaultAttachmentRelativePath(href) : null;
@@ -145,7 +147,7 @@ export function VaultAttachmentView({ href, alt, children, as = "link", width, o
   }, [api, relative, isImage]);
   if (!relative) {
     if (as === "image") return alt ? <span className="markdown-image-pending">{alt}</span> : null;
-    return <a href={href} target="_blank" rel="noreferrer">{children ?? alt}</a>;
+    return <ExternalWebLink href={href} locale={locale}>{children ?? alt}</ExternalWebLink>;
   }
   const open = (event: { preventDefault(): void; stopPropagation(): void }) => {
     event.preventDefault();
@@ -208,8 +210,8 @@ function VaultImage({ src, alt }: { src?: string; alt?: string }) {
   return <VaultAttachmentView href={src} alt={alt} as="image" />;
 }
 
-function VaultLink({ href, children }: { href?: string; children: ReactNode }) {
-  return <VaultAttachmentView href={href} as="link">{children}</VaultAttachmentView>;
+function VaultLink({ href, children, locale }: { href?: string; children: ReactNode; locale: MarkdownEditorLocale }) {
+  return <VaultAttachmentView href={href} as="link" locale={locale}>{children}</VaultAttachmentView>;
 }
 
 export function MarkdownPreview({ value, locale = "zh-TW" }: { value: string; locale?: MarkdownEditorLocale }) {
@@ -219,7 +221,7 @@ export function MarkdownPreview({ value, locale = "zh-TW" }: { value: string; lo
       skipHtml
       urlTransform={(url) => url}
       components={{
-        a: ({ href, children }) => <VaultLink href={href}>{children}</VaultLink>,
+        a: ({ href, children }) => <VaultLink href={href} locale={locale}>{children}</VaultLink>,
         img: ({ src, alt }) => <VaultImage src={src} alt={alt} />,
         pre: ({ children }) => <CodeBlock locale={locale}>{children}</CodeBlock>,
       }}
