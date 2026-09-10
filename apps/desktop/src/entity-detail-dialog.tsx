@@ -623,10 +623,10 @@ export function ProjectDetailDialog({
       if (current.id !== project.id) return project;
       // Completing/archiving from the board (or another tab) must replace a
       // stale draft; otherwise Save would overwrite the finished project.
-      if (
-        (project.status === "done" || project.status === "archived")
-        && current.status !== project.status
-      ) {
+      // Reactivating must also replace a stale done/archived draft, otherwise
+      // Save or close would write the project back to archived.
+      const terminal = (status: string) => status === "done" || status === "archived";
+      if (current.status !== project.status && (terminal(project.status) || terminal(current.status))) {
         return project;
       }
       return current;
@@ -716,7 +716,7 @@ export function ProjectDetailDialog({
         <div className="detail-dialog-actions split-actions">
           <div>
             <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onOpenBoard}><FolderKanban aria-hidden="true" />{t("project.action.open")}</button>
-            {project.status === "done" || project.status === "archived" ? <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onReopen}><RotateCcw aria-hidden="true" />{t("project.action.reopen")}</button> : <button type="button" className="secondary-button action-with-icon" data-complete-project disabled={dirty} onClick={onComplete}><CheckCircle2 aria-hidden="true" />{t("project.action.complete")}</button>}
+            {project.status === "done" || project.status === "archived" ? <button type="button" className="secondary-button action-with-icon" data-reopen-project disabled={dirty} onClick={onReopen}><RotateCcw aria-hidden="true" />{t("project.action.reopen")}</button> : <button type="button" className="secondary-button action-with-icon" data-complete-project disabled={dirty} onClick={onComplete}><CheckCircle2 aria-hidden="true" />{t("project.action.complete")}</button>}
             {project.status !== "archived" && <button type="button" className="secondary-button action-with-icon" disabled={dirty} onClick={onArchive}><Archive aria-hidden="true" />{t("project.action.archive")}</button>}
             <DangerConfirmButton
               className="action-with-icon danger"

@@ -82,7 +82,9 @@ function renderBoard(
   options: {
     showCompleted?: boolean;
     selectedProjectId?: string | null;
+    projects?: BrainProjectSnapshot[];
     onCompleteProject?: () => void;
+    onReopenProject?: () => void;
   } = {},
 ): Rendered {
   const container = document.createElement("div");
@@ -94,7 +96,7 @@ function renderBoard(
     root.render(
       <Board
         tasks={tasks}
-        projects={projects}
+        projects={options.projects ?? projects}
         showCompleted={options.showCompleted ?? false}
         onShowCompletedChange={() => undefined}
         onSave={(next) => { saved.push(next.map((item) => ({ ...item }))); }}
@@ -105,6 +107,7 @@ function renderBoard(
         onBackToProjects={() => undefined}
         onQuickAdd={() => undefined}
         onCompleteProject={options.onCompleteProject}
+        onReopenProject={options.onReopenProject}
       />,
     );
   });
@@ -203,6 +206,27 @@ test("the unfiltered board does not show complete project", () => {
   const rendered = renderBoard([task("a", "寫規格")]);
   try {
     assert.equal(rendered.container.querySelector("[data-complete-project]"), null);
+  } finally {
+    rendered.container.remove();
+  }
+});
+
+test("a filtered archived project board offers reactivate instead of complete", () => {
+  window.localStorage.clear();
+  let reopened = 0;
+  const archived = [{ ...projects[0]!, status: "archived" as const }];
+  const rendered = renderBoard([task("a", "寫規格", { projectId: "proj-1", projectName: "示範專案" })], {
+    selectedProjectId: "proj-1",
+    projects: archived,
+    onCompleteProject: () => undefined,
+    onReopenProject: () => { reopened += 1; },
+  });
+  try {
+    assert.equal(rendered.container.querySelector("[data-complete-project]"), null);
+    const reopen = rendered.container.querySelector<HTMLButtonElement>("[data-reopen-project]");
+    assert.ok(reopen, "archived projects can be reactivated from the board");
+    flushSync(() => clickEvent(reopen!));
+    assert.equal(reopened, 1);
   } finally {
     rendered.container.remove();
   }

@@ -47,8 +47,16 @@ test("translations preserve stable data values while localizing visible labels",
 });
 
 test("Traditional Chinese project view labels do not mix in English View", () => {
+  assert.equal(translate("zh-TW", "project.view"), "檢視樣式");
+  assert.equal(translate("zh-TW", "project.view.table"), "表格");
+  assert.equal(translate("zh-TW", "project.view.cards"), "卡片");
   assert.equal(translate("zh-TW", "project.view.list"), "清單");
   assert.equal(translate("zh-TW", "project.view.board"), "狀態看板");
+  assert.equal(translate("zh-TW", "project.field.period"), "執行期間");
+  assert.equal(translate("en", "project.view.table"), "Table");
+  assert.equal(translate("en", "project.view.cards"), "Cards");
+  assert.doesNotMatch(translate("zh-TW", "project.view.table"), /View/i);
+  assert.doesNotMatch(translate("zh-TW", "project.view.cards"), /View/i);
   assert.doesNotMatch(translate("zh-TW", "project.view.list"), /View/i);
   assert.doesNotMatch(translate("zh-TW", "project.view.board"), /View/i);
 });

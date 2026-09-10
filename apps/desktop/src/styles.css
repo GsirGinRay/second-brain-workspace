@@ -539,7 +539,21 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .project-summary-card{display:grid;gap:12px;cursor:pointer;transition:transform .14s,box-shadow .14s}
 .project-summary-card:hover,.project-summary-card:focus-visible{transform:translateY(-2px);box-shadow:0 10px 26px #00000016;outline:none}
 .project-summary-status{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted);font-size:11px}
+.project-summary-period{margin:0;font-size:13px;font-weight:750;color:var(--ink)}
+.project-summary-excerpt{margin:0;color:var(--muted);font-size:12px;line-height:1.45;display:-webkit-box;overflow:hidden;-webkit-line-clamp:3;-webkit-box-orient:vertical}
 .project-summary-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-self:start}
+.project-table-wrap{overflow-x:auto;overflow-y:visible;border:1px solid var(--line);border-radius:14px;background:#fff;max-height:none}
+.project-table{min-width:1080px}
+.project-table th:first-child,.project-table td:first-child{min-width:180px;width:22%}
+.project-table-period{display:flex;align-items:center;gap:6px;min-width:248px}
+.project-table-period input[type="date"]{min-width:0;flex:1;border:1px solid #d0d1d1;border-radius:7px;background:#fff;padding:5px 6px;font:inherit;color:var(--ink)}
+.project-table-period span{color:var(--muted);flex:0 0 auto}
+.project-table .category-input-group{min-width:140px}
+.project-table .project-picker-trigger{padding:5px 7px;font-size:12px}
+.project-table-actions{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.project-table-actions .icon-action{min-width:32px!important;width:32px;height:32px}
+.project-table-actions .icon-action svg{width:15px;height:15px}
+[data-theme="dark"] .project-table-wrap,[data-theme="dark"] .project-table-period input[type="date"]{background:var(--paper);color:var(--ink);border-color:var(--line)}
 .project-board-button{justify-self:start}
 .agenda .task-title-row{flex-wrap:nowrap}.agenda .task-title-row .task-complete{flex:0 0 auto}.agenda-task-title{flex:1;min-width:0;border:0;background:transparent;color:var(--ink);padding:2px 0;text-align:left;font:inherit;font-weight:800}
 .schedule-tray-actions{display:flex;align-items:center;gap:5px;margin-left:auto}

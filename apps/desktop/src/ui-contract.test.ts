@@ -266,12 +266,28 @@ test("projects navigate to an id-filtered board and expose planning, filters and
   assert.match(source, /task\.projectId === selectedProjectId/);
   assert.match(source, /value="planning">\{t\("project\.status\.planning"\)\}/);
   assert.match(source, /second-brain\.projectView/);
+  assert.match(source, /data-project-view-option="table"/);
+  assert.match(source, /data-project-view-option="cards"/);
+  assert.match(source, /className="board-table project-table"/);
+  assert.match(source, /project-table-period/);
   assert.match(source, /buildProjectDeleteChanges/);
   // Permanent delete is confirmed in a dialog so a first click never looks
   // like it already worked.
   assert.doesNotMatch(source, /window\.confirm\([^)]*解除專案連結/s);
   assert.match(source, /DangerConfirmButton/);
   assert.match(source, /onDelete=\{\(\) => \{ void permanentlyDeleteProject\(selectedProjectDetail\); if \(activeDetailKey\) closeDetail\(activeDetailKey\); \}\}/);
+});
+
+test("project overview keeps cards for reading and a spreadsheet table for quick edits", () => {
+  const source = app();
+  const styles = css();
+  assert.match(source, /t\("project\.view\.table"\)/);
+  assert.match(source, /t\("project\.view\.cards"\)/);
+  assert.match(source, /t\("project\.field\.period"\)/);
+  assert.match(source, /project-summary-excerpt/);
+  assert.match(styles, /\.project-table-period/);
+  assert.match(styles, /\.project-summary-excerpt/);
+  assert.match(styles, /\.project-summary-period/);
 });
 
 test("desktop separates collections from outcome projects and supports promotion", () => {
@@ -579,7 +595,12 @@ test("completing a project uses an in-app dialog instead of window.confirm and i
   assert.match(source, /pendingCompleteProjectId/);
   assert.match(source, /data-complete-project/);
   assert.match(source, /finishCompleteProject/);
-  assert.match(source, /setRevealCompletedToken/);
+  assert.match(source, /revealProjectListTab/);
+  assert.match(source, /finishReopenProject/);
+  assert.match(source, /finishArchiveProject/);
+  assert.match(source, /data-reopen-project/);
+  assert.match(detailSource, /data-reopen-project/);
+
   assert.match(detailSource, /data-complete-project/);
   assert.match(styles, /\.action-confirm-dialog/);
   assert.match(styles, /\.action-confirm-backdrop/);

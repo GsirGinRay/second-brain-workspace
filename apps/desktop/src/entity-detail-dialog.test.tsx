@@ -404,7 +404,46 @@ test("project detail adopts an externally completed project instead of keeping a
     flushSync(() => root.render(<ProjectDetailDialog project={projectDetail({ status: "done", progress: 100, completedAt: "2026-08-22" })} {...props} />));
     assert.equal(container.querySelector<HTMLSelectElement>("select")?.value, "done", "external completion replaces the stale active draft");
     assert.equal(container.querySelector("[data-complete-project]"), null);
-    assert.ok([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("project.action.reopen")));
+    assert.ok(container.querySelector("[data-reopen-project]"));
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("project detail adopts a reactivated project instead of keeping a stale archived draft", () => {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  const props = {
+    openTasks: 0,
+    doingTasks: 0,
+    existingAreas: [] as string[],
+    projectTasks: [] as BrainTaskSnapshot[],
+    locale: "zh-TW" as const,
+    t: (key: string) => key,
+    onClose: () => undefined,
+    onSave: () => true,
+    onOpenBoard: () => undefined,
+    onComplete: () => undefined,
+    onReopen: () => undefined,
+    onArchive: () => undefined,
+    onDelete: () => undefined,
+    onAddProjectTask: () => undefined,
+    onToggleProjectTask: () => undefined,
+    onOpenProjectTask: () => undefined,
+    onDeleteProjectTask: () => undefined,
+  };
+  try {
+    flushSync(() => root.render(<ProjectDetailDialog project={projectDetail({ status: "archived" })} {...props} />));
+    assert.equal(container.querySelector<HTMLSelectElement>("select")?.value, "archived");
+    assert.ok(container.querySelector("[data-reopen-project]"), "archived projects offer reactivate");
+    flushSync(() => root.render(<ProjectDetailDialog project={projectDetail({ status: "active" })} {...props} />));
+    assert.equal(container.querySelector<HTMLSelectElement>("select")?.value, "active", "reactivating replaces the stale archived draft");
+    assert.equal(container.querySelector("[data-reopen-project]"), null);
+    assert.ok(container.querySelector("[data-complete-project]"));
+    const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("app.save"));
+    assert.ok(save?.disabled, "adopting the reactivated snapshot is not an unsaved edit");
   } finally {
     root.unmount();
     container.remove();
