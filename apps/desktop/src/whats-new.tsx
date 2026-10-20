@@ -8,6 +8,7 @@ const ONBOARDING_COMPLETED_KEY = "second-brain.onboardingCompleted";
 // Highlights shown once after updating to a version. Keep each list short.
 export const RELEASE_HIGHLIGHT_KEYS: Readonly<Record<string, readonly string[]>> = {
   "0.6.2": ["whatsNew.0.6.2.naturalDate", "whatsNew.0.6.2.quickCapture", "whatsNew.0.6.2.safeSave"],
+  "0.7.0": ["whatsNew.0.7.0.repeat", "whatsNew.0.7.0.reminders", "whatsNew.0.7.0.today"],
 };
 
 function compareVersions(left: string, right: string): number {
