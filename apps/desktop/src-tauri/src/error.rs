@@ -35,6 +35,8 @@ pub enum NativeError {
     PublisherOriginRejected,
     #[error("Publisher transport failed")]
     PublisherTransport,
+    #[error("notification could not be shown")]
+    Notification,
 }
 
 impl From<io::Error> for NativeError {

@@ -143,12 +143,22 @@ function pathKey(relativePath: string): string {
   return relativePath.replace(/\\/g, "/").toLocaleLowerCase();
 }
 
-/** New tasks with a project append to that project's file; otherwise the inbox. */
+/**
+ * New tasks that name a scanned file (e.g. the next occurrence of a repeating
+ * task) append there; tasks with a project append to that project's file;
+ * otherwise the inbox. Only scanned paths qualify, so this never leaves the vault.
+ */
 function resolveNewTaskWritePath(
-  task: Pick<BrainTaskSnapshot, "projectId" | "projectName">,
+  task: Pick<BrainTaskSnapshot, "projectId" | "projectName" | "sourcePath">,
   projects: readonly Pick<BrainProjectSnapshot, "id" | "name" | "sourcePath">[],
   existingPaths: readonly string[],
 ): string {
+  if (task.sourcePath) {
+    const wanted = pathKey(task.sourcePath);
+    for (const path of existingPaths) {
+      if (pathKey(path) === wanted) return path;
+    }
+  }
   const project = task.projectId
     ? projects.find((item) => item.id === task.projectId)
     : task.projectName
@@ -230,7 +240,8 @@ function resolveExistingTaskHomePath(
   const desiredKey = projectIdentity(task, projects);
   if (currentKey === desiredKey) return fromPath;
   if (!desiredKey) return resolveInboxWritePath(existingPaths);
-  const dest = resolveNewTaskWritePath(task, projects, existingPaths);
+  // A relocation follows the project, never the file the task is leaving.
+  const dest = resolveNewTaskWritePath({ ...task, sourcePath: null }, projects, existingPaths);
   if (pathKey(dest) === pathKey(resolveInboxWritePath(existingPaths))) {
     const project = task.projectId
       ? projects.find((item) => item.id === task.projectId)

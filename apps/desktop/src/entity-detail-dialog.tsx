@@ -24,6 +24,8 @@ import { MarkdownBlockEditor } from "./markdown-block-editor";
 import { ProjectPicker, type CreatedProject } from "./project-picker";
 import { DangerConfirmButton } from "./danger-confirm";
 import { TaskCompleteButton } from "./task-complete-button";
+import { RecurrenceSelect } from "./recurrence-picker";
+import { taipeiDateKey } from "@second-brain/brain-ui";
 import type { UiDetailSurface, UiLanguage } from "./ui-preferences";
 
 export type DetailTranslate = (
@@ -473,6 +475,7 @@ export function TaskDetailDialog({
     || draft.taskDate !== task.taskDate
     || draft.startTime !== task.startTime
     || draft.durationMinutes !== task.durationMinutes
+    || (draft.recurrence ?? null) !== (task.recurrence ?? null)
     || draft.projectId !== task.projectId
     || draft.completedAt !== task.completedAt;
   const onBodyChange = useCallback((body: string) => {
@@ -540,6 +543,7 @@ export function TaskDetailDialog({
           <label>{t("task.field.date")}<input type="date" value={draft.taskDate ?? ""} onChange={(event) => setDraft({ ...draft, taskDate: event.target.value || null })} /></label>
           <label>{t("task.field.startTime")}<input type="time" value={draft.startTime ?? ""} onChange={(event) => setDraft({ ...draft, startTime: event.target.value || null, durationMinutes: event.target.value ? (draft.durationMinutes ?? 30) : null, timeZone: "Asia/Taipei" })} /></label>
           <label>{t("task.field.duration")}<select disabled={!draft.startTime} value={draft.durationMinutes ?? 30} onChange={(event) => setDraft({ ...draft, durationMinutes: Number(event.target.value) })}>{[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} {locale === "zh-TW" ? "分" : "min"}</option>)}</select></label>
+          <RecurrenceSelect value={draft.recurrence} taskDate={draft.taskDate} today={taipeiDateKey(new Date())} locale={locale} label={t("task.field.recurrence")} onChange={(recurrence) => setDraft({ ...draft, recurrence, taskDate: recurrence ? (draft.taskDate ?? taipeiDateKey(new Date())) : draft.taskDate })} />
           <div className="detail-project-field">
             <span className="detail-field-label">{t("task.field.project")}</span>
             <ProjectPicker

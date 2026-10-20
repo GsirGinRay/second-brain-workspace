@@ -1178,3 +1178,15 @@ test("layout migration skips non-markdown attachments so native md writes stay .
   assert.equal(plan.moves[0]?.to, "附件/開源發表/shot.png");
   assert.equal(buildLayoutMigrationChanges(files, plan).length, 0);
 });
+test("a new task naming a scanned file is appended there instead of the inbox", () => {
+  const note = "# 家務\n\n- [x] #task 澆花 🔁 every week on Monday ⏳ 2026-10-19 ✅ 2026-10-19 <!-- second-brain-task:{\"id\":\"11111111-1111-4111-8111-111111111111\",\"status\":\"done\",\"rank\":\"a\"} -->\n";
+  const files = [file("notes/家務.md", note), file("10-收件匣/待辦收件匣.md", "# 待辦收件匣\n\n## 新增 Task\n")];
+  const scanned = scanStructuredVault(files, () => taskId).snapshot;
+  const next = { ...scanned.tasks[0]!, id: "33333333-3333-4333-8333-333333333333", status: "todo" as const, completedAt: null, taskDate: "2026-10-26" };
+  const changes = applyDesiredSnapshot(files, { ...scanned, tasks: [...scanned.tasks, next] });
+  assert.deepEqual(changes.map((change) => change.relativePath), ["notes/家務.md"]);
+  const written = base64ToText(changes[0]!.replacementBase64);
+  assert.match(written, /- \[ \] #task 澆花 🔁 every week on Monday ⏳ 2026-10-26/);
+  const outside = applyDesiredSnapshot(files, { ...scanned, tasks: [...scanned.tasks, { ...next, sourcePath: "../outside.md" }] });
+  assert.deepEqual(outside.map((change) => change.relativePath), ["10-收件匣/待辦收件匣.md"]);
+});

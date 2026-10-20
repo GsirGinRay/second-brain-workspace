@@ -10,6 +10,8 @@ export {
   ProjectStatusSchema,
 } from "./types";
 export { SNAPSHOT_SCHEMA_VERSION } from "./types";
+export { describeRecurrence, formatRecurrence, nextOccurrence, parseRecurrence } from "./recurrence";
+export type { RecurrenceRule } from "./recurrence";
 export { isValidDateKey } from "./dates";
 export type {
   BrainProjectSnapshot,

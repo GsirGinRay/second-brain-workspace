@@ -274,8 +274,6 @@ test("non-date numbers and words are not recognized", () => {
     "多一點時間",
     "第3點建議",
     "考了90分",
-    "每週五倒垃圾",
-    "每個星期一開會",
     "sunny day",
     "satellite photos",
     "the sun is out",
@@ -299,4 +297,41 @@ test("only the first phrase of each kind is used", () => {
 test("invalid today throws", () => {
   assert.throws(() => parseNaturalDate("明天", "2026/10/20"), RangeError);
   assert.throws(() => parseNaturalDate("明天", "2026-02-30"), RangeError);
+});
+
+test("recurring phrases become a repeat rule starting on the first occurrence", () => {
+  const cases: Array<[string, string, string, string]> = [
+    // input, title, recurrence, first date (today is Tuesday 2026-10-20)
+    ["每天早上9點運動", "運動", "every day", "2026-10-20"],
+    ["每週一開週會", "開週會", "every week on Monday", "2026-10-26"],
+    ["每個星期一開會", "開會", "every week on Monday", "2026-10-26"],
+    ["每周二、四健身", "健身", "every week on Tuesday, Thursday", "2026-10-20"],
+    ["每兩週五交報告", "交報告", "every 2 weeks on Friday", "2026-10-23"],
+    ["每個工作日看信", "看信", "every weekday", "2026-10-20"],
+    ["每月5號繳房租", "繳房租", "every month on the 5th", "2026-11-05"],
+    ["每個月底結帳", "結帳", "every month on the last", "2026-10-31"],
+    ["每年續約", "續約", "every year", "2026-10-20"],
+    ["water plants every mon and thu", "water plants", "every week on Monday, Thursday", "2026-10-22"],
+    ["every 2 weeks on mon review", "review", "every 2 weeks on Monday", "2026-10-26"],
+    ["每月繳管理費", "繳管理費", "every month on the 20th", "2026-10-20"],
+  ];
+  for (const [input, title, recurrence, date] of cases) {
+    const result = parse(input);
+    assert.equal(result?.recurrence, recurrence, input);
+    assert.equal(result?.title, title, input);
+    assert.equal(result?.date, date, input);
+  }
+  assert.equal(parse("每天早上9點運動")?.time, "09:00");
+});
+
+test("an explicit date wins over the repeat rule's first occurrence", () => {
+  const result = parse("下週三開始每週三練琴");
+  assert.equal(result?.recurrence, "every week on Wednesday");
+  assert.equal(result?.date, "2026-10-28");
+});
+
+test("ordinary words are not repeat rules", () => {
+  for (const input of ["every time I call", "每個人都要填表", "everyone meeting", "Write weekly report", "Watch Dailymotion video", "standup daily"]) {
+    assert.equal(parse(input)?.recurrence, undefined, input);
+  }
 });

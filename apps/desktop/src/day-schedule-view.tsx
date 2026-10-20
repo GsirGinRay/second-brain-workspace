@@ -20,6 +20,7 @@ import { TaskCompleteButton } from "./task-complete-button";
 import type { DropPosition } from "./task-reorder";
 import type { UiLanguage } from "./ui-preferences";
 import { getGlobalSelectedIds, setSelectionOfKind } from "./global-shift-marquee";
+import { TaskBadges } from "./task-badges";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
@@ -889,6 +890,7 @@ export function DaySchedule({
                     <div className="schedule-tray-meta">
                       {task.taskDate && task.taskDate < date ? <small className="tray-overdue-date" title={task.taskDate}>{task.taskDate}</small> : null}
                       {task.startTime && <span className="tray-when">{task.startTime}</span>}
+                      <TaskBadges task={task} locale={locale} />
                       {projects && onPickProject && task.id && (
                         <div className="schedule-tray-project" onClick={(event) => event.stopPropagation()}>
                           <ProjectPicker

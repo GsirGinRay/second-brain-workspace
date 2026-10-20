@@ -79,6 +79,10 @@ const INSTRUCTIONS = `# Second Brain — INSTRUCTIONS（正本 / Canonical）
 \`\`\`
 
 掃描器會自動指定 id；不要自己發明 id。
+
+重複任務在日期前加 \`🔁 every …\`（Obsidian Tasks 寫法），例如
+\`🔁 every day\`、\`🔁 every week on Monday\`、\`🔁 every month on the 5th\`。
+完成時 App 會自動建立下一次，不要自己複製下一行。
 `;
 
 const CLAUDE_ENTRY = `# See .ai/INSTRUCTIONS.md

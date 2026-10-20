@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isValidDateKey } from "./dates";
+import { formatRecurrence, parseRecurrence } from "./recurrence";
 
 export const SNAPSHOT_SCHEMA_VERSION = 6 as const;
 export type SnapshotSchemaVersion = typeof SNAPSHOT_SCHEMA_VERSION;
@@ -58,6 +59,13 @@ export const BrainTaskSnapshotSchema = z.object({
   startTime: TimeSchema.optional(),
   durationMinutes: z.number().int().min(5).max(1440).nullable().optional(),
   timeZone: z.string().min(1).max(100).nullable().optional(),
+  // Obsidian Tasks wording without the icon, e.g. "every week on Monday".
+  // An unknown rule drops to null instead of rejecting the whole snapshot.
+  recurrence: z.string().max(200).nullable().optional().transform((value) => {
+    if (value == null) return value;
+    const rule = parseRecurrence(value);
+    return rule ? formatRecurrence(rule) : null;
+  }),
   // Local Markdown content. Cloud clients omit this field until the API supports it.
   body: z.string().max(2_000_000).optional(),
   schemaVersion: SchemaVersionSchema,

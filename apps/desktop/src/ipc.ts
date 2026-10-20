@@ -139,6 +139,7 @@ export interface NativeAdapter {
   saveRoutineTemplate?(template: RoutineTemplate): Promise<void>;
   checkAppUpdate?(): Promise<AppUpdateCheck>;
   installAppUpdate?(): Promise<void>;
+  showReminder?(title: string, body: string): Promise<void>;
 }
 
 function assertRecord(value: unknown): Record<string, unknown> {
@@ -587,6 +588,9 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
       // The native side re-checks the signed manifest and verifies the
       // installer signature; the renderer never supplies a download URL.
       await invoke("install_app_update");
+    },
+    async showReminder(title: string, body: string) {
+      await invoke("show_reminder", { title, body });
     },
   };
 }

@@ -19,3 +19,7 @@ import "./shortcuts-help.test";
 import "./natural-date.test";
 import "./workspace-rebase.test";
 import "./whats-new.test";
+import "./recurring-tasks.test";
+import "./task-badges.test";
+import "./reminders.test";
+import "./today-planning.test";

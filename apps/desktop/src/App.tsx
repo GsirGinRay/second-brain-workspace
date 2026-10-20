@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   Archive,
   ArrowLeft,
@@ -20,6 +20,7 @@ import {
   Menu,
   Minimize2,
   Moon,
+  Target,
   Pencil,
   Plus,
   RefreshCw,
@@ -176,6 +177,13 @@ import { emptyViewHistory, goBack, goForward, navigateTo, type ViewHistory } fro
 import { APP_VERSION } from "./app-version";
 import { ShortcutsDialog, isShortcutHelpKey } from "./shortcuts-help";
 import { UpdateNotice, consumeUpdateNotice } from "./whats-new";
+import { closedProjectIds, withRecurringFollowUps } from "./recurring-tasks";
+import { TaskBadges } from "./task-badges";
+import { recurrenceLabel } from "./recurrence-picker";
+import { loadReminderSettings, saveReminderSettings, type ReminderSettings } from "./reminders";
+import { KEEP_IN_TRAY_KEY, ReminderSettingsCard, loadKeepInTray, useReminders } from "./reminders-ui";
+import { AVAILABLE_HOURS_KEY, focusQueue, loadAvailableHours, moveTasksToDate } from "./today-planning";
+import { FocusMode, LoadMeter, WaitingPanel, WrapUpDialog } from "./today-tools";
 import { parseNaturalDate, type NaturalDateMatch } from "./natural-date";
 import { rebaseWorkspace } from "./workspace-rebase";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH } from "./architecture";
@@ -330,6 +338,18 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   // Read before onboarding writes its flag, so only real updates are announced.
   const [updateNoticeOpen, setUpdateNoticeOpen] = useState(() => !providedAdapter && consumeUpdateNotice(localStorage, APP_VERSION));
   const [closeGuardOpen, setCloseGuardOpen] = useState(false);
+  const [reminderSettings, setReminderSettings] = useState(() => loadReminderSettings(localStorage));
+  const [keepInTray, setKeepInTray] = useState(() => loadKeepInTray(localStorage));
+  const keepInTrayRef = useRef(keepInTray);
+  keepInTrayRef.current = keepInTray && !providedAdapter;
+  const changeReminderSettings = useCallback((next: ReminderSettings) => {
+    setReminderSettings(next);
+    saveReminderSettings(localStorage, next);
+  }, []);
+  const changeKeepInTray = useCallback((next: boolean) => {
+    setKeepInTray(next);
+    try { localStorage.setItem(KEEP_IN_TRAY_KEY, String(next)); } catch { /* applies for this session */ }
+  }, []);
   const [selectedBoardProjectId, setSelectedBoardProjectId] = useState<string | null>(null);
   const [pendingCompleteProjectId, setPendingCompleteProjectId] = useState<string | null>(null);
   const [revealProjectList, setRevealProjectList] = useState<{ tab: "current" | "completed" | "archived"; token: number }>({
@@ -456,6 +476,16 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   // waiting for a React re-render between them.
   const latestFilesRef = useRef<LocalMarkdownFile[]>([]);
   useEffect(() => { latestFilesRef.current = files; }, [files]);
+  // Native code forgets the close behaviour on every launch, so re-apply it.
+  useEffect(() => {
+    if (providedAdapter) return;
+    void native.setCloseBehavior(keepInTray ? "hide_to_tray" : "exit").catch(() => undefined);
+  }, [keepInTray, native, providedAdapter]);
+  const notifyReminder = useMemo(
+    () => native.showReminder ? (title: string, body: string) => native.showReminder!(title, body) : undefined,
+    [native],
+  );
+  useReminders({ tasks, settings: reminderSettings, language: preferences.language, notify: notifyReminder });
   const checkAppUpdate = useCallback(async (promptIfAvailable = false, showBusy = false) => {
     if (!native.checkAppUpdate) return;
     if (showBusy) setUpdateBusy(true);
@@ -513,6 +543,13 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     let unlisten: (() => void) | undefined;
     void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
       getCurrentWindow().onCloseRequested((event) => {
+        // Without preventDefault the JS API destroys the window, which would
+        // quit the app and stop reminders even though native code hid it.
+        if (keepInTrayRef.current && !allowCloseRef.current) {
+          event.preventDefault();
+          void getCurrentWindow().hide().catch(() => undefined);
+          return;
+        }
         if (allowCloseRef.current || diagnostics?.selectedVault || !hasDraftContent(loadDraftWorkspace())) return;
         event.preventDefault();
         setCloseGuardOpen(true);
@@ -524,9 +561,13 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   async function leaveWithLocalDraft(): Promise<void> {
     allowCloseRef.current = true;
     try {
+      // "Leave" means quit, even when closing normally keeps the app in the tray.
+      await native.setCloseBehavior("exit").catch(() => undefined);
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().close();
     } catch {
+      allowCloseRef.current = false;
+      void native.setCloseBehavior(keepInTrayRef.current ? "hide_to_tray" : "exit").catch(() => undefined);
       setCloseGuardOpen(false);
     }
   }
@@ -1198,7 +1239,17 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       nextProjects = rebased.projects;
       nextCollections = rebased.collections;
     };
+    // Every completion path saves through here, so repeating tasks get their
+    // next occurrence whichever view completed them. "Was it open before?" is
+    // judged against the vault as it is now, so two saves prepared from the
+    // same stale render cannot each add a copy.
+    const addFollowUps = (before: readonly BrainTaskSnapshot[]) => {
+      nextTasks = withRecurringFollowUps(before, nextTasks, taipeiDateKey(), {
+        closedProjectIds: closedProjectIds(nextProjects),
+      });
+    };
     if (!diagnostics?.selectedVault) {
+      addFollowUps(callerBase?.tasks ?? tasks);
       saveDraftWorkspace({ tasks: nextTasks, projects: nextProjects, collections: nextCollections });
       setTasks(nextTasks);
       setProjects(nextProjects);
@@ -1218,6 +1269,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       const latest = { tasks: snapshot.tasks, projects: snapshot.projects, collections: snapshot.collections ?? [] };
       onLatest?.(latest);
       rebaseOnto(latest);
+      addFollowUps(latest.tasks);
+    } else {
+      addFollowUps(callerBase?.tasks ?? tasks);
     }
     const currentFiles = snapshot?.files ?? latestFilesRef.current;
     const changes = applyDesiredSnapshot(currentFiles, {
@@ -1254,6 +1308,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           const fresh = await reloadLocal();
           if (fresh && fresh.files.length > 0) {
             rebaseOnto({ tasks: fresh.tasks, projects: fresh.projects, collections: fresh.collections ?? [] });
+            addFollowUps(fresh.tasks);
             const retryChanges = applyDesiredSnapshot(fresh.files, {
               schemaVersion: 6,
               tasks: nextTasks,
@@ -1928,6 +1983,16 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         updateBusy={updateBusy}
         onCheckUpdate={() => void checkAppUpdate(true, true)}
         onInstallUpdate={() => void installAppUpdate()}
+        reminderCard={(
+          <ReminderSettingsCard
+            settings={reminderSettings}
+            keepInTray={keepInTray}
+            t={t}
+            onChange={changeReminderSettings}
+            onKeepInTrayChange={changeKeepInTray}
+            onTest={notifyReminder ? () => void notifyReminder(t("reminders.test.title"), t("reminders.test.body")).catch((cause) => setError(describeError(cause, "NOTIFICATION_FAILED"))) : undefined}
+          />
+        )}
       />
     );
 
@@ -2755,6 +2820,14 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     ...groups.today.filter((task) => !task.startTime),
   ];
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [focusOpen, setFocusOpen] = useState(false);
+  const [wrapUpOpen, setWrapUpOpen] = useState(false);
+  const [availableHours, setAvailableHours] = useState(() => loadAvailableHours(localStorage));
+  const changeAvailableHours = (hours: number) => {
+    setAvailableHours(hours);
+    try { localStorage.setItem(AVAILABLE_HOURS_KEY, String(hours)); } catch { /* applies for this session */ }
+  };
+  const loadTasks = groups.today.filter((task) => task.taskDate === today && task.status !== "waiting");
   const [notice, setNotice] = useState("");
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const draggedItems = useRef<string[]>([]);
@@ -2809,9 +2882,9 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     return () => window.removeEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
   });
   return <section className="command-center">
-    <header className="command-hero"><div><span className="eyebrow">{t("today.eyebrow", { date: today })}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
+    <header className="command-hero"><div><span className="eyebrow">{t("today.eyebrow", { date: today })}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="secondary-button" onClick={() => setWrapUpOpen(true)}><Moon />{t("today.wrap.open")}</button><button className="secondary-button" disabled={focusQueue(groups.today, groups.overdue).length === 0} onClick={() => setFocusOpen(true)}><Target />{t("today.focus.open")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
-    <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article></div>
+    <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article><LoadMeter tasks={loadTasks} availableHours={availableHours} language={preferences.language} t={t} onAvailableHoursChange={changeAvailableHours} /></div>
     {groups.today.length === 0 && groups.overdue.length === 0 && (
       <Empty text={t("today.empty")} actionLabel={t("today.emptyAction")} onAction={onQuickAdd} />
     )}
@@ -2878,6 +2951,9 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
         }}
       />
     </section>
+    <WaitingPanel tasks={tasks} today={today} t={t} onOpenTask={onOpenTask} onReceived={(task) => patchTask(task, { status: "done", completedAt: today })} />
+    {focusOpen && <FocusMode queue={focusQueue(groups.today, groups.overdue)} language={preferences.language} t={t} onComplete={complete} onOpenTask={(taskId) => { setFocusOpen(false); onOpenTask(taskId); }} onClose={() => setFocusOpen(false)} />}
+    {wrapUpOpen && <WrapUpDialog tasks={tasks} today={today} t={t} onMove={(ids, date) => { onSave(moveTasksToDate(tasks, ids, date)); setNotice(t("today.wrap.moved", { count: ids.size })); }} onClose={() => setWrapUpOpen(false)} />}
     <button className="today-quick-add-fab" type="button" onClick={onQuickAdd} aria-label={t("app.quickAdd")} title={t("app.quickAdd")}><Plus aria-hidden="true" /></button>
     {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} projects={projects} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} onPickProject={pickProject} onCreateProject={onCreateProject} />)}</div></details>}
   </section>;
@@ -2887,7 +2963,7 @@ function InlineTaskCard({ task, today, projects, onOpen, onPatch, onComplete, on
   const { t, preferences } = useUiPreferences();
   const overdueDays = task.status !== "done" && task.taskDate && task.taskDate < today ? Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${task.taskDate}T00:00:00Z`)) / 86400000)) : 0;
   const important = task.priority === "highest";
-  return <article className={`inline-task-card ${important ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><TaskCompleteButton done={task.status === "done"} label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)} /><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong className="inline-task-title" title={taskLabel(task)}>{taskLabel(task)}</strong><button type="button" className={`row-star ${important ? "active" : ""}`} aria-pressed={important} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={(event) => { event.stopPropagation(); if (task.id) onPatch(task, { priority: important ? "high" : "highest", ...(important ? {} : { taskDate: today }) }); }}><Star aria-hidden="true" fill={important ? "currentColor" : "none"} /></button></div><div className="inline-task-meta"><span className="inline-project-inline">{projects && onPickProject && task.id ? <ProjectPicker variant="compact" projects={projects} valueId={task.projectId} onSelect={(project) => onPickProject(task.id!, project ? { id: project.id, name: project.name } : null)} onCreateProject={onCreateProject} locale={preferences.language} ariaLabel={`${task.title} 專案`} /> : (task.projectName ?? t("app.unassigned"))}{task.startTime ? ` · ${task.startTime}` : ""}</span></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<DangerConfirmButton armLabel="永久刪除" confirmLabel={t("confirm.deleteAgain")} onConfirm={() => onDelete(task)} /></div></article>;
+  return <article className={`inline-task-card ${important ? "most-important" : ""} ${task.status === "done" ? "completed-task" : ""}`} tabIndex={0} onClick={() => task.id && onOpen(task.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && task.id) { event.preventDefault(); onOpen(task.id); } }}><TaskCompleteButton done={task.status === "done"} label={task.status === "done" ? `${task.title}重新開啟` : `${task.title}標記完成`} title={task.status === "done" ? "重新開啟" : "完成"} onClick={() => onComplete(task)} /><div className="inline-task-main"><div className="inline-title-row"><PriorityControl priority={task.priority} compact locale={preferences.language} onChange={(priority) => onPatch(task, priority === "highest" ? { priority, taskDate: today } : { priority })} /><strong className="inline-task-title" title={taskLabel(task)}>{taskLabel(task)}</strong><button type="button" className={`row-star ${important ? "active" : ""}`} aria-pressed={important} aria-label={t("task.action.important")} title={t("task.action.important")} onClick={(event) => { event.stopPropagation(); if (task.id) onPatch(task, { priority: important ? "high" : "highest", ...(important ? {} : { taskDate: today }) }); }}><Star aria-hidden="true" fill={important ? "currentColor" : "none"} /></button></div><div className="inline-task-meta"><span className="inline-project-inline">{projects && onPickProject && task.id ? <ProjectPicker variant="compact" projects={projects} valueId={task.projectId} onSelect={(project) => onPickProject(task.id!, project ? { id: project.id, name: project.name } : null)} onCreateProject={onCreateProject} locale={preferences.language} ariaLabel={`${task.title} 專案`} /> : (task.projectName ?? t("app.unassigned"))}{task.startTime ? ` · ${task.startTime}` : ""}</span><TaskBadges task={task} locale={preferences.language} /></div>{overdueDays > 0 && <small className="overdue-label">逾期 {overdueDays} 天 · 原日期 {task.taskDate}</small>}</div><div className="inline-task-actions">{overdueDays > 0 && <button aria-label="移到今天" title="移到今天" onClick={(event) => { event.stopPropagation(); onPatch(task, { taskDate: today }); }}><CalendarDays /></button>}<DangerConfirmButton armLabel="永久刪除" confirmLabel={t("confirm.deleteAgain")} onConfirm={() => onDelete(task)} /></div></article>;
 }
 
 function TaskDateInput({
@@ -3175,6 +3251,8 @@ function shiftDateKey(dateKey: string, days: number): string {
 
 function describeNaturalWhen(match: NaturalDateMatch, date: string | undefined, language: UiPreferences["language"]): string {
   const parts: string[] = [];
+  const repeat = recurrenceLabel(match.recurrence, language);
+  if (repeat) parts.push(repeat);
   if (date) {
     const [year, month, day] = date.split("-").map(Number);
     const weekday = new Date(Date.UTC(year!, month! - 1, day!)).getUTCDay();
@@ -3234,7 +3312,9 @@ export function QuickAddModal({
   const [naturalIgnored, setNaturalIgnored] = useState<string | null>(null);
   const parsedNatural = useMemo(() => {
     // A calendar quick add keeps its locked day, so date words stay in the title.
-    const kinds: ("date" | "time" | "duration")[] = forceDate ? ["time", "duration"] : ["date", "time", "duration"];
+    const kinds: ("date" | "time" | "duration" | "recurrence")[] = forceDate
+      ? ["time", "duration", "recurrence"]
+      : ["date", "time", "duration", "recurrence"];
     const today = taipeiDateKey();
     const parsed = parseNaturalDate(title, today, { kinds });
     // A duration only lands with a start time; otherwise keep its words.
@@ -3247,7 +3327,7 @@ export function QuickAddModal({
   const naturalDate = forceDate
     ? natural?.timeDayOffset && taskDate ? shiftDateKey(taskDate, natural.timeDayOffset) : undefined
     : natural?.date;
-  const naturalApplies = Boolean(natural && (naturalDate || natural.time || natural.durationMinutes));
+  const naturalApplies = Boolean(natural && (naturalDate || natural.time || natural.durationMinutes || natural.recurrence));
   const submit = () => {
     if (!title.trim()) return false;
     const project = projects.find((item) => item.id === projectId)
@@ -3258,8 +3338,9 @@ export function QuickAddModal({
         taskDate: naturalDate ?? taskDate,
         startTime: natural.time ?? startTime,
         durationMinutes: natural.durationMinutes ?? durationMinutes,
+        recurrence: natural.recurrence ?? null,
       }
-      : { title, taskDate, startTime, durationMinutes };
+      : { title, taskDate, startTime, durationMinutes, recurrence: null };
     const task = newTask(effective.title, {
       taskDate: ideaInbox ? null : effective.taskDate || null,
       startTime: ideaInbox ? null : effective.startTime || null,
@@ -3267,6 +3348,7 @@ export function QuickAddModal({
       project,
     });
     task.body = body;
+    if (effective.recurrence && !ideaInbox) task.recurrence = effective.recurrence;
     const next = [
       ...tasks,
       important ? { ...task, priority: "highest" as const } : task,
@@ -4006,6 +4088,7 @@ export function Board({
                       <strong className="board-inline-title">{taskLabel(task)}</strong>
                     </div>
                     {task.projectName && <small>{task.projectName}</small>}
+                    <TaskBadges task={task} locale={preferences.language} />
                     <div className="board-date-field" onPointerDown={(event) => event.stopPropagation()}>
                       <TaskDateInput
                         className="board-date-input"
@@ -5773,6 +5856,7 @@ function SyncSettings({
   updateBusy,
   onCheckUpdate,
   onInstallUpdate,
+  reminderCard,
 }: {
   diagnostics: DiagnosticsSnapshot | null;
   serverOrigin: string;
@@ -5796,6 +5880,7 @@ function SyncSettings({
   updateBusy: boolean;
   onCheckUpdate: () => void;
   onInstallUpdate: () => void;
+  reminderCard?: ReactNode;
 }) {
   const { preferences, setPreferences, t } = useUiPreferences();
   const cloudEnabled = diagnostics?.syncEnabled === true;
@@ -5813,6 +5898,7 @@ function SyncSettings({
   ];
   return (
     <div className="settings-grid">
+      {reminderCard}
       <section className="settings-card">
         <h2>{t("update.title")}</h2>
         <p>{t("update.hint")}</p>

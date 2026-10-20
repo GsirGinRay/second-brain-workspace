@@ -8,6 +8,7 @@ import type {
   TaskPriority,
   TaskStatus,
 } from "./types";
+import { formatRecurrence, parseRecurrence } from "./recurrence";
 
 export type TaskTokenKind =
   | "dueDate"
@@ -16,7 +17,8 @@ export type TaskTokenKind =
   | "priority"
   | "project"
   | "startTime"
-  | "duration";
+  | "duration"
+  | "recurrence";
 
 export interface TaskTokenSpan {
   kind: TaskTokenKind;
@@ -260,6 +262,43 @@ function findDurationSpans(
   return spans;
 }
 
+/**
+ * A rule is the whole run of rule characters after `🔁`, up to the next
+ * token, block id or non-ASCII text, as in Obsidian Tasks, and must parse in
+ * full: rules this app does not understand ("every month on the 2nd
+ * Wednesday", "… when done") stay literal, so they are never rewritten or
+ * repeated on the wrong dates. Every parsing rule is a token; the first one
+ * is the task's rule, and changing or clearing it removes the extras.
+ */
+function findRecurrenceSpans(
+  body: string,
+  bodyStart: number,
+): TaskTokenSpan[] {
+  const spans: TaskTokenSpan[] = [];
+  for (const match of body.matchAll(/\u{1F501}[ \t]*([A-Za-z0-9 ,]*)/gu)) {
+    const text = match[1]!.replace(/[\s,]+$/, "");
+    const rule = text ? parseRecurrence(text) : null;
+    if (!rule) continue;
+    const start = match.index ?? 0;
+    const valueOffset = match[0].length - match[1]!.length;
+    spans.push({
+      kind: "recurrence",
+      start: bodyStart + start,
+      end: bodyStart + start + valueOffset + text.length,
+      valueStart: bodyStart + start + valueOffset,
+      valueEnd: bodyStart + start + valueOffset + text.length,
+      value: formatRecurrence(rule),
+    });
+  }
+  return spans;
+}
+
+/** Canonical rule text, or null when it does not parse. Never trust raw input. */
+export function normalizeRecurrence(value: string | null | undefined): string | null {
+  const rule = value ? parseRecurrence(value) : null;
+  return rule ? formatRecurrence(rule) : null;
+}
+
 function analyzeTaskLine(rawLine: string): TaskLineAnalysis | null {
   const bomOffset = rawLine.startsWith("\uFEFF") ? 1 : 0;
   const normalizedLine = rawLine.slice(bomOffset);
@@ -277,6 +316,7 @@ function analyzeTaskLine(rawLine: string): TaskLineAnalysis | null {
     ...findDateSpans(body, bodyStart, "\u2705", "completedAt"),
     ...findTimeSpans(body, bodyStart),
     ...findDurationSpans(body, bodyStart),
+    ...findRecurrenceSpans(body, bodyStart),
   ];
 
   const priorityEntries = Object.entries(TOKEN_TO_PRIORITY);
@@ -438,8 +478,10 @@ function parsedTaskFromAnalysis(
         ? "unsafe-id"
         : undefined
     : undefined;
+  const recurrence = dateValue("recurrence");
   return {
     ...(markerIssue ? { markerIssue } : {}),
+    ...(recurrence ? { recurrence } : {}),
     id: markerValues.id ?? null,
     title: visibleTaskTitle(titleBody.replace(/\s+/g, " ").trim()),
     status,
@@ -479,6 +521,8 @@ export function formatTaskLine(task: TaskLineInput): string {
   const priority = PRIORITY_TO_TOKEN[task.priority];
   if (priority) parts.push(priority);
   const taskDate = task.taskDate ?? task.plannedDate ?? task.dueDate ?? null;
+  const recurrence = normalizeRecurrence(task.recurrence);
+  if (recurrence) parts.push("\u{1F501} " + recurrence);
   if (taskDate) parts.push("\u{23F3} " + taskDate);
   if (task.startTime) {
     parts.push("\u{23F0} " + task.startTime);
@@ -776,6 +820,22 @@ export function patchTaskLine(
       edits.push(removeSpan(rawLine, analysis.projectSpan));
     } else if (desired.projectName) {
       edits.push(addTokenEdit(rawLine, analysis, "[[" + desired.projectName + "]]"));
+    }
+  }
+
+  // `undefined` leaves the rule alone; callers clear it with `null`. A rule
+  // that does not parse is ignored rather than written into the file.
+  const wantedRecurrence = normalizeRecurrence(desired.recurrence);
+  const recurrenceValid = desired.recurrence == null || wantedRecurrence !== null;
+  if (desired.recurrence !== undefined && recurrenceValid && wantedRecurrence !== (current.recurrence ?? null)) {
+    const [span, ...extras] = analysis.tokenSpans.filter((item) => item.kind === "recurrence");
+    for (const extra of extras) edits.push(removeSpan(rawLine, extra));
+    if (span && wantedRecurrence) {
+      edits.push({ start: span.valueStart, end: span.valueEnd, replacement: wantedRecurrence });
+    } else if (span) {
+      edits.push(removeSpan(rawLine, span));
+    } else if (wantedRecurrence) {
+      edits.push(addTokenEdit(rawLine, analysis, "\u{1F501} " + wantedRecurrence));
     }
   }
 

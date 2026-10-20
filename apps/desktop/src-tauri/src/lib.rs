@@ -10,6 +10,7 @@ pub mod key_store;
 pub mod path_policy;
 pub mod publisher;
 mod quick_capture;
+mod reminders;
 pub mod scheduler;
 pub mod state;
 pub mod watcher;
@@ -815,6 +816,7 @@ pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(quick_capture::plugin())
+        .plugin(reminders::plugin())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let key_store = KeyStore::open(&data_dir)
@@ -880,7 +882,8 @@ pub fn run() -> tauri::Result<()> {
             load_routine_template,
             save_routine_template,
             app_update::check_app_update,
-            app_update::install_app_update
+            app_update::install_app_update,
+            reminders::show_reminder
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {

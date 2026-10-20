@@ -1,3 +1,5 @@
+import { formatRecurrence, nextOccurrence, parseRecurrence, type RecurrenceRule } from "@second-brain/brain-core";
+
 /**
  * Pure natural-language date / time / duration extraction for quick-add task
  * titles, in Traditional Chinese (with common Simplified variants) and English.
@@ -21,12 +23,14 @@
  * - An hour without a period ("3點", "15:30") is read literally as 24h time.
  *   A Chinese-numeral hour without a period ("兩點") needs a suffix such as
  *   半 / 整 / 鐘 / N分, so phrases like "快一點" stay untouched.
- * - Recurring phrases ("每週五") are not parsed as a single date.
+ * - Recurring phrases ("每週五", "每月5號", "every monday") become a repeat
+ *   rule in Obsidian Tasks wording; their first occurrence on or after today
+ *   is the date unless the title also names an explicit date.
  * - Only the first phrase of each kind is used; later ones stay in the title.
  */
 
 export interface NaturalDateSpan {
-  readonly kind: "date" | "time" | "duration";
+  readonly kind: "date" | "time" | "duration" | "recurrence";
   readonly start: number;
   readonly end: number;
   readonly text: string;
@@ -40,6 +44,8 @@ export interface NaturalDateMatch {
   /** HH:MM, 24h */
   readonly time?: string;
   readonly durationMinutes?: number;
+  /** Repeat rule without the 🔁 icon, e.g. "every week on Monday". */
+  readonly recurrence?: string;
   /** Days the time phrase itself moves forward ("晚上12點" → 1), relative to the intended day. */
   readonly timeDayOffset?: number;
   /** Recognized substrings in input order, joined by a single space. */
@@ -61,6 +67,7 @@ interface Candidate {
   /** Date implied by the time phrase itself (e.g. "今晚8點"), as days from today. */
   readonly impliedDateOffset?: number;
   readonly minutes?: number;
+  readonly recurrence?: string;
 }
 
 interface Day {
@@ -479,6 +486,82 @@ function findDurations(input: string): Candidate[] {
 }
 
 // ---------------------------------------------------------------------------
+// Recurrence
+// ---------------------------------------------------------------------------
+
+const CN_WEEK_WORD = "(?:週|周|星期|禮拜|礼拜)";
+const CN_WEEKDAY_LIST = "[一二三四五六日天](?:\\s*[、,，和跟及]?\\s*[一二三四五六日天])*";
+const WEEKDAY_NAMES_BY_INDEX = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+function recurrenceCandidate(start: number, end: number, parsed: RecurrenceRule | null, today: Day): Candidate | null {
+  if (!parsed) return null;
+  // "每月" pins today's day of month, so short months cannot make it drift.
+  const rule: RecurrenceRule = parsed.unit === "month" && parsed.day === null ? { ...parsed, day: today.day } : parsed;
+  // Anchored rules start on their first matching day on or after today; open
+  // ones start today. The interval only applies from that first day on.
+  const anchored = rule.unit === "weekday"
+    || (rule.unit === "week" && rule.weekdays.length > 0)
+    || rule.unit === "month";
+  const firstStep: RecurrenceRule = "interval" in rule ? { ...rule, interval: 1 } : rule;
+  const date = anchored ? nextOccurrence(firstStep, addDays(today, -1)) : formatDay(today);
+  return { kind: "recurrence", start, end, recurrence: formatRecurrence(rule), date };
+}
+
+/** Monday-based weekday index (as in CN_WEEKDAY / EN_WEEKDAY) to Sunday-based. */
+const sundayBased = (mondayBased: number): number => (mondayBased + 1) % 7;
+
+function cnInterval(value: string | undefined): number | null {
+  return value ? parseNumber(value) : 1;
+}
+
+/** "every mon" -> "every monday", so the shared rule parser understands it. */
+function expandEnglishWeekdays(text: string): string {
+  return text.replace(/\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/gi, (day) =>
+    WEEKDAY_NAMES_BY_INDEX[sundayBased(EN_WEEKDAY[day.toLowerCase()]!)]!);
+}
+
+function findEnglishRecurrences(input: string, today: Day): Candidate[] {
+  // Only "every …" phrases: words such as "daily" or "weekly" are usually part
+  // of a title ("Write weekly report"), so they are never read as a rule.
+  return [...input.matchAll(/\bevery\b[A-Za-z0-9 ,]*/gi)].flatMap((match) => {
+    const start = match.index ?? 0;
+    // The longest word prefix that parses wins, so trailing title words stay.
+    const words = match[0].split(" ");
+    for (let count = words.length; count > 1; count -= 1) {
+      const text = words.slice(0, count).join(" ").replace(/[\s,]+$/, "");
+      const rule = parseRecurrence(expandEnglishWeekdays(text));
+      if (rule) return [recurrenceCandidate(start, start + text.length, rule, today)];
+    }
+    return [];
+  }).filter((item): item is Candidate => item !== null);
+}
+
+function findRecurrences(input: string, today: Day): Candidate[] {
+  return [
+    ...findEnglishRecurrences(input, today),
+    ...collect(input, /每(?:一)?(?:天|日)/g, (_m, s, e) => recurrenceCandidate(s, e, { unit: "day", interval: 1 }, today)),
+    ...collect(input, new RegExp(`每(${CN}|\\d{1,2})\\s*天`, "g"), (m, s, e) => {
+      const interval = cnInterval(m[1]);
+      return interval ? recurrenceCandidate(s, e, { unit: "day", interval }, today) : null;
+    }),
+    ...collect(input, /每(?:個|个)?(?:工作日|平日)/g, (_m, s, e) => recurrenceCandidate(s, e, { unit: "weekday" }, today)),
+    ...collect(input, new RegExp(`每(?:(${CN}|\\d{1,2})\\s*)?(?:個|个)?${CN_WEEK_WORD}(${CN_WEEKDAY_LIST})?`, "g"), (m, s, e) => {
+      const interval = cnInterval(m[1]);
+      if (!interval) return null;
+      const weekdays = [...new Set([...(m[2] ?? "")].flatMap((char) =>
+        CN_WEEKDAY[char] === undefined ? [] : [sundayBased(CN_WEEKDAY[char]!)]))].sort((a, b) => a - b);
+      return recurrenceCandidate(s, e, { unit: "week", interval, weekdays }, today);
+    }),
+    ...collect(input, new RegExp(`每(?:(${CN}|\\d{1,2})\\s*)?(?:個|个)?月(?:(${NUM})\\s*(?:號|号|日)|(底|最後一天|最后一天))?`, "g"), (m, s, e) => {
+      const interval = cnInterval(m[1]);
+      const day = m[2] ? parseNumber(m[2]) : m[3] ? "last" as const : null;
+      if (!interval || (typeof day === "number" && (day < 1 || day > 31))) return null;
+      return recurrenceCandidate(s, e, { unit: "month", interval, day }, today);
+    }),
+    ...collect(input, /每(?:一)?年/g, (_m, s, e) => recurrenceCandidate(s, e, { unit: "year", interval: 1 }, today)),
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Selection and title cleanup
 // ---------------------------------------------------------------------------
 
@@ -537,8 +620,9 @@ export interface NaturalDateOptions {
 
 export function parseNaturalDate(input: string, today: string, options: NaturalDateOptions = {}): NaturalDateMatch | null {
   const base = parseDateKey(today);
-  const kinds = new Set<Kind>(options.kinds ?? ["date", "time", "duration"]);
+  const kinds = new Set<Kind>(options.kinds ?? ["date", "time", "duration", "recurrence"]);
   const chosen = selectCandidates([
+    ...(kinds.has("recurrence") ? findRecurrences(input, base) : []),
     ...(kinds.has("date") ? findDates(input, base) : []),
     ...(kinds.has("time") ? findTimes(input) : []),
     ...(kinds.has("duration") ? findDurations(input) : []),
@@ -548,10 +632,12 @@ export function parseNaturalDate(input: string, today: string, options: NaturalD
   const dateHit = chosen.find((item) => item.kind === "date");
   const timeHit = chosen.find((item) => item.kind === "time");
   const durationHit = chosen.find((item) => item.kind === "duration");
+  const recurrenceHit = chosen.find((item) => item.kind === "recurrence");
 
   // "晚上12點" with no date still means tonight's midnight, i.e. tomorrow 00:00.
   const baseDate =
     dateHit?.date ??
+    recurrenceHit?.date ??
     (timeHit?.impliedDateOffset !== undefined
       ? addDays(base, timeHit.impliedDateOffset)
       : timeHit?.dayOffset ? today : undefined);
@@ -570,6 +656,7 @@ export function parseNaturalDate(input: string, today: string, options: NaturalD
     ...(date ? { date } : {}),
     ...(timeHit?.time ? { time: timeHit.time } : {}),
     ...(durationHit?.minutes ? { durationMinutes: durationHit.minutes } : {}),
+    ...(recurrenceHit?.recurrence ? { recurrence: recurrenceHit.recurrence } : {}),
     ...(timeHit?.dayOffset ? { timeDayOffset: timeHit.dayOffset } : {}),
     matchedText: spans.map((span) => span.text).join(" "),
     spans,
