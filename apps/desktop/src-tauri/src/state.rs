@@ -295,6 +295,15 @@ impl LocalState {
         Ok(())
     }
 
+    pub fn recovery_backup_paths(&self) -> Result<Vec<String>, NativeError> {
+        let connection = self.connection.lock().map_err(|_| NativeError::Database)?;
+        let mut statement = connection.prepare("SELECT backup_path FROM recovery_journal")?;
+        let paths = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(paths)
+    }
+
     pub fn confirm_recovery(&self, journal_id: &str) -> Result<(), NativeError> {
         let connection = self.connection.lock().map_err(|_| NativeError::Database)?;
         connection.execute(

@@ -43,6 +43,10 @@ impl BackupManager {
         })
     }
 
+    pub fn backup_dir(&self) -> &Path {
+        &self.backup_dir
+    }
+
     pub fn create_backup(&self, files: &[PathBuf]) -> Result<PathBuf, NativeError> {
         let entries = files
             .iter()
@@ -80,7 +84,32 @@ impl BackupManager {
         Self::verify_archive(&mut archive)
     }
 
-    fn verify_archive(archive: &mut ZipArchive<File>) -> Result<BackupManifest, NativeError> {
+    /// Returns the relative paths listed in an archive's manifest without
+    /// reading any backed-up file contents. Only `manifest.json` is
+    /// decompressed; every listed path must pass the same checks as
+    /// `verify_backup` and be present in the ZIP central directory.
+    pub fn read_manifest_paths(archive_path: &Path) -> Result<Vec<String>, NativeError> {
+        let file = File::open(archive_path)?;
+        let mut archive = ZipArchive::new(file)?;
+        let manifest = Self::read_checked_manifest(&mut archive)?;
+        if manifest
+            .entries
+            .iter()
+            .any(|entry| archive.index_for_name(&entry.relative_path).is_none())
+        {
+            return Err(NativeError::BackupInvalid);
+        }
+        Ok(manifest
+            .entries
+            .into_iter()
+            .map(|entry| entry.relative_path)
+            .collect())
+    }
+
+    /// Parses `manifest.json` and validates its structure and paths.
+    fn read_checked_manifest(
+        archive: &mut ZipArchive<File>,
+    ) -> Result<BackupManifest, NativeError> {
         let manifest = {
             let manifest_file = archive.by_name("manifest.json")?;
             let mut bytes = Vec::new();
@@ -97,7 +126,6 @@ impl BackupManager {
             return Err(NativeError::LimitExceeded);
         }
         BackupManifestEntry::reject_duplicate_paths(&manifest.entries)?;
-        let mut total_bytes = 0_u64;
         for entry in &manifest.entries {
             if entry.relative_path == "manifest.json"
                 || entry.relative_path.contains("..")
@@ -107,6 +135,14 @@ impl BackupManager {
                 return Err(NativeError::BackupInvalid);
             }
             crate::path_policy::validate_relative_path(Path::new(&entry.relative_path))?;
+        }
+        Ok(manifest)
+    }
+
+    fn verify_archive(archive: &mut ZipArchive<File>) -> Result<BackupManifest, NativeError> {
+        let manifest = Self::read_checked_manifest(archive)?;
+        let mut total_bytes = 0_u64;
+        for entry in &manifest.entries {
             if entry.bytes > MAX_BACKUP_FILE_BYTES {
                 return Err(NativeError::LimitExceeded);
             }

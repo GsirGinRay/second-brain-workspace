@@ -287,6 +287,28 @@ impl AtomicWriter {
         Ok(paths)
     }
 
+    /// Backup archives that crash recovery may still need: those referenced by
+    /// journals that are not yet `local_applied` (an interrupted or
+    /// commit-unknown write). `local_applied` journals only wait for server
+    /// confirmation and never read their backup again; local-only vaults keep
+    /// them indefinitely, so protecting them would disable retention entirely.
+    /// An unreadable journal is an error so callers skip pruning.
+    pub fn backups_needed_for_recovery(&self) -> Result<Vec<PathBuf>, NativeError> {
+        let mut paths = Vec::new();
+        for journal in self.pending_journals()? {
+            let bytes = fs::read(&journal)?;
+            let record = serde_json::from_slice::<JournalRecord>(&bytes)
+                .map_err(|_| NativeError::Io)?;
+            if record.state == "local_applied" {
+                continue;
+            }
+            if let Some(path) = record.backup_path {
+                paths.push(PathBuf::from(path));
+            }
+        }
+        Ok(paths)
+    }
+
     pub fn confirm_server_commit(&self, journal_path: &Path) -> Result<(), NativeError> {
         let is_direct_child = journal_path.parent() == Some(self.journal_dir.as_path());
         let is_journal = journal_path

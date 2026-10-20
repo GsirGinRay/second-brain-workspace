@@ -15,3 +15,6 @@ import "./day-schedule.test";
 import "./undo-history.test";
 import "./task-reorder.test";
 import "./view-history.test";
+import "./shortcuts-help.test";
+import "./natural-date.test";
+import "./workspace-rebase.test";

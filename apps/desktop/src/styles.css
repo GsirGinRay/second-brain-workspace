@@ -62,6 +62,19 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #aaa; margin-right: 8px; }
 .dot.online { background: #20a464; }
 .app-version { margin-left: 10px; opacity: .75; font-variant-numeric: tabular-nums; }
+.sidebar-foot { display: flex; align-items: center; }
+.sidebar-foot .shortcuts-button { margin-left: auto; width: 28px; height: 28px; }
+.sidebar-foot .shortcuts-button svg { width: 15px; height: 15px; }
+.shortcuts-modal { width: min(520px, calc(100vw - 32px)); }
+.shortcuts-group h3 { font-size: 12px; letter-spacing: .04em; color: var(--muted); margin: 18px 0 6px; }
+.shortcuts-group dl { margin: 0; display: grid; gap: 2px; }
+.shortcuts-row { display: grid; grid-template-columns: minmax(150px, auto) 1fr; gap: 14px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.shortcuts-row dt { display: flex; flex-wrap: wrap; gap: 4px; }
+.shortcuts-row dd { margin: 0; }
+.shortcuts-combo { display: inline-flex; align-items: center; gap: 3px; }
+.shortcuts-or { color: var(--muted); margin: 0 4px; }
+.shortcuts-row kbd { font: 12px/1 inherit; min-width: 22px; text-align: center; padding: 4px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; background: #fff; }
+[data-theme="dark"] .shortcuts-row kbd { background: #202327; }
 
 .main { min-width: 0; }
 .topbar { min-height: 92px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 28px; background: #fffffff2; position: sticky; top: 0; z-index: 10; backdrop-filter: blur(16px); }
@@ -872,3 +885,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .calendar-toolbar > div { flex:0 0 auto; }
 .calendar-toolbar button, .calendar-toolbar .view-switch button { white-space:nowrap; }
 .calendar-toolbar .view-switch button { min-width:0;padding:0 10px; }
+.quick-natural-hint { display: flex; align-items: center; gap: 8px; margin: -4px 0 4px; padding: 7px 10px; border-radius: 9px; background: #eef6f1; color: #17603d; font-size: 13px; }
+.quick-natural-hint svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.quick-natural-ignore { margin-left: auto; border: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; font-size: 12px; padding: 2px 4px; }
+[data-theme="dark"] .quick-natural-hint { background: #1d3328; color: #9fe0bb; }

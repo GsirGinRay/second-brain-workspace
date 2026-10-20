@@ -1,6 +1,7 @@
 pub mod app_update;
 pub mod atomic_write;
 pub mod backup;
+pub mod backup_retention;
 pub mod canonical;
 pub mod diagnostics;
 pub mod error;
@@ -8,6 +9,7 @@ mod external_url;
 pub mod key_store;
 pub mod path_policy;
 pub mod publisher;
+mod quick_capture;
 pub mod scheduler;
 pub mod state;
 pub mod watcher;
@@ -25,6 +27,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -576,10 +579,48 @@ fn apply_markdown_changes(
     backup.verify_backup(&archive)?;
     let writer = AtomicWriter::new(state.data_dir.join("journals").join(&vault_id))?;
     let journal = writer.write_batch_with_backup(&file_changes, &backup, &archive, &root, None)?;
+    prune_backups_best_effort(&state, &vault_id, &backup, &archive, &writer);
     Ok(MarkdownApplyResult {
         journal_path: journal.to_string_lossy().to_string(),
         backup_path: archive.to_string_lossy().to_string(),
     })
+}
+
+/// Applies the backup retention policy after a successful write. Pruning is
+/// housekeeping: it is throttled per vault and its errors never fail the write.
+fn prune_backups_best_effort(
+    state: &AppState,
+    vault_id: &str,
+    backup: &BackupManager,
+    archive: &Path,
+    writer: &AtomicWriter,
+) {
+    if !backup_retention::global_throttle().try_begin(vault_id, std::time::Instant::now()) {
+        return;
+    }
+    let _ = (|| -> Result<(), NativeError> {
+        let journal_backups = writer.backups_needed_for_recovery()?;
+        let recorded_backups = state.local_state.recovery_backup_paths()?;
+        let protected = journal_backups
+            .iter()
+            .map(PathBuf::as_path)
+            .chain(recorded_backups.iter().map(Path::new))
+            .chain(std::iter::once(archive))
+            .filter_map(backup_retention::file_name_of)
+            .collect::<HashSet<_>>();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| NativeError::Io)?
+            .as_millis();
+        let now_ms = i64::try_from(now_ms).map_err(|_| NativeError::Io)?;
+        // Reading archive manifests can take a moment; keep it off the write.
+        // Archives created meanwhile are newer than 7 days and always kept.
+        let backup_dir = backup.backup_dir().to_path_buf();
+        std::thread::spawn(move || {
+            let _ = backup_retention::prune_backup_dir(&backup_dir, &protected, now_ms);
+        });
+        Ok(())
+    })();
 }
 
 #[tauri::command]
@@ -773,6 +814,7 @@ fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(quick_capture::plugin())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let key_store = KeyStore::open(&data_dir)
@@ -808,6 +850,7 @@ pub fn run() -> tauri::Result<()> {
                 publisher,
             });
             build_tray(app.handle())?;
+            quick_capture::register(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

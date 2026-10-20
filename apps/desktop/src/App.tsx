@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Archive,
   ArrowLeft,
@@ -16,6 +16,7 @@ import {
   LayoutGrid,
   List,
   Maximize2,
+  Keyboard,
   Menu,
   Minimize2,
   Moon,
@@ -144,7 +145,15 @@ import { AttachmentProvider, createAttachmentApi } from "./attachment-context";
 import { MarkdownBlockEditor } from "./markdown-block-editor";
 import { formatMinutesAsTime, minutesFromOffset, snapMinutes, timeFromSlotDrop } from "./day-schedule";
 import { DaySchedule } from "./day-schedule-view";
-import { ProjectDetailDialog, TaskDetailDialog, type DetailTab } from "./entity-detail-dialog";
+import {
+  AutosaveStatus,
+  DEFAULT_AUTOSAVE_DELAY_MS,
+  ProjectDetailDialog,
+  TaskDetailDialog,
+  rebaseDraft,
+  useDraftPersistence,
+  type DetailTab,
+} from "./entity-detail-dialog";
 import { ProjectPicker } from "./project-picker";
 import { ActionConfirmDialog, DangerConfirmButton } from "./danger-confirm";
 import { TaskCompleteButton } from "./task-complete-button";
@@ -165,6 +174,9 @@ import {
 } from "./task-reorder";
 import { emptyViewHistory, goBack, goForward, navigateTo, type ViewHistory } from "./view-history";
 import { APP_VERSION } from "./app-version";
+import { ShortcutsDialog, isShortcutHelpKey } from "./shortcuts-help";
+import { parseNaturalDate, type NaturalDateMatch } from "./natural-date";
+import { rebaseWorkspace } from "./workspace-rebase";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH } from "./architecture";
 import "./styles.css";
 
@@ -298,6 +310,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [showCompleted, setShowCompleted] = useState(
     () => localStorage.getItem("second-brain.showCompletedTasks") === "true",
   );
@@ -601,6 +614,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       } else if (event.key.toLowerCase() === "n" && !isEditableElement(event.target)) {
         event.preventDefault();
         setQuickAddOpen(true);
+      } else if (isShortcutHelpKey(event, isEditableElement(event.target), Boolean(document.querySelector("[aria-modal='true']")))) {
+        event.preventDefault();
+        setShortcutsOpen(true);
       }
     };
     window.addEventListener("keydown", openGlobalAction);
@@ -1048,6 +1064,32 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // Ctrl+Alt+N from any program: the native side brings the window forward
+  // and asks for the quick-add window.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("quick-capture", () => {
+        // One capture window at a time (the calendar has its own).
+        if (document.querySelector(".quick-add-modal")) return;
+        // Detail views sit above the capture window; closing them flushes
+        // their autosave first, as installing an update does.
+        setDetailTargets([]);
+        setActiveDetailKey(null);
+        setQuickAddOpen(true);
+      }))
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   // Alt+←/→ and the mouse side buttons step through visited views, like a browser.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1129,10 +1171,30 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     setUndoCounts({ undo: undoRef.current.past.length, redo: undoRef.current.future.length });
 
   async function applyPersistLocal(
-    nextTasks: BrainTaskSnapshot[],
-    nextProjects = projects,
-    nextCollections = collections,
+    requestedTasks: BrainTaskSnapshot[],
+    requestedProjects = projects,
+    requestedCollections = collections,
+    /** What the caller's arrays were derived from; rebases them onto the vault as it is now. */
+    callerBase?: WorkspaceSnapshot,
+    onLatest?: (latest: WorkspaceSnapshot) => void,
   ): Promise<boolean> {
+    let nextTasks = requestedTasks;
+    let nextProjects = requestedProjects;
+    let nextCollections = requestedCollections;
+    // Writes are chained, but each caller computed its arrays from the render it
+    // ran in. Re-derive them from the latest scan so a write prepared before an
+    // earlier one landed (autosave, quick add, list stars) cannot revert it.
+    const rebaseOnto = (latest: WorkspaceSnapshot) => {
+      if (!callerBase) return;
+      const rebased = rebaseWorkspace(
+        callerBase,
+        { tasks: requestedTasks, projects: requestedProjects, collections: requestedCollections },
+        latest,
+      );
+      nextTasks = rebased.tasks;
+      nextProjects = rebased.projects;
+      nextCollections = rebased.collections;
+    };
     if (!diagnostics?.selectedVault) {
       saveDraftWorkspace({ tasks: nextTasks, projects: nextProjects, collections: nextCollections });
       setTasks(nextTasks);
@@ -1149,6 +1211,11 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     // even before React has had a chance to re-render.
     const snapshot = await reloadLocal(false, false);
     if (snapshot?.files) latestFilesRef.current = snapshot.files;
+    if (snapshot) {
+      const latest = { tasks: snapshot.tasks, projects: snapshot.projects, collections: snapshot.collections ?? [] };
+      onLatest?.(latest);
+      rebaseOnto(latest);
+    }
     const currentFiles = snapshot?.files ?? latestFilesRef.current;
     const changes = applyDesiredSnapshot(currentFiles, {
       schemaVersion: 6,
@@ -1183,6 +1250,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         try {
           const fresh = await reloadLocal();
           if (fresh && fresh.files.length > 0) {
+            rebaseOnto({ tasks: fresh.tasks, projects: fresh.projects, collections: fresh.collections ?? [] });
             const retryChanges = applyDesiredSnapshot(fresh.files, {
               schemaVersion: 6,
               tasks: nextTasks,
@@ -1216,12 +1284,21 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     nextProjects = projects,
     nextCollections = collections,
   ): Promise<boolean> {
-    const previous: WorkspaceSnapshot = { tasks, projects, collections };
+    const callerBase: WorkspaceSnapshot = { tasks, projects, collections };
+    // Undo returns to what was really on disk before this write, not to the
+    // possibly stale render the caller started from.
+    let previous = callerBase;
     // Chain on the previous write so two rapid drags don't race on the same
     // pre-write `files` snapshot. The later call sees the freshly persisted
     // state by the time it actually runs.
     const tail = pendingPersistRef.current ?? Promise.resolve(true);
-    const next = tail.catch(() => true).then(() => applyPersistLocal(nextTasks, nextProjects, nextCollections));
+    const next = tail.catch(() => true).then(() => applyPersistLocal(
+      nextTasks,
+      nextProjects,
+      nextCollections,
+      callerBase,
+      (latest) => { previous = latest; },
+    ));
     pendingPersistRef.current = next;
     const ok = await next;
     if (ok) {
@@ -1229,6 +1306,30 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       syncUndoCounts();
     }
     return ok;
+  }
+
+  // Writes that build their own Markdown changes (create/delete) queue behind
+  // pending saves and compute those changes from the vault as it is after
+  // them, never from a render that an autosave has already overtaken.
+  async function queuedVaultWrite(
+    build: (current: WorkspaceSnapshot & { files: LocalMarkdownFile[] }) => MarkdownChange[],
+  ): Promise<void> {
+    const tail = pendingPersistRef.current ?? Promise.resolve(true);
+    const run = tail.catch(() => true).then(async () => {
+      const scan = await reloadLocal(false, false);
+      if (scan?.files) latestFilesRef.current = scan.files;
+      const current = scan
+        ? { files: scan.files, tasks: scan.tasks, projects: scan.projects, collections: scan.collections ?? [] }
+        : { files: latestFilesRef.current, tasks, projects, collections };
+      const changes = build(current);
+      if (changes.length > 0) {
+        await native.applyMarkdownChanges(changes);
+        await reloadLocal();
+      }
+      return true;
+    });
+    pendingPersistRef.current = run;
+    await run;
   }
 
   function requestCompleteProject(projectId: string) {
@@ -1283,7 +1384,14 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   // Plain functions (not memoised): applyPersistLocal closes over the latest vault
   // scan/files each render, so restoring must always call the current instance.
   function restoreWorkspace(snapshot: WorkspaceSnapshot, message: string): void {
-    void applyPersistLocal(snapshot.tasks, snapshot.projects, snapshot.collections).then((ok) => {
+    // Queue behind pending saves and revert only what this undo step changed:
+    // the current render is the base, so edits that landed since are kept.
+    const callerBase: WorkspaceSnapshot = { tasks, projects, collections };
+    const tail = pendingPersistRef.current ?? Promise.resolve(true);
+    const run = tail.catch(() => true).then(() =>
+      applyPersistLocal(snapshot.tasks, snapshot.projects, snapshot.collections, callerBase));
+    pendingPersistRef.current = run;
+    void run.then((ok) => {
       if (ok) setStatus(message);
     });
   }
@@ -1332,34 +1440,32 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setStatus(promotedTask ? "想法已升級為規劃中專案草稿" : "已建立規劃中專案草稿");
       return { id, name: name.trim() };
     }
-    const create = buildProjectCreateChange(name, area, priority, files.map((file) => file.relativePath), () => id, body);
-    const nextTasks = promotedTask
-      ? tasks.map((task) => task.id === promotedTask.id ? { ...task, projectId: id, projectName: name.trim() } : task)
-      : tasks;
-    const nextProjects: BrainProjectSnapshot[] = [...projects, {
-      schemaVersion: 6, id, name: name.trim(), sourcePath: create.relativePath, status: "planning",
-      area, priority, progress: 0, focusToday: false, startDate: null, endDate: null, completedAt: null, body,
-    }];
-    const filesForWrite = promotedTask
-      ? [...files, { relativePath: create.relativePath, sha256: create.expectedSha256, bytesBase64: create.replacementBase64 }]
-      : files;
-    const taskChanges = promotedTask ? applyDesiredSnapshot(filesForWrite, {
-      schemaVersion: 6,
-      tasks: nextTasks,
-      projects: nextProjects,
-      collections,
-      fileHashes: {},
-    }) : [];
-    const projectWrite = taskChanges.find((change) => change.relativePath === create.relativePath);
-    const otherChanges = taskChanges.filter((change) => change.relativePath !== create.relativePath);
-    const projectChange = projectWrite && projectWrite.operation !== "delete" && projectWrite.replacementBase64
-      ? { ...create, replacementBase64: projectWrite.replacementBase64 }
-      : create;
     setWorking(true);
     setError("");
     try {
-      await native.applyMarkdownChanges([...otherChanges, projectChange]);
-      await reloadLocal();
+      await queuedVaultWrite((current) => {
+        const create = buildProjectCreateChange(name, area, priority, current.files.map((file) => file.relativePath), () => id, body);
+        if (!promotedTask) return [create];
+        const nextTasks = current.tasks.map((task) => task.id === promotedTask.id ? { ...task, projectId: id, projectName: name.trim() } : task);
+        const nextProjects: BrainProjectSnapshot[] = [...current.projects, {
+          schemaVersion: 6, id, name: name.trim(), sourcePath: create.relativePath, status: "planning",
+          area, priority, progress: 0, focusToday: false, startDate: null, endDate: null, completedAt: null, body,
+        }];
+        const filesForWrite = [...current.files, { relativePath: create.relativePath, sha256: create.expectedSha256, bytesBase64: create.replacementBase64 }];
+        const taskChanges = applyDesiredSnapshot(filesForWrite, {
+          schemaVersion: 6,
+          tasks: nextTasks,
+          projects: nextProjects,
+          collections: current.collections,
+          fileHashes: {},
+        });
+        const projectWrite = taskChanges.find((change) => change.relativePath === create.relativePath);
+        const otherChanges = taskChanges.filter((change) => change.relativePath !== create.relativePath);
+        const projectChange = projectWrite && projectWrite.operation !== "delete" && projectWrite.replacementBase64
+          ? { ...create, replacementBase64: projectWrite.replacementBase64 }
+          : create;
+        return [...otherChanges, projectChange];
+      });
       setStatus(promotedTask ? "想法已升級為規劃中專案" : "已建立規劃中專案");
       return { id, name: name.trim() };
     } catch (cause) {
@@ -1377,12 +1483,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setStatus("已建立知識草稿；關閉前請選擇 Markdown 資料夾");
       return true;
     }
-    const change = buildCollectionCreateChange(name, category, importance, files.map((file) => file.relativePath), undefined, body);
     setWorking(true);
     setError("");
     try {
-      await native.applyMarkdownChanges([change]);
-      await reloadLocal();
+      await queuedVaultWrite((current) => [
+        buildCollectionCreateChange(name, category, importance, current.files.map((file) => file.relativePath), undefined, body),
+      ]);
       setStatus("知識已建立；內容保留在本機 Markdown");
       return true;
     } catch (cause) {
@@ -1426,15 +1532,14 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     setWorking(true);
     setError("");
     try {
-      const changes = buildProjectDeleteChanges(files, {
+      const projectId = project.id;
+      await queuedVaultWrite((current) => buildProjectDeleteChanges(current.files, {
         schemaVersion: 6,
-        tasks,
-        projects,
-        collections,
+        tasks: current.tasks,
+        projects: current.projects,
+        collections: current.collections,
         fileHashes: {},
-      }, project.id);
-      await native.applyMarkdownChanges(changes);
-      await reloadLocal();
+      }, projectId));
       if (devicePaired && client) {
         try {
           await client.deleteProjectPermanently(project.id);
@@ -1452,43 +1557,46 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     }
   }
 
-  async function permanentlyDeleteCollection(collection: BrainCollectionSnapshot): Promise<void> {
-    if (!collection.id) return;
+  async function permanentlyDeleteCollection(collection: BrainCollectionSnapshot): Promise<boolean> {
+    if (!collection.id) return false;
     setWorking(true);
     setError("");
     try {
       if (diagnostics?.selectedVault) {
-        const changes = applyDesiredSnapshot(files, {
-          schemaVersion: 6,
-          tasks,
-          projects,
-          collections: collections.filter((item) => item.id !== collection.id),
-          fileHashes: {},
-        });
-        if (collection.sourcePath) {
-          const source = files.find((file) => file.relativePath === collection.sourcePath);
-          if (source) changes.push({
-            relativePath: collection.sourcePath,
-            expectedSha256: source.sha256,
-            operation: "delete",
-            replacementBase64: "",
+        await queuedVaultWrite((current) => {
+          const target = current.collections.find((item) => item.id === collection.id);
+          const changes = applyDesiredSnapshot(current.files, {
+            schemaVersion: 6,
+            tasks: current.tasks,
+            projects: current.projects,
+            collections: current.collections.filter((item) => item.id !== collection.id),
+            fileHashes: {},
           });
-        }
-        if (changes.length > 0) {
-          await native.applyMarkdownChanges(changes);
-          setStatus("知識已刪除 · 等待同步");
-          await reloadLocal();
-          if (devicePaired) {
-            window.setTimeout(() => void runSync({ background: true }), 50);
+          const sourcePath = target?.sourcePath ?? collection.sourcePath;
+          if (sourcePath) {
+            const source = current.files.find((file) => file.relativePath === sourcePath);
+            if (source) changes.push({
+              relativePath: sourcePath,
+              expectedSha256: source.sha256,
+              operation: "delete",
+              replacementBase64: "",
+            });
           }
+          return changes;
+        });
+        if (devicePaired) {
+          window.setTimeout(() => void runSync({ background: true }), 50);
         }
       } else {
-        await persistLocal(tasks, projects, collections.filter((item) => item.id !== collection.id));
+        const ok = await persistLocal(tasks, projects, collections.filter((item) => item.id !== collection.id));
+        if (!ok) return false;
       }
       if (selectedCollectionId === collection.id) setSelectedCollectionId(null);
       setStatus("知識已刪除");
+      return true;
     } catch (cause) {
       setError(`刪除知識失敗：${describeError(cause, "DELETE_COLLECTION_FAILED")}`);
+      return false;
     } finally {
       setWorking(false);
     }
@@ -1788,8 +1896,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         selectedId={selectedCollectionId}
         onSelect={setSelectedCollectionId}
         onCreate={() => { setKnowledgeSeed(null); setCreateEntity("collection"); }}
-        onSave={(collection) => void persistLocal(tasks, projects, collections.map((item) => item.id === collection.id ? collection : item))}
-        onDelete={(collection) => void permanentlyDeleteCollection(collection)}
+        onSave={(collection) => persistLocal(tasks, projects, collections.map((item) => item.id === collection.id ? collection : item))}
+        onDelete={(collection) => permanentlyDeleteCollection(collection)}
         onImportPrompts={() => { setImportText(""); setImportError(""); setImportPromptsOpen(true); }}
         onExportPrompts={() => { const json = renderPluginExport(promptCollections.map((c) => collectionToPrompt(c))); setExportText(json); setExportCopied(false); setExportPromptsOpen(true); }}
       />
@@ -1851,6 +1959,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           <span className={`dot ${navigator.onLine ? "online" : ""}`} />
           <span>{navigator.onLine ? t("app.online") : t("app.offline")}</span>
           <span className="app-version" title={t("update.current", { version: APP_VERSION })}>v{APP_VERSION}</span>
+          <button type="button" className="icon-button shortcuts-button" aria-label={t("shortcuts.open")} title={t("shortcuts.open")} onClick={() => setShortcutsOpen(true)}>
+            <Keyboard aria-hidden="true" />
+          </button>
         </div>
       </aside>
       <main className="main">
@@ -1991,6 +2102,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           }}
         />
       )}
+      {shortcutsOpen && <ShortcutsDialog t={t} onClose={() => setShortcutsOpen(false)} />}
       {searchOpen && (
         <WorkspaceSearch
           tasks={tasks}
@@ -3052,10 +3164,30 @@ function LegacyToday({
   );
 }
 
-function QuickAddModal({
+function shiftDateKey(dateKey: string, days: number): string {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(year!, month! - 1, day! + days)).toISOString().slice(0, 10);
+}
+
+function describeNaturalWhen(match: NaturalDateMatch, date: string | undefined, language: UiPreferences["language"]): string {
+  const parts: string[] = [];
+  if (date) {
+    const [year, month, day] = date.split("-").map(Number);
+    const weekday = new Date(Date.UTC(year!, month! - 1, day!)).getUTCDay();
+    parts.push(language === "zh-TW"
+      ? `${month}/${day}（週${"日一二三四五六"[weekday]}）`
+      : `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][weekday]} ${month}/${day}`);
+  }
+  if (match.time) parts.push(match.time);
+  if (match.durationMinutes) parts.push(language === "zh-TW" ? `${match.durationMinutes} 分鐘` : `${match.durationMinutes} min`);
+  return parts.join(" · ");
+}
+
+export function QuickAddModal({
   tasks,
   projects,
   templates = [],
+  initialTitle = "",
   initialDate,
   initialStartTime,
   initialProjectId,
@@ -3067,6 +3199,7 @@ function QuickAddModal({
   tasks: BrainTaskSnapshot[];
   projects: BrainProjectSnapshot[];
   templates?: { name: string; body: string }[];
+  initialTitle?: string;
   initialDate?: string;
   initialStartTime?: string;
   /** Pre-select this project when capturing from a project window or board. */
@@ -3079,7 +3212,7 @@ function QuickAddModal({
   onCreateProject?: (name: string) => Promise<{ id: string; name: string } | null>;
 }) {
   const { t, preferences } = useUiPreferences();
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initialTitle);
   const [body, setBody] = useState("");
   const [projectId, setProjectId] = useState(initialProjectId ?? "");
   // A project created from this dialog is not in `projects` until the vault
@@ -3092,14 +3225,41 @@ function QuickAddModal({
   const [important, setImportant] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   useEffect(() => titleRef.current?.focus(), []);
+  // "明天下午3點開會" fills the date and time; the chip below the title shows
+  // what was recognized and lets the user keep the words literal instead.
+  const [naturalIgnored, setNaturalIgnored] = useState<string | null>(null);
+  const parsedNatural = useMemo(() => {
+    // A calendar quick add keeps its locked day, so date words stay in the title.
+    const kinds: ("date" | "time" | "duration")[] = forceDate ? ["time", "duration"] : ["date", "time", "duration"];
+    const today = taipeiDateKey();
+    const parsed = parseNaturalDate(title, today, { kinds });
+    // A duration only lands with a start time; otherwise keep its words.
+    if (parsed?.durationMinutes && !parsed.time && !startTime) {
+      return parseNaturalDate(title, today, { kinds: kinds.filter((kind) => kind !== "duration") });
+    }
+    return parsed;
+  }, [title, forceDate, startTime]);
+  const natural = !ideaInbox && parsedNatural && parsedNatural.matchedText !== naturalIgnored ? parsedNatural : null;
+  const naturalDate = forceDate
+    ? natural?.timeDayOffset && taskDate ? shiftDateKey(taskDate, natural.timeDayOffset) : undefined
+    : natural?.date;
+  const naturalApplies = Boolean(natural && (naturalDate || natural.time || natural.durationMinutes));
   const submit = () => {
     if (!title.trim()) return false;
     const project = projects.find((item) => item.id === projectId)
       ?? (pickedProject && projectId && pickedProject.id === projectId ? pickedProject : undefined);
-    const task = newTask(title, {
-      taskDate: ideaInbox ? null : taskDate || null,
-      startTime: ideaInbox ? null : startTime || null,
-      durationMinutes: startTime ? durationMinutes : null,
+    const effective = naturalApplies && natural
+      ? {
+        title: natural.title.trim() || title,
+        taskDate: naturalDate ?? taskDate,
+        startTime: natural.time ?? startTime,
+        durationMinutes: natural.durationMinutes ?? durationMinutes,
+      }
+      : { title, taskDate, startTime, durationMinutes };
+    const task = newTask(effective.title, {
+      taskDate: ideaInbox ? null : effective.taskDate || null,
+      startTime: ideaInbox ? null : effective.startTime || null,
+      durationMinutes: effective.startTime ? effective.durationMinutes : null,
       project,
     });
     task.body = body;
@@ -3109,7 +3269,7 @@ function QuickAddModal({
     ];
     onSave(
       important && task.id
-        ? markMostImportant(next, task.id, taskDate || taipeiDateKey())
+        ? markMostImportant(next, task.id, effective.taskDate || taipeiDateKey())
         : next,
     );
     return true;
@@ -3162,6 +3322,15 @@ function QuickAddModal({
             }}
           />
         </label>
+        {naturalApplies && natural && (
+          <div className="quick-natural-hint" role="status" aria-live="polite">
+            <CalendarDays aria-hidden="true" />
+            <span>{t("quick.natural.detected", { when: describeNaturalWhen(natural, naturalDate, preferences.language) })}</span>
+            <button type="button" className="quick-natural-ignore" onClick={() => setNaturalIgnored(natural.matchedText)}>
+              {t("quick.natural.ignore")}
+            </button>
+          </div>
+        )}
         <div className="quick-content-field">
           <span>{t("quick.content")}</span>
           <MarkdownBlockEditor value={body} onChange={setBody} locale={preferences.language} attachmentFolder={attachmentFolderForTask(projects.find((item) => item.id === projectId)?.name)} maxAttachments={1} />
@@ -5305,8 +5474,8 @@ function Collections({
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onCreate: () => void;
-  onSave: (collection: BrainCollectionSnapshot) => void;
-  onDelete: (collection: BrainCollectionSnapshot) => void;
+  onSave: (collection: BrainCollectionSnapshot) => Promise<boolean> | boolean;
+  onDelete: (collection: BrainCollectionSnapshot) => Promise<boolean> | void;
   onImportPrompts: () => void;
   onExportPrompts: () => void;
 }) {
@@ -5345,7 +5514,7 @@ function Collections({
               <ImportanceControl
                 value={item.importance}
                 locale={preferences.language}
-                onChange={(importance) => onSave({ ...item, importance })}
+                onChange={(importance) => void onSave({ ...item, importance })}
               />
             </div>
           ))}
@@ -5358,24 +5527,54 @@ function Collections({
   );
 }
 
-function CollectionEditor({
+function collectionDraftDiffers(draft: BrainCollectionSnapshot, saved: BrainCollectionSnapshot): boolean {
+  return draft.name.trim() !== saved.name
+    || (draft.category ?? null) !== (saved.category ?? null)
+    || (draft.importance ?? null) !== (saved.importance ?? null)
+    || draft.body !== saved.body;
+}
+
+export function CollectionEditor({
   collection,
   locale,
   existingCategories = [],
   onSave,
   onDelete,
+  autosaveDelayMs = DEFAULT_AUTOSAVE_DELAY_MS,
 }: {
   collection: BrainCollectionSnapshot;
   locale: UiPreferences["language"];
   existingCategories?: string[];
-  onSave: (collection: BrainCollectionSnapshot) => void;
-  onDelete: (collection: BrainCollectionSnapshot) => void;
+  onSave: (collection: BrainCollectionSnapshot) => Promise<boolean> | boolean;
+  onDelete: (collection: BrainCollectionSnapshot) => Promise<boolean> | void;
+  autosaveDelayMs?: number;
 }) {
   const { t } = useUiPreferences();
   const [value, setValue] = useState(collection);
-  useEffect(() => {
-    setValue((current) => ({ ...current, importance: collection.importance }));
-  }, [collection.importance]);
+  // Outside changes (the list's importance stars, the vault watcher) rebase
+  // onto the draft so autosave never writes a stale field back.
+  const baseRef = useRef(collection);
+  // Deleting unmounts the editor; its final flush must not write the
+  // collection back. Writes wait for the delete's outcome: skipped when it
+  // succeeded, written normally when it failed and the editor stays open.
+  const deletingRef = useRef<Promise<boolean> | null>(null);
+  useLayoutEffect(() => {
+    if (baseRef.current === collection) return;
+    const base = baseRef.current;
+    baseRef.current = collection;
+    setValue((current) => rebaseDraft(base, current, collection));
+  }, [collection]);
+  const { save: persist, state: autosaveState } = useDraftPersistence({
+    draft: value,
+    dirty: collectionDraftDiffers(value, collection),
+    canSave: value.name.trim().length > 0,
+    write: async (draft) => {
+      const deleting = deletingRef.current;
+      if (deleting && await deleting) return true;
+      return onSave({ ...draft, name: draft.name.trim() });
+    },
+    delayMs: autosaveDelayMs,
+  });
   const isPrompt = (value.category ?? "").trim().toLowerCase().startsWith("提示詞");
   const variables = useMemo(() => extractPromptVariables(value.body), [value.body]);
   const [fillValues, setFillValues] = useState<Record<string, string>>({});
@@ -5394,7 +5593,13 @@ function CollectionEditor({
     setFillOpen(false);
   };
   const save = () => {
-    onSave({ ...value, name: value.name.trim() });
+    void persist();
+  };
+  const confirmDelete = async () => {
+    const outcome = Promise.resolve(onDelete(value)).then((ok) => ok !== false, () => false);
+    deletingRef.current = outcome;
+    // A failed delete keeps the editor open; its edits must save again.
+    if (!(await outcome)) deletingRef.current = null;
   };
   const saveRef = useRef(save);
   useEffect(() => { saveRef.current = save; });
@@ -5428,8 +5633,8 @@ function CollectionEditor({
       {isPrompt && variables.length > 0 && (
         <button className="secondary-button action-with-icon" onClick={openFill}>◆ {t("collection.fillCopy")}</button>
       )}
-      <button className="primary action-with-icon" disabled={!value.name.trim()} onClick={save}><Save aria-hidden="true" />{t("app.save")}</button>
-      <DangerConfirmButton className="danger icon-action" armLabel={t("collection.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={() => onDelete(value)} />
+      <AutosaveStatus state={autosaveState} t={t} />
+      <DangerConfirmButton className="danger icon-action" armLabel={t("collection.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={() => void confirmDelete()} />
     </div>
     {fillOpen && (
       <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setFillOpen(false); }}>

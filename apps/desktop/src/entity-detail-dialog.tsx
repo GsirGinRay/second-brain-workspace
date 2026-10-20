@@ -312,8 +312,8 @@ function useSaveShortcut(save: () => void) {
   }, []);
 }
 
-const DEFAULT_AUTOSAVE_DELAY_MS = 1200;
-type AutosaveState = "saved" | "pending" | "saving" | "failed";
+export const DEFAULT_AUTOSAVE_DELAY_MS = 1200;
+export type AutosaveState = "saved" | "pending" | "saving" | "failed";
 
 /**
  * Field-level rebase for a draft whose source changed underneath it (vault
@@ -335,7 +335,7 @@ export function rebaseDraft<T extends object>(base: T, draft: T, next: T): T {
  * dropped, no retry loop after a failed write (the next edit retries), and a
  * final flush when the dialog unmounts without going through close.
  */
-function useDraftPersistence<T>({
+export function useDraftPersistence<T>({
   draft,
   dirty,
   canSave,
@@ -415,7 +415,7 @@ function useDraftPersistence<T>({
   return { save, saving, state };
 }
 
-function AutosaveStatus({ state, t }: { state: AutosaveState; t: DetailTranslate }) {
+export function AutosaveStatus({ state, t }: { state: AutosaveState; t: DetailTranslate }) {
   return (
     <span className={`detail-autosave-status is-${state}`} role="status" aria-live="polite">
       {state === "saved" && <Check aria-hidden="true" />}

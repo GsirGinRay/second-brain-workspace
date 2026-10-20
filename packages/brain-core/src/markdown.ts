@@ -1011,7 +1011,7 @@ export function endIndexOfTaskBody(
 
 function extractIndentedTaskBody(source: string, taskLineIndex: number): string {
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
-  const lines = splitSourceLines(source);
+  const lines = taskLineIndexFor(source).lines;
   const end = endIndexOfTaskBody(lines, taskLineIndex);
   const raw = lines.slice(taskLineIndex + 1, end);
   while (raw.length > 0 && raw[0]!.trim() === "") raw.shift();
@@ -1020,8 +1020,21 @@ function extractIndentedTaskBody(source: string, taskLineIndex: number): string 
   return raw.map(unindentBodyLine).join(newline);
 }
 
-function findTaskLineIndexById(source: string, id: string): number {
+interface TaskLineIndex {
+  source: string;
+  lines: readonly string[];
+  firstLineById: ReadonlyMap<string, number>;
+}
+
+// A vault scan looks up every task of a file against the same source string.
+// Indexing that source once keeps a large inbox linear instead of re-parsing
+// every line for every task. Single entry: the next source replaces it.
+let lastTaskLineIndex: TaskLineIndex | null = null;
+
+function taskLineIndexFor(source: string): TaskLineIndex {
+  if (lastTaskLineIndex?.source === source) return lastTaskLineIndex;
   const lines = splitSourceLines(source);
+  const firstLineById = new Map<string, number>();
   const inCodeFence = createCodeFenceTracker();
   let insideComment = false;
   let skipUntil = 0;
@@ -1037,9 +1050,14 @@ function findTaskLineIndexById(source: string, id: string): number {
     const parsed = parseTaskLine(line, "", index);
     if (!parsed) continue;
     skipUntil = endIndexOfTaskBody(lines, index);
-    if (parsed.id === id) return index;
+    if (parsed.id && !firstLineById.has(parsed.id)) firstLineById.set(parsed.id, index);
   }
-  return -1;
+  lastTaskLineIndex = { source, lines, firstLineById };
+  return lastTaskLineIndex;
+}
+
+function findTaskLineIndexById(source: string, id: string): number {
+  return taskLineIndexFor(source).firstLineById.get(id) ?? -1;
 }
 
 function extractLegacyTaskComment(source: string, id: string): string {
