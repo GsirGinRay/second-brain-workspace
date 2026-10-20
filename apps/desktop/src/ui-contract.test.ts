@@ -30,6 +30,28 @@ const publisherInstallerScript = () =>
     "utf8",
   );
 
+test("desktop checks signed releases for in-app updates", () => {
+  const source = app();
+  assert.match(source, /checkAppUpdate/);
+  assert.match(source, /installAppUpdate/);
+  assert.match(source, /updatePromptOpen/);
+  assert.match(source, /UPDATE_DISMISSED_KEY/);
+  const config = tauriConfig() as {
+    bundle?: { createUpdaterArtifacts?: boolean };
+    plugins?: { updater?: { pubkey?: string; endpoints?: string[]; windows?: { installMode?: string } } };
+  };
+  assert.notEqual(config.bundle?.createUpdaterArtifacts, true, "contributors can build installers without the signing key");
+  const release = readFileSync(resolve(import.meta.dirname, "../../../scripts/release-desktop.mjs"), "utf8");
+  assert.match(release, /createUpdaterArtifacts: true/, "the release script signs updater artifacts");
+  assert.match(release, /latest\.json/);
+  assert.match(publisherInstallerScript(), /endpoints: \[\]/, "Publisher previews never follow the public update channel");
+  const updater = config.plugins?.updater;
+  assert.ok(updater?.pubkey && updater.pubkey.length > 40, "a minisign public key verifies every update");
+  assert.ok(updater?.endpoints?.length, "an update manifest endpoint is configured");
+  for (const endpoint of updater?.endpoints ?? []) assert.match(endpoint, /^https:\/\//);
+  assert.equal(updater?.windows?.installMode, "passive");
+});
+
 test("desktop includes today, calendar, board, projects and settings views", () => {
   const source = app();
   for (const view of ["today", "calendar", "board", "projects", "sync"])
@@ -467,7 +489,7 @@ test("Windows installer keeps a stable upgrade identity", () => {
   const config = tauriConfig();
   assert.equal(config.productName, "Second Brain Workspace");
   assert.equal(config.identifier, "app.secondbrain.workspace");
-  assert.equal(config.version, "0.5.0");
+  assert.equal(config.version, "0.6.0");
   assert.equal(config.bundle?.windows?.nsis?.installMode, "currentUser");
   assert.equal(config.bundle?.windows?.allowDowngrades, false);
 });

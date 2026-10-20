@@ -14,3 +14,4 @@ import "./ui-preferences.test";
 import "./day-schedule.test";
 import "./undo-history.test";
 import "./task-reorder.test";
+import "./view-history.test";

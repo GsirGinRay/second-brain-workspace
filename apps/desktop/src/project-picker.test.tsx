@@ -153,6 +153,40 @@ test("a query without an exact match offers inline creation and selects it", asy
   }
 });
 
+test("a just-created project stays visible before the project list reloads", async () => {
+  function Harness() {
+    const [valueId, setValueId] = React.useState<string | null>(null);
+    return (
+      <ProjectPicker
+        projects={[project("p-1", "官網改版")]}
+        valueId={valueId}
+        onSelect={(next) => setValueId(next?.id ?? null)}
+        onCreateProject={async (name) => ({ id: "p-new", name })}
+        initialQuery="新書上市"
+        locale="zh-TW"
+      />
+    );
+  }
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(<Harness />));
+    const input = await openMenu(container);
+    await act(async () => {
+      key(input, { key: "Enter" });
+    });
+    assert.match(
+      container.querySelector(".project-picker-trigger")?.textContent ?? "",
+      /新書上市/,
+      "the trigger names the new project instead of falling back to the placeholder",
+    );
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
 test("an exact-name query hides the create row so duplicates can never be made", async () => {
   const rendered = renderPicker({ initialQuery: "官網改版", onCreateProject: async () => null });
   try {

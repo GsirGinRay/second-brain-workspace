@@ -69,6 +69,8 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
    toolbar drops to its own line, keeping its fixed-icon layout intact. */
 .title-row { min-width:0; flex:1 1 240px; }
 .title-row > div { min-width:0; }
+.title-row > .view-history-nav { display:flex; gap:2px; flex:0 0 auto; }
+.view-history-nav .icon-button:disabled { opacity:.35; cursor:default; }
 .title-row p { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .top-actions { flex:0 0 auto;flex-wrap:nowrap;margin-left:auto; }
 .topbar h1 { font-size: 22px; margin: 0 0 4px; }
@@ -422,6 +424,9 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .detail-dialog-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-top:4px}
 .detail-dialog-actions.split-actions{position:sticky;bottom:0;z-index:3;justify-content:space-between;flex-wrap:wrap;margin:8px -34px -24px;padding:12px 34px 16px;border-top:1px solid var(--line);background:var(--paper)}
 .detail-dialog-panel .detail-dialog-actions.split-actions{margin:8px -24px -24px;padding:12px 24px 16px}
+.detail-autosave-status{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:12px;white-space:nowrap}
+.detail-autosave-status svg{width:14px;height:14px}
+.detail-autosave-status.is-pending,.detail-autosave-status.is-saving{opacity:.75}
 .detail-dialog-actions>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .detail-dialog-actions svg{width:16px;height:16px}
 .surface-choice{display:grid;gap:8px;margin-top:12px}

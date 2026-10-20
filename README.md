@@ -94,6 +94,24 @@ npm run desktop:installer
 and written to
 `apps/desktop/src-tauri/target/release/bundle/nsis/`.
 
+### Releasing updates
+
+Installed apps poll the signed `latest.json` of the newest
+[GitHub Release](https://github.com/GsirGinRay/second-brain-workspace/releases)
+at launch and every six hours. Pushing commits alone does not notify anyone.
+
+1. Bump the version in `package.json`, `apps/desktop/package.json`,
+   `apps/desktop/src-tauri/Cargo.toml` and `apps/desktop/src-tauri/tauri.conf.json`.
+2. Build the signed installer and manifest:
+   `npm run desktop:release -- --notes "What changed"`.
+3. Publish when the build looks right:
+   `npm run desktop:release -- --notes "What changed" --publish`.
+
+Updates are verified with the minisign public key in `tauri.conf.json`. The
+private key lives outside the repository (`TAURI_SIGNING_PRIVATE_KEY` or
+`~/.tauri/second-brain-workspace.key`). Back it up: without it, installed apps
+can never receive another update.
+
 ## Development
 
 Run the full check suite before opening a pull request:

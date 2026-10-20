@@ -30,11 +30,18 @@ if (!mainWindow || mainWindow.dragDropEnabled !== false) {
   );
 }
 
+// Publisher previews must never follow the public update channel: an empty
+// endpoint list makes every update check a no-op.
+const PUBLISHER_UPDATER_OFF = JSON.stringify({
+  bundle: { createUpdaterArtifacts: false },
+  plugins: { updater: { endpoints: [] } },
+});
+
 const npmCli = process.env.npm_execpath;
 if (!npmCli) throw new Error("Run this build through npm so npm_execpath is available");
 const result = spawnSync(
   process.execPath,
-  [npmCli, "--workspace", "@second-brain/desktop", "run", "tauri:installer", "--", "--config", "private/publisher-profile.tauri.json"],
+  [npmCli, "--workspace", "@second-brain/desktop", "run", "tauri:installer", "--", "--config", "private/publisher-profile.tauri.json", "--config", PUBLISHER_UPDATER_OFF],
   {
     cwd: root,
     env: { ...process.env, SECOND_BRAIN_PUBLISHER_ORIGIN: origin.origin },

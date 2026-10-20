@@ -57,6 +57,23 @@ npm run desktop:installer
 產出位置為
 `apps/desktop/src-tauri/target/release/bundle/nsis/`。
 
+### 發布更新
+
+已安裝的程式會在啟動時與每六小時檢查最新
+[GitHub Release](https://github.com/GsirGinRay/second-brain-workspace/releases)
+裡經過簽章的 `latest.json`。只 push 程式碼**不會**通知使用者。
+
+1. 更新 `package.json`、`apps/desktop/package.json`、
+   `apps/desktop/src-tauri/Cargo.toml` 與 `apps/desktop/src-tauri/tauri.conf.json` 的版本號。
+2. 建置已簽章的安裝檔與更新清單：
+   `npm run desktop:release -- --notes "這次更新的內容"`。
+3. 確認無誤後發布：
+   `npm run desktop:release -- --notes "這次更新的內容" --publish`。
+
+更新檔會用 `tauri.conf.json` 裡的 minisign 公鑰驗證。私鑰放在 repo 之外
+（`TAURI_SIGNING_PRIVATE_KEY` 或 `~/.tauri/second-brain-workspace.key`）。
+請務必備份私鑰：遺失後，已安裝的程式將永遠無法再收到更新。
+
 ## 開發
 
 在發起 Pull Request 前，請先執行完整的檢查清單：

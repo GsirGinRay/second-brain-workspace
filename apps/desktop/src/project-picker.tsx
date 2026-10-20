@@ -67,6 +67,9 @@ export function ProjectPicker({
   const [query, setQuery] = useState(initialQuery);
   const [activeIndex, setActiveIndex] = useState(0);
   const [creating, setCreating] = useState(false);
+  // The vault rescan that adds a new project lands after the create call
+  // returns; until then the selection is only known here.
+  const [justCreated, setJustCreated] = useState<BrainProjectSnapshot | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listboxId = useId();
@@ -89,7 +92,8 @@ export function ProjectPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery]);
 
-  const selected = projects.find((project) => project.id && project.id === valueId) ?? null;
+  const selected = projects.find((project) => project.id && project.id === valueId)
+    ?? (justCreated && valueId && justCreated.id === valueId ? justCreated : null);
 
   const trimmed = query.trim();
   const matches = useMemo(
@@ -146,7 +150,9 @@ export function ProjectPicker({
     try {
       const created = await onCreateProject(option.name);
       if (created) {
-        onSelect(syntheticProject(created));
+        const project = syntheticProject(created);
+        setJustCreated(project);
+        onSelect(project);
         closeMenu();
       }
     } finally {

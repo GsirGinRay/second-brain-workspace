@@ -1,3 +1,4 @@
+pub mod app_update;
 pub mod atomic_write;
 pub mod backup;
 pub mod canonical;
@@ -771,6 +772,7 @@ fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
 
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let key_store = KeyStore::open(&data_dir)
@@ -833,7 +835,9 @@ pub fn run() -> tauri::Result<()> {
             set_autostart_command,
             set_close_behavior,
             load_routine_template,
-            save_routine_template
+            save_routine_template,
+            app_update::check_app_update,
+            app_update::install_app_update
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {

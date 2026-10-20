@@ -84,7 +84,7 @@ test("task detail is a single live Markdown canvas and saves checked todos", () 
     const checkbox = container.querySelector<HTMLInputElement>('.markdown-task-block input[type="checkbox"]');
     assert.ok(checkbox);
     flushSync(() => checkbox!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
-    const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("app.save"));
+    const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("detail.done"));
     assert.ok(save);
     flushSync(() => save!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
     assert.equal(saved.at(-1)?.body, "- [x] 核對內容\n\n## 說明");
@@ -171,6 +171,244 @@ test("clicking outside auto-saves dirty task edits instead of discarding them", 
     });
     assert.equal(saved.at(-1)?.status, "done", "the outside click saved the flipped status");
     assert.equal(closed, true, "the dialog closes after a successful autosave");
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("task edits save themselves after a short pause without pressing Save", async () => {
+  const saved: BrainTaskSnapshot[] = [];
+  let closed = false;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <TaskDetailDialog
+        task={task}
+        projects={[]}
+        locale="zh-TW"
+        t={(key) => key}
+        autosaveDelayMs={20}
+        onClose={() => { closed = true; }}
+        onSave={(next) => { saved.push(next); return true; }}
+        onDelete={() => undefined}
+      />,
+    ));
+    const toggle = container.querySelector<HTMLButtonElement>(".task-complete")!;
+    flushSync(() => toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    assert.equal(saved.length, 0, "nothing is written while the user is still editing");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+    assert.equal(saved.length, 1, "the pause triggered exactly one autosave");
+    assert.equal(saved[0]?.status, "done");
+    assert.equal(closed, false, "autosave keeps the dialog open");
+    assert.equal(
+      [...container.querySelectorAll("button")].some((button) => button.textContent === "app.cancel"),
+      false,
+      "there is no discard-style Cancel once edits save automatically",
+    );
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("an outside edit to an untouched task is adopted and never overwritten by autosave", async () => {
+  const saved: BrainTaskSnapshot[] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  const render = (current: BrainTaskSnapshot) => flushSync(() => root.render(
+    <TaskDetailDialog
+      task={current}
+      projects={[]}
+      locale="zh-TW"
+      t={(key) => key}
+      autosaveDelayMs={20}
+      onClose={() => undefined}
+      onSave={(next) => { saved.push(next); return true; }}
+      onDelete={() => undefined}
+    />,
+  ));
+  try {
+    render(task);
+    render(detailTask({ taskDate: "2026-09-01", body: "Obsidian 改過的內容" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+    assert.equal(saved.length, 0, "no stale draft is written back over the outside edit");
+    assert.equal(container.querySelector<HTMLInputElement>("input[type='date']")?.value, "2026-09-01");
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("a user edit survives an outside change to other fields", async () => {
+  const saved: BrainTaskSnapshot[] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  const render = (current: BrainTaskSnapshot) => flushSync(() => root.render(
+    <TaskDetailDialog
+      task={current}
+      projects={[]}
+      locale="zh-TW"
+      t={(key) => key}
+      autosaveDelayMs={20}
+      onClose={() => undefined}
+      onSave={(next) => { saved.push(next); return true; }}
+      onDelete={() => undefined}
+    />,
+  ));
+  try {
+    render(task);
+    const toggle = container.querySelector<HTMLButtonElement>(".task-complete")!;
+    flushSync(() => toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    render(detailTask({ taskDate: "2026-09-01" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0]?.status, "done", "the user's own edit is kept");
+    assert.equal(saved[0]?.taskDate, "2026-09-01", "the outside date change is not reverted");
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("a failed autosave does not retry in a loop", async () => {
+  let attempts = 0;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <TaskDetailDialog
+        task={task}
+        projects={[]}
+        locale="zh-TW"
+        t={(key) => key}
+        autosaveDelayMs={10}
+        onClose={() => undefined}
+        onSave={() => { attempts += 1; return false; }}
+        onDelete={() => undefined}
+      />,
+    ));
+    const toggle = container.querySelector<HTMLButtonElement>(".task-complete")!;
+    flushSync(() => toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+    assert.equal(attempts, 1, "one failed write waits for the next edit");
+    assert.equal(container.querySelector(".detail-autosave-status")?.textContent, "detail.autosave.failed");
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("pending edits are flushed when the dialog unmounts without closing", async () => {
+  const saved: BrainTaskSnapshot[] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  flushSync(() => root.render(
+    <TaskDetailDialog
+      task={task}
+      projects={[]}
+      locale="zh-TW"
+      t={(key) => key}
+      onClose={() => undefined}
+      onSave={(next) => { saved.push(next); return true; }}
+      onDelete={() => undefined}
+    />,
+  ));
+  const toggle = container.querySelector<HTMLButtonElement>(".task-complete")!;
+  flushSync(() => toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+  await act(async () => {
+    root.unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  container.remove();
+  assert.equal(saved.at(-1)?.status, "done", "the edit inside the debounce window was written");
+});
+
+test("the task Done button saves pending edits and closes the dialog", async () => {
+  const saved: BrainTaskSnapshot[] = [];
+  let closed = false;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <TaskDetailDialog
+        task={task}
+        projects={[]}
+        locale="zh-TW"
+        t={(key) => key}
+        onClose={() => { closed = true; }}
+        onSave={(next) => { saved.push(next); return true; }}
+        onDelete={() => undefined}
+      />,
+    ));
+    const toggle = container.querySelector<HTMLButtonElement>(".task-complete")!;
+    flushSync(() => toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    const done = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("detail.done"));
+    assert.ok(done, "a Done button finishes the edit");
+    await act(async () => {
+      done!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(saved.at(-1)?.status, "done", "Done wrote the pending edit");
+    assert.equal(closed, true, "Done closes the dialog after saving");
+  } finally {
+    root.unmount();
+    container.remove();
+  }
+});
+
+test("project edits save themselves after a short pause", async () => {
+  const saved: BrainProjectSnapshot[] = [];
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    flushSync(() => root.render(
+      <ProjectDetailDialog
+        project={projectDetail()}
+        openTasks={0}
+        doingTasks={0}
+        existingAreas={[]}
+        projectTasks={[]}
+        locale="zh-TW"
+        t={(key) => key}
+        autosaveDelayMs={20}
+        onClose={() => undefined}
+        onSave={(next) => { saved.push(next); return true; }}
+        onOpenBoard={() => undefined}
+        onComplete={() => undefined}
+        onReopen={() => undefined}
+        onArchive={() => undefined}
+        onDelete={() => undefined}
+        onAddProjectTask={() => undefined}
+        onToggleProjectTask={() => undefined}
+        onOpenProjectTask={() => undefined}
+        onDeleteProjectTask={() => undefined}
+      />,
+    ));
+    const focus = container.querySelector<HTMLInputElement>(".detail-checkbox-property input[type='checkbox']")!;
+    assert.ok(focus, "focus-today checkbox exists");
+    flushSync(() => focus.dispatchEvent(new window.MouseEvent("click", { bubbles: true }) as unknown as Event));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+    assert.equal(saved.length, 1, "the project autosaved once");
+    assert.equal(saved[0]?.focusToday, true);
   } finally {
     root.unmount();
     container.remove();
@@ -442,8 +680,11 @@ test("project detail adopts a reactivated project instead of keeping a stale arc
     assert.equal(container.querySelector<HTMLSelectElement>("select")?.value, "active", "reactivating replaces the stale archived draft");
     assert.equal(container.querySelector("[data-reopen-project]"), null);
     assert.ok(container.querySelector("[data-complete-project]"));
-    const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("app.save"));
-    assert.ok(save?.disabled, "adopting the reactivated snapshot is not an unsaved edit");
+    assert.equal(
+      container.querySelector(".detail-autosave-status")?.textContent,
+      "detail.autosave.saved",
+      "adopting the reactivated snapshot is not an unsaved edit",
+    );
   } finally {
     root.unmount();
     container.remove();

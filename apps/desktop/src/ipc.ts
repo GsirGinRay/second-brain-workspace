@@ -104,6 +104,14 @@ export interface PendingCommitRecord {
 
 export type NativeInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
+export interface AppUpdateCheck {
+  currentVersion: string;
+  latestVersion: string;
+  available: boolean;
+  checked: boolean;
+  notes: string | null;
+}
+
 export interface NativeAdapter {
   getDeviceIdentity(): Promise<DeviceIdentity>;
   completeDevicePairing(deviceId: string): Promise<void>;
@@ -129,6 +137,8 @@ export interface NativeAdapter {
   pendingJournals(): Promise<string[]>;
   loadRoutineTemplate?(): Promise<RoutineTemplate | null>;
   saveRoutineTemplate?(template: RoutineTemplate): Promise<void>;
+  checkAppUpdate?(): Promise<AppUpdateCheck>;
+  installAppUpdate?(): Promise<void>;
 }
 
 function assertRecord(value: unknown): Record<string, unknown> {
@@ -363,6 +373,26 @@ function validatePublisherResponse(value: unknown): PublisherHttpResponse {
   };
 }
 
+export function validateAppUpdateCheck(value: unknown): AppUpdateCheck {
+  const record = assertRecord(value);
+  assertExactKeys(record, ["currentVersion", "latestVersion", "available", "checked", "notes"]);
+  if (typeof record.available !== "boolean" || typeof record.checked !== "boolean") {
+    throw new Error("native update status is invalid");
+  }
+  const currentVersion = assertString(record.currentVersion, "currentVersion", 32);
+  const latestVersion = assertString(record.latestVersion, "latestVersion", 32);
+  if (!/^\d+\.\d+\.\d+$/.test(currentVersion) || !/^\d+\.\d+\.\d+$/.test(latestVersion)) {
+    throw new Error("native update version is invalid");
+  }
+  return {
+    currentVersion,
+    latestVersion,
+    available: record.available,
+    checked: record.checked,
+    notes: record.notes === null || record.notes === undefined ? null : assertString(record.notes, "notes", 4000),
+  };
+}
+
 async function defaultInvoke(command: string, args?: Record<string, unknown>): Promise<unknown> {
   const module = await import("@tauri-apps/api/core");
   return module.invoke(command, args);
@@ -549,6 +579,14 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
         throw new Error("native pending journals are invalid");
       }
       return value as string[];
+    },
+    async checkAppUpdate() {
+      return validateAppUpdateCheck(await invoke("check_app_update"));
+    },
+    async installAppUpdate() {
+      // The native side re-checks the signed manifest and verifies the
+      // installer signature; the renderer never supplies a download URL.
+      await invoke("install_app_update");
     },
   };
 }

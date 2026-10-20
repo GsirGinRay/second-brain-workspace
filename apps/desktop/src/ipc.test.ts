@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createNativeAdapter,
+  validateAppUpdateCheck,
   validateDeviceIdentity,
   validateSignResponse,
   type NativeInvoke,
@@ -217,4 +218,50 @@ test("publisher HTTP IPC validates the narrow structured response contract", asy
     origin: "https://brain.example.com", method: "GET", path: "/api/brain/device/state",
     body: null, headers: {}, signed: true,
   }), /unknown|secret/i);
+});
+
+test("update IPC validates the signed-updater status contract", async () => {
+  const status = validateAppUpdateCheck({
+    currentVersion: "0.5.1",
+    latestVersion: "0.6.0",
+    available: true,
+    checked: true,
+    notes: "自動儲存與返回上一頁",
+  });
+  assert.equal(status.available, true);
+  assert.equal(status.notes, "自動儲存與返回上一頁");
+
+  assert.throws(
+    () => validateAppUpdateCheck({
+      currentVersion: "0.5.1",
+      latestVersion: "0.6.0",
+      available: true,
+      checked: true,
+      notes: null,
+      installerUrl: "https://evil.example/update.exe",
+    }),
+    /unknown|installerUrl/i,
+  );
+  assert.throws(
+    () => validateAppUpdateCheck({
+      currentVersion: "0.5.1",
+      latestVersion: "latest",
+      available: true,
+      checked: true,
+      notes: null,
+    }),
+    /version/i,
+  );
+
+  const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+  const adapter = createNativeAdapter(async (command, args) => {
+    calls.push([command, args]);
+    if (command === "check_app_update") {
+      return { currentVersion: "0.5.1", latestVersion: "0.5.1", available: false, checked: true, notes: null };
+    }
+    return undefined;
+  });
+  assert.equal((await adapter.checkAppUpdate!()).available, false);
+  await adapter.installAppUpdate!();
+  assert.deepEqual(calls.at(-1), ["install_app_update", undefined], "the renderer never chooses the download URL");
 });

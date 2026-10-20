@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Archive,
+  ArrowLeft,
+  ArrowRight,
   BookPlus,
   CalendarDays,
   CheckCircle2,
@@ -90,6 +92,7 @@ import {
 } from "./device-client";
 import {
   createNativeAdapter,
+  type AppUpdateCheck,
   type DiagnosticsSnapshot,
   type NativeAdapter,
 } from "./ipc";
@@ -160,6 +163,7 @@ import {
   todayTraySegmentKey,
   withReassignedRanks,
 } from "./task-reorder";
+import { emptyViewHistory, goBack, goForward, navigateTo, type ViewHistory } from "./view-history";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH } from "./architecture";
 import "./styles.css";
 
@@ -227,6 +231,8 @@ function ViewIcon({ view }: { view: View }) {
 }
 const taipeiDateKey = () => dateKeyForTaipei(new Date());
 const PENDING_PROJECT_DELETIONS_KEY = "second-brain.pendingProjectDeletions";
+const UPDATE_DISMISSED_KEY = "second-brain.dismissedUpdateVersion";
+const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000;
 function loadUiPreferences(): UiPreferences {
   try {
     return normalizeUiPreferences(JSON.parse(localStorage.getItem(UI_PREFERENCES_KEY) ?? "null"));
@@ -276,7 +282,13 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     [providedAdapter],
   );
   const attachmentApi = useMemo(() => createAttachmentApi(native), [native]);
-  const [view, setView] = useState<View>("today");
+  const [viewHistory, setViewHistory] = useState<ViewHistory<View>>(() => emptyViewHistory<View>("today"));
+  const view = viewHistory.current;
+  const setView = useCallback((next: View) => setViewHistory((history) => navigateTo(history, next)), []);
+  const goBackView = useCallback(() => setViewHistory(goBack), []);
+  const goForwardView = useCallback(() => setViewHistory(goForward), []);
+  const previousView = viewHistory.back.at(-1) ?? null;
+  const nextView = viewHistory.forward[0] ?? null;
   const [preferences, setPreferences] = useState<UiPreferences>(loadUiPreferences);
   const t = useCallback<Translate>(
     (key, values) => translate(preferences.language, key, values),
@@ -361,6 +373,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [scaffoldPreviewPaths, setScaffoldPreviewPaths] = useState<string[]>([]);
   const [pendingLayoutPlan, setPendingLayoutPlan] = useState<LayoutMigrationPlan | null>(null);
   const [pendingLayoutFiles, setPendingLayoutFiles] = useState<LocalMarkdownFile[] | null>(null);
+  const [appUpdate, setAppUpdate] = useState<AppUpdateCheck | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updatePromptOpen, setUpdatePromptOpen] = useState(false);
 
   const promptCollections = collections.filter((item) =>
     (item.category ?? "").trim().toLowerCase().startsWith("提示詞"),
@@ -424,6 +439,53 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   // waiting for a React re-render between them.
   const latestFilesRef = useRef<LocalMarkdownFile[]>([]);
   useEffect(() => { latestFilesRef.current = files; }, [files]);
+  const checkAppUpdate = useCallback(async (promptIfAvailable = false, showBusy = false) => {
+    if (!native.checkAppUpdate) return;
+    if (showBusy) setUpdateBusy(true);
+    try {
+      const status = await native.checkAppUpdate();
+      setAppUpdate(status);
+      if (promptIfAvailable && status.available) {
+        const dismissed = localStorage.getItem(UPDATE_DISMISSED_KEY);
+        if (dismissed !== status.latestVersion) setUpdatePromptOpen(true);
+      }
+    } catch {
+      setAppUpdate((current) => current
+        ? { ...current, available: false, checked: false }
+        : current);
+    } finally {
+      if (showBusy) setUpdateBusy(false);
+    }
+  }, [native]);
+  // Check at launch and again every few hours: the app often stays open for days.
+  useEffect(() => {
+    void checkAppUpdate(true);
+    const timer = window.setInterval(() => void checkAppUpdate(true), UPDATE_RECHECK_MS);
+    return () => window.clearInterval(timer);
+  }, [checkAppUpdate]);
+  const installAppUpdate = useCallback(async () => {
+    if (!appUpdate?.available) return;
+    setUpdateBusy(true);
+    setError("");
+    try {
+      // Installing exits the app, so close detail views (their unmount flushes
+      // pending autosaves) and wait for every queued Markdown write first.
+      setDetailTargets([]);
+      setActiveDetailKey(null);
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+      await (pendingPersistRef.current ?? Promise.resolve(true));
+      // Native code downloads, verifies the signature, installs and restarts.
+      await native.installAppUpdate?.();
+    } catch (cause) {
+      setError(`${t("update.failed")}：${describeError(cause, "UPDATE_FAILED")}`);
+    } finally {
+      setUpdateBusy(false);
+    }
+  }, [appUpdate, native, t]);
+  const dismissAppUpdate = useCallback(() => {
+    if (appUpdate?.latestVersion) localStorage.setItem(UPDATE_DISMISSED_KEY, appUpdate.latestVersion);
+    setUpdatePromptOpen(false);
+  }, [appUpdate?.latestVersion]);
   const cloudEtagRef = useRef<string | null>(null);
   const routineTemplateRef = useRef(routineTemplate);
   const allowCloseRef = useRef(false);
@@ -984,6 +1046,39 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  // Alt+←/→ and the mouse side buttons step through visited views, like a browser.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      // Board cards use Alt+←/→ to move between lanes and mark the event handled.
+      if (event.defaultPrevented || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return;
+      // Leaving a view unmounts its open capture form, so never navigate while typing or in a dialog.
+      if (isEditableElement(event.target) || document.querySelector("[aria-modal='true']")) return;
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        goBackView();
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        goForwardView();
+      }
+    };
+    const onMouseUp = (event: MouseEvent) => {
+      if ((event.button === 3 || event.button === 4) && document.querySelector("[aria-modal='true']")) return;
+      if (event.button === 3) {
+        event.preventDefault();
+        goBackView();
+      } else if (event.button === 4) {
+        event.preventDefault();
+        goForwardView();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [goBackView, goForwardView]);
 
   useEffect(() => {
     let debounce: number | undefined;
@@ -1636,6 +1731,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onSave={persistLocal}
         onDelete={permanentlyDeleteTask}
         onOpenTask={(id) => openDetail("task", id)}
+        onCreateProject={(name) => createProject(name, null, null)}
         onPromote={(task) => {
           setKnowledgeSeed(null);
           setPromotedTask(task);
@@ -1716,6 +1812,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         onShadow={returnToShadowMode}
         onOpenArchitecture={() => setArchitectureOpen(true)}
         onPreviewLayout={() => void prepareLayoutMigration()}
+        appUpdate={appUpdate}
+        updateBusy={updateBusy}
+        onCheckUpdate={() => void checkAppUpdate(true, true)}
+        onInstallUpdate={() => void installAppUpdate()}
       />
     );
 
@@ -1762,6 +1862,26 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             >
               <Menu aria-hidden="true" />
             </button>
+            <div className="view-history-nav">
+              <button
+                className="icon-button"
+                disabled={!previousView}
+                aria-label={previousView ? t("app.back", { view: t(VIEW_KEYS[previousView]) }) : t("app.backDisabled")}
+                title={previousView ? `${t("app.back", { view: t(VIEW_KEYS[previousView]) })} · Alt+←` : t("app.backDisabled")}
+                onClick={goBackView}
+              >
+                <ArrowLeft aria-hidden="true" />
+              </button>
+              <button
+                className="icon-button"
+                disabled={!nextView}
+                aria-label={nextView ? t("app.forward", { view: t(VIEW_KEYS[nextView]) }) : t("app.forwardDisabled")}
+                title={nextView ? `${t("app.forward", { view: t(VIEW_KEYS[nextView]) })} · Alt+→` : t("app.forwardDisabled")}
+                onClick={goForwardView}
+              >
+                <ArrowRight aria-hidden="true" />
+              </button>
+            </div>
             <div>
               <h1>{t(VIEW_TITLE_KEYS[view])}</h1>
               <p>{status}</p>
@@ -1983,6 +2103,19 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           }}
         />
       )}
+      <ActionConfirmDialog
+        open={updatePromptOpen && Boolean(appUpdate?.available)}
+        title={t("update.promptTitle")}
+        message={appUpdate
+          ? t("update.promptMessage", { current: appUpdate.currentVersion, latest: appUpdate.latestVersion })
+          : ""}
+        confirmLabel={updateBusy ? t("update.installing") : t("update.install")}
+        cancelLabel={t("update.later")}
+        tone="primary"
+        busy={updateBusy}
+        onCancel={dismissAppUpdate}
+        onConfirm={() => { void installAppUpdate(); }}
+      />
       <ActionConfirmDialog
         open={Boolean(pendingCompleteProject)}
         title={t("project.complete.title")}
@@ -2947,6 +3080,9 @@ function QuickAddModal({
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [projectId, setProjectId] = useState(initialProjectId ?? "");
+  // A project created from this dialog is not in `projects` until the vault
+  // rescan finishes, so keep the picked snapshot to bind the task reliably.
+  const [pickedProject, setPickedProject] = useState<BrainProjectSnapshot | null>(null);
   const [ideaInbox, setIdeaInbox] = useState(false);
   const [taskDate, setTaskDate] = useState(initialDate ?? taipeiDateKey());
   const [startTime, setStartTime] = useState(initialStartTime ?? "");
@@ -2956,7 +3092,8 @@ function QuickAddModal({
   useEffect(() => titleRef.current?.focus(), []);
   const submit = () => {
     if (!title.trim()) return false;
-    const project = projects.find((item) => item.id === projectId);
+    const project = projects.find((item) => item.id === projectId)
+      ?? (pickedProject && projectId && pickedProject.id === projectId ? pickedProject : undefined);
     const task = newTask(title, {
       taskDate: ideaInbox ? null : taskDate || null,
       startTime: ideaInbox ? null : startTime || null,
@@ -3060,7 +3197,10 @@ function QuickAddModal({
             <ProjectPicker
               projects={projects}
               valueId={projectId || null}
-              onSelect={(project) => setProjectId(project?.id ?? "")}
+              onSelect={(project) => {
+                setProjectId(project?.id ?? "");
+                setPickedProject(project);
+              }}
               onCreateProject={onCreateProject}
               locale={preferences.language}
               ariaLabel={t("task.field.project")}
@@ -3761,6 +3901,7 @@ export function Calendar({
   onSave,
   onDelete,
   onOpenTask,
+  onCreateProject,
   onPromote,
 }: {
   tasks: BrainTaskSnapshot[];
@@ -3770,6 +3911,7 @@ export function Calendar({
   onSave: (tasks: BrainTaskSnapshot[]) => void;
   onDelete: (task: BrainTaskSnapshot) => void;
   onOpenTask: (taskId: string) => void;
+  onCreateProject?: (name: string) => Promise<{ id: string; name: string } | null>;
   onPromote: (task: BrainTaskSnapshot) => void;
 }) {
   const { preferences, t } = useUiPreferences();
@@ -4749,6 +4891,7 @@ export function Calendar({
           projects={projects}
           initialDate={selected}
           forceDate
+          onCreateProject={onCreateProject}
           onClose={() => setQuickAddOpen(false)}
           onSave={(next) => {
             setQuickAddOpen(false);
@@ -5415,6 +5558,10 @@ function SyncSettings({
   onShadow,
   onOpenArchitecture,
   onPreviewLayout,
+  appUpdate,
+  updateBusy,
+  onCheckUpdate,
+  onInstallUpdate,
 }: {
   diagnostics: DiagnosticsSnapshot | null;
   serverOrigin: string;
@@ -5434,6 +5581,10 @@ function SyncSettings({
   onShadow: () => void;
   onOpenArchitecture: () => void;
   onPreviewLayout: () => void;
+  appUpdate: AppUpdateCheck | null;
+  updateBusy: boolean;
+  onCheckUpdate: () => void;
+  onInstallUpdate: () => void;
 }) {
   const { preferences, setPreferences, t } = useUiPreferences();
   const cloudEnabled = diagnostics?.syncEnabled === true;
@@ -5451,6 +5602,24 @@ function SyncSettings({
   ];
   return (
     <div className="settings-grid">
+      <section className="settings-card">
+        <h2>{t("update.title")}</h2>
+        <p>{t("update.hint")}</p>
+        {appUpdate && <p>{t("update.current", { version: appUpdate.currentVersion })}</p>}
+        {appUpdate?.available && <p><strong>{t("update.latest", { version: appUpdate.latestVersion })}</strong></p>}
+        {appUpdate?.checked && !appUpdate.available && <p>{t("update.none")}</p>}
+        {appUpdate && !appUpdate.checked && <p>{t("update.offline")}</p>}
+        <div className="input-action">
+          <button className="secondary-button" disabled={working || updateBusy} onClick={onCheckUpdate}>
+            {updateBusy ? t("update.checking") : t("update.check")}
+          </button>
+          {appUpdate?.available && (
+            <button className="primary" disabled={working || updateBusy} onClick={onInstallUpdate}>
+              {updateBusy ? t("update.installing") : t("update.install")}
+            </button>
+          )}
+        </div>
+      </section>
       <section className="settings-card">
         <h2>{t("settings.language")}</h2>
         <p>{t("settings.language.hint")}</p>

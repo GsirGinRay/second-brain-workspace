@@ -61,6 +61,13 @@ test("Traditional Chinese project view labels do not mix in English View", () =>
   assert.doesNotMatch(translate("zh-TW", "project.view.board"), /View/i);
 });
 
+test("update copy is localized and written for members, not maintainers", () => {
+  assert.equal(translate("zh-TW", "update.install"), "立即更新");
+  assert.equal(translate("en", "update.install"), "Update now");
+  assert.match(translate("zh-TW", "update.promptMessage", { current: "0.5.0", latest: "0.5.1" }), /0\.5\.1/);
+  assert.doesNotMatch(translate("zh-TW", "update.hint"), /GitHub|push/i);
+});
+
 test("Traditional Chinese board view labels do not mix in English View", () => {
   assert.equal(translate("zh-TW", "board.view"), "檢視樣式");
   assert.equal(translate("zh-TW", "board.view.board"), "看板");

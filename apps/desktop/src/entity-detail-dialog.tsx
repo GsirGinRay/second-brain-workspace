@@ -1,14 +1,14 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   Archive,
   BookPlus,
+  Check,
   CheckCircle2,
   FolderKanban,
   Maximize2,
   Minimize2,
   Plus,
   RotateCcw,
-  Save,
   X,
 } from "lucide-react";
 import {
@@ -139,6 +139,8 @@ function DetailDialog({
   useEffect(() => {
     if (!dockedPanel) return;
     const onMouseDown = (event: MouseEvent) => {
+      // Mouse back/forward buttons navigate views; they must not replay a click.
+      if (event.button !== 0) return;
       const target = event.target as Element | null;
       if (!target || dialogRef.current?.contains(target)) return;
       if (target.closest(".delete-confirm-backdrop, .delete-confirm-dialog, .action-confirm-backdrop, .action-confirm-dialog")) return;
@@ -310,6 +312,118 @@ function useSaveShortcut(save: () => void) {
   }, []);
 }
 
+const DEFAULT_AUTOSAVE_DELAY_MS = 1200;
+type AutosaveState = "saved" | "pending" | "saving" | "failed";
+
+/**
+ * Field-level rebase for a draft whose source changed underneath it (vault
+ * watcher, sync, a board action): fields the user edited since `base` win,
+ * every other field adopts `next`. Autosave then never writes a stale value
+ * over an outside edit the user did not touch.
+ */
+export function rebaseDraft<T extends object>(base: T, draft: T, next: T): T {
+  const result = { ...next };
+  for (const key of Object.keys(draft) as (keyof T)[]) {
+    if (!Object.is(draft[key], base[key])) result[key] = draft[key];
+  }
+  return result;
+}
+
+/**
+ * Owns every write of a detail draft: a debounced autosave after the user
+ * pauses, explicit saves that wait for an in-flight write instead of being
+ * dropped, no retry loop after a failed write (the next edit retries), and a
+ * final flush when the dialog unmounts without going through close.
+ */
+function useDraftPersistence<T>({
+  draft,
+  dirty,
+  canSave,
+  write,
+  delayMs,
+}: {
+  draft: T;
+  dirty: boolean;
+  canSave: boolean;
+  write: (draft: T) => Promise<boolean> | boolean;
+  delayMs: number;
+}): { save: () => Promise<boolean>; saving: boolean; state: AutosaveState } {
+  const [saving, setSaving] = useState(false);
+  const latestRef = useRef({ draft, dirty, canSave, write });
+  latestRef.current = { draft, dirty, canSave, write };
+  const inflightRef = useRef<Promise<boolean> | null>(null);
+  const lastSavedRef = useRef<T | null>(null);
+  const failedRef = useRef<T | null>(null);
+  // Mirrors failedRef so a failed write re-renders the status even when the
+  // saving flag flips on and off within one batch.
+  const [failedDraft, setFailedDraft] = useState<T | null>(null);
+  const mountedRef = useRef(true);
+
+  const save = useCallback(async (): Promise<boolean> => {
+    if (inflightRef.current) await inflightRef.current;
+    const { draft: snapshot, canSave: allowed, write: persist } = latestRef.current;
+    if (!allowed) return false;
+    if (snapshot === lastSavedRef.current) return true;
+    const run = (async () => {
+      if (mountedRef.current) setSaving(true);
+      try {
+        const ok = await persist(snapshot);
+        if (ok) {
+          lastSavedRef.current = snapshot;
+          failedRef.current = null;
+        } else {
+          failedRef.current = snapshot;
+        }
+        if (mountedRef.current) setFailedDraft(failedRef.current);
+        return ok;
+      } catch {
+        failedRef.current = snapshot;
+        if (mountedRef.current) setFailedDraft(snapshot);
+        return false;
+      } finally {
+        if (mountedRef.current) setSaving(false);
+      }
+    })();
+    inflightRef.current = run;
+    try {
+      return await run;
+    } finally {
+      if (inflightRef.current === run) inflightRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!dirty || !canSave || draft === lastSavedRef.current || draft === failedDraft) return;
+    const timer = window.setTimeout(() => void save(), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [draft, dirty, canSave, delayMs, save, failedDraft]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const { draft: pending, dirty: unsaved, canSave: allowed } = latestRef.current;
+      if (unsaved && allowed && pending !== lastSavedRef.current && pending !== failedRef.current) void save();
+    };
+  }, [save]);
+
+  const state: AutosaveState = saving
+    ? "saving"
+    : !dirty || draft === lastSavedRef.current
+      ? "saved"
+      : draft === failedDraft ? "failed" : "pending";
+  return { save, saving, state };
+}
+
+function AutosaveStatus({ state, t }: { state: AutosaveState; t: DetailTranslate }) {
+  return (
+    <span className={`detail-autosave-status is-${state}`} role="status" aria-live="polite">
+      {state === "saved" && <Check aria-hidden="true" />}
+      {t(`detail.autosave.${state}`)}
+    </span>
+  );
+}
+
 export function TaskDetailDialog({
   task,
   projects,
@@ -325,6 +439,7 @@ export function TaskDetailDialog({
   onDelete,
   onCreateProject,
   onSaveAsKnowledge,
+  autosaveDelayMs = DEFAULT_AUTOSAVE_DELAY_MS,
 }: {
   task: BrainTaskSnapshot;
   projects: BrainProjectSnapshot[];
@@ -340,15 +455,17 @@ export function TaskDetailDialog({
   onDelete: (task: BrainTaskSnapshot) => void;
   onCreateProject?: (name: string) => Promise<CreatedProject | null>;
   onSaveAsKnowledge?: (task: BrainTaskSnapshot) => void;
+  autosaveDelayMs?: number;
 }) {
-  const [draft, setDraft] = useState({ ...task, title: visibleTaskTitle(task.title) });
-  const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    setDraft((current) => {
-      if (current.id === task.id) return current;
-      return { ...task, title: visibleTaskTitle(task.title) };
-    });
-  }, [task]);
+  const normalized = useMemo(() => ({ ...task, title: visibleTaskTitle(task.title) }), [task]);
+  const [draft, setDraft] = useState(normalized);
+  const baseRef = useRef(normalized);
+  useLayoutEffect(() => {
+    const base = baseRef.current;
+    baseRef.current = normalized;
+    if (base === normalized) return;
+    setDraft((current) => current.id === normalized.id ? rebaseDraft(base, current, normalized) : normalized);
+  }, [normalized]);
   const dirty = visibleTaskTitle(draft.title) !== visibleTaskTitle(task.title)
     || (draft.body ?? "") !== (task.body ?? "")
     || draft.status !== task.status
@@ -368,15 +485,13 @@ export function TaskDetailDialog({
       projectName: project?.name ?? null,
     }));
   };
-  const save = async (): Promise<boolean> => {
-    if (!draft.title.trim() || saving) return false;
-    setSaving(true);
-    try {
-      return await onSave({ ...draft, title: visibleTaskTitle(draft.title) });
-    } finally {
-      setSaving(false);
-    }
-  };
+  const { save, saving, state: autosaveState } = useDraftPersistence({
+    draft,
+    dirty,
+    canSave: Boolean(draft.title.trim()),
+    write: (next) => onSave({ ...next, title: visibleTaskTitle(next.title) }),
+    delayMs: autosaveDelayMs,
+  });
   // Clicking outside / Escape / the × saves work in progress automatically;
   // only an untitled draft still asks before being thrown away.
   const commitBefore = async (action: () => void): Promise<boolean> => {
@@ -395,10 +510,6 @@ export function TaskDetailDialog({
   };
   const requestClose = () => commitBefore(onClose);
   const requestTabChange = (key: string) => commitBefore(() => onSelectTab?.(key));
-  const cancel = () => {
-    if (dirty && !confirmDiscard(locale)) return;
-    onClose();
-  };
   useSaveShortcut(() => void save());
 
   return (
@@ -461,8 +572,8 @@ export function TaskDetailDialog({
             )}
           </div>
           <div>
-            <button type="button" className="secondary-button" onClick={cancel}>{t("app.cancel")}</button>
-            <button type="button" className="primary action-with-icon" disabled={!dirty || !draft.title.trim() || saving} onClick={() => void save()}><Save aria-hidden="true" />{t("app.save")}</button>
+            <AutosaveStatus state={autosaveState} t={t} />
+            <button type="button" className="primary action-with-icon" disabled={!draft.title.trim() || saving} onClick={() => void requestClose()}><Check aria-hidden="true" />{t("detail.done")}</button>
           </div>
         </div>
       </div>
@@ -588,6 +699,7 @@ export function ProjectDetailDialog({
   onDeleteProjectTask,
   relatedKnowledge = [],
   onOpenKnowledge,
+  autosaveDelayMs = DEFAULT_AUTOSAVE_DELAY_MS,
 }: {
   project: BrainProjectSnapshot;
   openTasks: number;
@@ -615,10 +727,14 @@ export function ProjectDetailDialog({
   onDeleteProjectTask: (task: BrainTaskSnapshot) => void;
   relatedKnowledge?: { id: string; name: string; category: string | null }[];
   onOpenKnowledge?: (id: string) => void;
+  autosaveDelayMs?: number;
 }) {
   const [draft, setDraft] = useState(project);
-  const [saving, setSaving] = useState(false);
+  const baseRef = useRef(project);
   useLayoutEffect(() => {
+    const base = baseRef.current;
+    baseRef.current = project;
+    if (base === project) return;
     setDraft((current) => {
       if (current.id !== project.id) return project;
       // Completing/archiving from the board (or another tab) must replace a
@@ -629,19 +745,18 @@ export function ProjectDetailDialog({
       if (current.status !== project.status && (terminal(project.status) || terminal(current.status))) {
         return project;
       }
-      return current;
+      return rebaseDraft(base, current, project);
     });
   }, [project]);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(project);
-  const save = async (): Promise<boolean> => {
-    if (!draft.name.trim() || saving) return false;
-    setSaving(true);
-    try {
-      return await onSave({ ...draft, name: draft.name.trim() });
-    } finally {
-      setSaving(false);
-    }
-  };
+  // Names are written trimmed, so compare trimmed to avoid a permanently dirty draft.
+  const dirty = JSON.stringify({ ...draft, name: draft.name.trim() }) !== JSON.stringify(project);
+  const { save, saving, state: autosaveState } = useDraftPersistence({
+    draft,
+    dirty,
+    canSave: Boolean(draft.name.trim()),
+    write: (next) => onSave({ ...next, name: next.name.trim() }),
+    delayMs: autosaveDelayMs,
+  });
   const commitBefore = async (action: () => void): Promise<boolean> => {
     if (!dirty) {
       action();
@@ -658,10 +773,6 @@ export function ProjectDetailDialog({
   };
   const requestClose = () => commitBefore(onClose);
   const requestTabChange = (key: string) => commitBefore(() => onSelectTab?.(key));
-  const cancel = () => {
-    if (dirty && !confirmDiscard(locale)) return;
-    onClose();
-  };
   useSaveShortcut(() => void save());
 
   return (
@@ -726,8 +837,8 @@ export function ProjectDetailDialog({
             >{t("project.action.delete")}</DangerConfirmButton>
           </div>
           <div>
-            <button type="button" className="secondary-button" onClick={cancel}>{t("app.cancel")}</button>
-            <button type="button" className="primary action-with-icon" disabled={!dirty || !draft.name.trim() || saving} onClick={() => void save()}><Save aria-hidden="true" />{t("app.save")}</button>
+            <AutosaveStatus state={autosaveState} t={t} />
+            <button type="button" className="primary action-with-icon" disabled={!draft.name.trim() || saving} onClick={() => void requestClose()}><Check aria-hidden="true" />{t("detail.done")}</button>
           </div>
         </div>
       </div>
