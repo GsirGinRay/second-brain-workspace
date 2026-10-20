@@ -889,3 +889,11 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .quick-natural-hint svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .quick-natural-ignore { margin-left: auto; border: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; font-size: 12px; padding: 2px 4px; }
 [data-theme="dark"] .quick-natural-hint { background: #1d3328; color: #9fe0bb; }
+.update-notice { position: fixed; right: 20px; bottom: 20px; z-index: 60; width: min(360px, calc(100vw - 32px)); border: 1px solid #b8d7c3; border-radius: 14px; background: #f3faf5; color: #1f4d2f; padding: 14px 16px; box-shadow: 0 12px 32px rgba(0, 0, 0, .14); }
+.update-notice header { display: flex; align-items: center; gap: 8px; }
+.update-notice header > svg { width: 18px; height: 18px; flex: none; }
+.update-notice header strong { flex: 1; }
+.update-notice header button { display: grid; place-items: center; border: 0; background: transparent; color: inherit; padding: 2px; }
+.update-notice header button svg { width: 16px; height: 16px; }
+.update-notice ul { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 5px; font-size: 13px; line-height: 1.5; }
+[data-theme="dark"] .update-notice { border-color: #2f5a3d; background: #17251c; color: #cfe8d6; }

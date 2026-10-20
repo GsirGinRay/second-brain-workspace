@@ -175,6 +175,7 @@ import {
 import { emptyViewHistory, goBack, goForward, navigateTo, type ViewHistory } from "./view-history";
 import { APP_VERSION } from "./app-version";
 import { ShortcutsDialog, isShortcutHelpKey } from "./shortcuts-help";
+import { UpdateNotice, consumeUpdateNotice } from "./whats-new";
 import { parseNaturalDate, type NaturalDateMatch } from "./natural-date";
 import { rebaseWorkspace } from "./workspace-rebase";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH } from "./architecture";
@@ -326,6 +327,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [projects, setProjects] = useState<BrainProjectSnapshot[]>(initialDraft.projects);
   const [collections, setCollections] = useState<BrainCollectionSnapshot[]>(initialDraft.collections);
   const [onboardingOpen, setOnboardingOpen] = useState(() => localStorage.getItem("second-brain.onboardingCompleted") !== "true");
+  // Read before onboarding writes its flag, so only real updates are announced.
+  const [updateNoticeOpen, setUpdateNoticeOpen] = useState(() => !providedAdapter && consumeUpdateNotice(localStorage, APP_VERSION));
   const [closeGuardOpen, setCloseGuardOpen] = useState(false);
   const [selectedBoardProjectId, setSelectedBoardProjectId] = useState<string | null>(null);
   const [pendingCompleteProjectId, setPendingCompleteProjectId] = useState<string | null>(null);
@@ -2103,6 +2106,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         />
       )}
       {shortcutsOpen && <ShortcutsDialog t={t} onClose={() => setShortcutsOpen(false)} />}
+      {updateNoticeOpen && <UpdateNotice version={APP_VERSION} t={t} onClose={() => setUpdateNoticeOpen(false)} />}
       {searchOpen && (
         <WorkspaceSearch
           tasks={tasks}

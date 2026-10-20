@@ -1,6 +1,6 @@
 [package]
 name = "second-brain-workspace"
-version = "0.6.1"
+version = "0.6.2"
 description = "Native local-first second brain workspace"
 authors = ["Second Brain Workspace"]
 edition = "2021"

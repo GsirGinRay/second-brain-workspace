@@ -18,3 +18,4 @@ import "./view-history.test";
 import "./shortcuts-help.test";
 import "./natural-date.test";
 import "./workspace-rebase.test";
+import "./whats-new.test";
