@@ -164,6 +164,7 @@ import {
   withReassignedRanks,
 } from "./task-reorder";
 import { emptyViewHistory, goBack, goForward, navigateTo, type ViewHistory } from "./view-history";
+import { APP_VERSION } from "./app-version";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH } from "./architecture";
 import "./styles.css";
 
@@ -1849,6 +1850,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         <div className="sidebar-foot">
           <span className={`dot ${navigator.onLine ? "online" : ""}`} />
           <span>{navigator.onLine ? t("app.online") : t("app.offline")}</span>
+          <span className="app-version" title={t("update.current", { version: APP_VERSION })}>v{APP_VERSION}</span>
         </div>
       </aside>
       <main className="main">
@@ -5605,7 +5607,7 @@ function SyncSettings({
       <section className="settings-card">
         <h2>{t("update.title")}</h2>
         <p>{t("update.hint")}</p>
-        {appUpdate && <p>{t("update.current", { version: appUpdate.currentVersion })}</p>}
+        <p>{t("update.current", { version: appUpdate?.currentVersion ?? APP_VERSION })}</p>
         {appUpdate?.available && <p><strong>{t("update.latest", { version: appUpdate.latestVersion })}</strong></p>}
         {appUpdate?.checked && !appUpdate.available && <p>{t("update.none")}</p>}
         {appUpdate && !appUpdate.checked && <p>{t("update.offline")}</p>}
