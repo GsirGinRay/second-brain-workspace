@@ -53,7 +53,8 @@ export function scheduleTask(
     ...task,
     taskDate,
     startTime,
-    durationMinutes: startTime ? (task.durationMinutes ?? 30) : null,
+    // Unscheduling keeps the estimate so the task can be planned again.
+    durationMinutes: startTime ? (task.durationMinutes ?? 30) : (task.durationMinutes ?? null),
     timeZone: startTime ? "Asia/Taipei" : task.timeZone,
   };
 }

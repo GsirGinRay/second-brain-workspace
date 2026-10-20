@@ -116,7 +116,8 @@ test("calendar scheduling moves only the task date and next-week priorities excl
   assert.equal(timed.durationMinutes, 30);
   const cleared = scheduleTask(timed, "2026-08-15", null);
   assert.equal(cleared.startTime, null);
-  assert.equal(cleared.durationMinutes, null);
+  // The estimate survives unscheduling so the task can be planned again.
+  assert.equal(cleared.durationMinutes, 30);
   const next = nextWeekPriorities([
     { ...task("p1", "2026-08-13", "highest") },
     { ...task("p2", "2026-08-18", "high") },

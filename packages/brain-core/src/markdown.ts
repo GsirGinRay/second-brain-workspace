@@ -494,9 +494,10 @@ function parsedTaskFromAnalysis(
     sourceHeading: null,
     completedAt: dateValue("completedAt"),
     startTime,
+    // Without a start time a visible ⏱ is a plain time estimate.
     durationMinutes: startTime
       ? (durationFromToken ?? markerValues.durationMinutes ?? 30)
-      : null,
+      : durationFromToken,
     timeZone: markerValues.timeZone ?? "Asia/Taipei",
     lineIndex,
     rawLine: analysis.rawLine,
@@ -527,6 +528,8 @@ export function formatTaskLine(task: TaskLineInput): string {
   if (task.startTime) {
     parts.push("\u{23F0} " + task.startTime);
     parts.push("\u{23F1} " + (task.durationMinutes ?? 30) + "m");
+  } else if (task.durationMinutes) {
+    parts.push("\u{23F1} " + task.durationMinutes + "m");
   }
   if (task.status === "done" && task.completedAt) {
     parts.push("\u2705 " + task.completedAt);
@@ -597,7 +600,16 @@ function scheduleTokenEdits(
   const durationSpan = findSpan(analysis, "duration");
   if (!startTime) {
     if (timeSpan) edits.push(removeSpan(rawLine, timeSpan));
-    if (durationSpan) edits.push(removeSpan(rawLine, durationSpan));
+    // An unscheduled task may still carry a time estimate.
+    if (durationMinutes && durationSpan) {
+      if (durationSpan.value !== String(durationMinutes)) {
+        edits.push({ start: durationSpan.valueStart, end: durationSpan.valueEnd, replacement: String(durationMinutes) });
+      }
+    } else if (durationMinutes) {
+      edits.push(addTokenEdit(rawLine, analysis, `\u{23F1} ${durationMinutes}m`));
+    } else if (durationSpan) {
+      edits.push(removeSpan(rawLine, durationSpan));
+    }
     return edits;
   }
   const duration = durationMinutes ?? 30;
@@ -844,7 +856,7 @@ export function patchTaskLine(
       rawLine,
       analysis,
       desired.startTime ?? null,
-      desired.startTime ? (desired.durationMinutes ?? 30) : null,
+      desired.startTime ? (desired.durationMinutes ?? 30) : (desired.durationMinutes ?? null),
     ),
   );
 

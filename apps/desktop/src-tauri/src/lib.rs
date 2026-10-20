@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State, WindowEvent,
 };
 
@@ -790,30 +790,55 @@ fn set_close_behavior(
     Ok(())
 }
 
+/// Brings the hidden or minimized main window back to the front.
+fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "顯示第二大腦工作台", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "結束", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
-    TrayIconBuilder::new()
+    let mut builder = TrayIconBuilder::new()
         .menu(&menu)
         .tooltip("第二大腦工作台")
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+        // Left click opens the window; right click shows the menu.
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
             }
+        })
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => show_main_window(app),
             "quit" => app.exit(0),
             _ => {}
-        })
-        .build(app)?;
+        });
+    // Without an image Windows shows an invisible tray entry, so a window
+    // closed to the tray looked like the app had quit.
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
     Ok(())
 }
 
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
+        // Must be first: a second launch (desktop shortcut while the app sits
+        // in the tray) focuses this instance instead of starting another one.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(quick_capture::plugin())
         .plugin(reminders::plugin())

@@ -139,3 +139,17 @@ test("snapshots with an unknown rule still load, with the rule dropped", async (
   assert.equal(BrainTaskSnapshotSchema.parse({ ...base, recurrence: "Every Monday" }).recurrence, "every week on Monday");
   assert.equal("recurrence" in BrainTaskSnapshotSchema.parse(base), false);
 });
+
+test("an unscheduled task keeps a plain time estimate", () => {
+  const base = parseTaskLine("- [ ] #task 寫提案 ⏳ 2026-10-20", "a.md", 0)!;
+  const estimated = patchTaskLine(base.rawLine, { ...base, id: "t", rank: "a", durationMinutes: 90 });
+  assert.match(estimated, /⏱ 90m/);
+  assert.doesNotMatch(estimated, /⏰/);
+  const parsed = parseTaskLine(estimated, "a.md", 0)!;
+  assert.equal(parsed.durationMinutes, 90);
+  assert.equal(parsed.startTime, null);
+  assert.equal(parseTaskLine(patchTaskLine(estimated, { ...parsed, durationMinutes: null }), "a.md", 0)?.durationMinutes, null);
+  assert.match(formatTaskLine({ ...parsed, durationMinutes: 45 }), /⏱ 45m/);
+  // Untouched lines with an estimate are not rewritten.
+  assert.equal(patchTaskLine(estimated, parsed), estimated);
+});
