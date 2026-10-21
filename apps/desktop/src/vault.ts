@@ -81,7 +81,10 @@ const TASK_CONTENT_END = /^\s*<!-- second-brain-task-content:[0-9a-f-]{36}:end -
 
 function decodeBase64(value: string): Uint8Array {
   const binary = atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  // A plain loop: Uint8Array.from with a mapper was the slowest step of a scan.
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
 function encodeBase64(bytes: Uint8Array): string {
@@ -189,8 +192,9 @@ function appendMissingTasks(
   return next;
 }
 
-function findTaskLineIndexFromSource(source: string, taskId: string, relativePath = ""): number {
-  const lines = splitLines(source);
+/** Line index of every task id in the file; the first occurrence wins. */
+function indexTaskLines(lines: readonly string[], relativePath = ""): Map<string, number> {
+  const byId = new Map<string, number>();
   const inCodeFence = createCodeFenceTracker();
   let skipUntil = 0;
   for (let index = 0; index < lines.length; index += 1) {
@@ -199,9 +203,13 @@ function findTaskLineIndexFromSource(source: string, taskId: string, relativePat
     const parsed = parseTaskLine(lines[index]!, relativePath, index);
     if (!parsed?.id) continue;
     skipUntil = endIndexOfTaskBody(lines, index);
-    if (parsed.id === taskId) return index;
+    if (!byId.has(parsed.id)) byId.set(parsed.id, index);
   }
-  return -1;
+  return byId;
+}
+
+function findTaskLineIndexFromSource(source: string, taskId: string, relativePath = ""): number {
+  return indexTaskLines(splitLines(source), relativePath).get(taskId) ?? -1;
 }
 
 function projectIdentity(
@@ -210,7 +218,20 @@ function projectIdentity(
 ): string {
   if (task.projectId) return task.projectId;
   if (!task.projectName) return "";
-  return projects.find((item) => item.name === task.projectName)?.id ?? task.projectName;
+  return projectIdsByName(projects).get(task.projectName) ?? task.projectName;
+}
+
+// Every task of a save looks up its project; a linear find per task made
+// large vaults quadratic. The first project with a name wins, as find did.
+const projectIdCache = new WeakMap<readonly Pick<BrainProjectSnapshot, "id" | "name">[], Map<string, string | null>>();
+function projectIdsByName(projects: readonly Pick<BrainProjectSnapshot, "id" | "name">[]): Map<string, string | null> {
+  let byName = projectIdCache.get(projects);
+  if (!byName) {
+    byName = new Map();
+    for (const project of projects) if (!byName.has(project.name)) byName.set(project.name, project.id);
+    projectIdCache.set(projects, byName);
+  }
+  return byName;
 }
 
 function existingPathFor(relativePath: string, existingPaths: readonly string[]): string | undefined {
@@ -567,10 +588,41 @@ function taskLocations(files: LocalMarkdownFile[]): Map<string, TaskLocation> {
   return locations;
 }
 
+/** Field-by-field equality for flat snapshot records. */
+function sameRecord(left: object, right: object): boolean {
+  const a = left as Record<string, unknown>;
+  const b = right as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
+/**
+ * `base` is the snapshot scanned from these same `files`. Records equal to
+ * it already match the Markdown, so they are skipped: a save then costs what
+ * changed instead of re-processing every task in the vault.
+ */
 export function applyDesiredSnapshot(
   files: LocalMarkdownFile[],
   desired: SyncSnapshot,
+  base?: Pick<SyncSnapshot, "tasks" | "projects" | "collections">,
 ): MarkdownChange[] {
+  const unchangedIn = <T extends { id: string | null }>(items: readonly T[] | undefined) => {
+    const byId = new Map((items ?? []).flatMap((item) => item.id ? [[item.id, item] as const] : []));
+    return (item: T) => Boolean(base && item.id && byId.has(item.id) && sameRecord(byId.get(item.id)!, item));
+  };
+  const projectUnchanged = unchangedIn(base?.projects);
+  const collectionUnchanged = unchangedIn(base?.collections);
+  // A changed project can move or re-home its tasks, and a rewritten project
+  // or collection body puts back the task lines it was saved with. Tasks are
+  // therefore only skipped while every document is exactly as scanned.
+  const projectsUnchanged = Boolean(base)
+    && desired.projects.length === base!.projects.length
+    && desired.projects.every(projectUnchanged)
+    && (desired.collections ?? []).every(collectionUnchanged);
+  const baseTaskUnchanged = unchangedIn(base?.tasks);
+  const taskUnchanged = (task: BrainTaskSnapshot) => projectsUnchanged && baseTaskUnchanged(task);
   const byPath = new Map(files.map((file) => [file.relativePath, file]));
   const currentSources = new Map(files.map((file) => [file.relativePath, decodeFile(file)]));
   const resolvePath = (relativePath: string | null | undefined): string | undefined => {
@@ -593,6 +645,7 @@ export function applyDesiredSnapshot(
   // Notes (attachments, prose) are compared without task lines so saving a
   // picture cannot wait on a byte-identical round-trip of every `#task` line.
   for (const project of desired.projects) {
+    if (projectUnchanged(project)) continue;
     const relativePath = resolvePath(project.sourcePath);
     if (!project.id || !relativePath) continue;
     const source = currentSources.get(relativePath)!;
@@ -628,6 +681,7 @@ export function applyDesiredSnapshot(
   }
 
   for (const collection of desired.collections ?? []) {
+    if (collectionUnchanged(collection)) continue;
     const relativePath = resolvePath(collection.sourcePath);
     if (!collection.id || !relativePath) continue;
     const source = currentSources.get(relativePath)!;
@@ -647,11 +701,27 @@ export function applyDesiredSnapshot(
 
   // Task lines are located by id in the CURRENT source at edit time: the
   // document-level rewrites above can shift or rewrite lines, so a line index
-  // captured from the original scan is no longer trustworthy here.
-  const findTaskLineIndex = (relativePath: string, taskId: string): number => {
+  // captured from the original scan is no longer trustworthy here. Each file
+  // is indexed once per version of its source instead of once per task, which
+  // made a save quadratic in the number of tasks in a file.
+  const taskLineIndexes = new Map<string, { source: string; lines: string[]; byId: Map<string, number> }>();
+  const taskLinesOf = (relativePath: string) => {
     const source = currentSources.get(relativePath);
-    if (!source) return -1;
-    return findTaskLineIndexFromSource(source, taskId, relativePath);
+    if (!source) return undefined;
+    const cached = taskLineIndexes.get(relativePath);
+    if (cached?.source === source) return cached;
+    const lines = splitLines(source);
+    const entry = { source, lines, byId: indexTaskLines(lines, relativePath) };
+    taskLineIndexes.set(relativePath, entry);
+    return entry;
+  };
+  const findTaskLineIndex = (relativePath: string, taskId: string): number =>
+    taskLinesOf(relativePath)?.byId.get(taskId) ?? -1;
+  // Same idea for the legacy-comment check: once per source, not per task.
+  let legacyChecked: { source: string; found: boolean } | null = null;
+  const hasLegacyComments = (source: string): boolean => {
+    if (legacyChecked?.source !== source) legacyChecked = { source, found: source.includes("<!-- second-brain-task-content:") };
+    return legacyChecked.found;
   };
 
   const existingPaths = [...byPath.keys()];
@@ -663,13 +733,13 @@ export function applyDesiredSnapshot(
     task: BrainTaskSnapshot;
   }[] = [];
   for (const task of desired.tasks) {
-    if (!task.id || !locations.has(task.id)) continue;
+    if (!task.id || !locations.has(task.id) || taskUnchanged(task)) continue;
     const fromPath = locations.get(task.id)!.relativePath;
     const source = currentSources.get(fromPath);
     if (!source) continue;
     const lineIndex = findTaskLineIndex(fromPath, task.id);
     if (lineIndex < 0) continue;
-    const currentLine = splitLines(source)[lineIndex]!;
+    const currentLine = taskLinesOf(fromPath)!.lines[lineIndex]!;
     const toPath = resolveExistingTaskHomePath(
       task,
       fromPath,
@@ -683,16 +753,25 @@ export function applyDesiredSnapshot(
   }
 
   for (const task of desired.tasks) {
-    if (!task.id || !locations.has(task.id) || relocatedIds.has(task.id)) continue;
+    if (!task.id || !locations.has(task.id) || relocatedIds.has(task.id) || taskUnchanged(task)) continue;
     const relativePath = locations.get(task.id)!.relativePath;
     const source = currentSources.get(relativePath)!;
-    const lineIndex = findTaskLineIndex(relativePath, task.id);
+    const indexed = taskLinesOf(relativePath)!;
+    const lineIndex = indexed.byId.get(task.id) ?? -1;
     if (lineIndex < 0) continue;
-    const currentLine = splitLines(source)[lineIndex]!;
+    const currentLine = indexed.lines[lineIndex]!;
     const nextLine = patchTaskLineMinimal(currentLine, task);
     if (nextLine !== currentLine) {
-      currentSources.set(relativePath, replaceLine(source, lineIndex, nextLine));
+      const nextSource = replaceLine(source, lineIndex, nextLine);
+      currentSources.set(relativePath, nextSource);
       changed.add(relativePath);
+      // A one-line swap keeps every other index valid, so the index follows
+      // the new source instead of being rebuilt for the next task.
+      if (!/[\r\n]/.test(nextLine)) {
+        const lines = [...indexed.lines];
+        lines[lineIndex] = nextLine;
+        taskLineIndexes.set(relativePath, { source: nextSource, lines, byId: indexed.byId });
+      }
     }
   }
 
@@ -714,9 +793,12 @@ export function applyDesiredSnapshot(
   }
 
   for (const task of desired.tasks) {
-    if (!task.id || !locations.has(task.id) || task.body === undefined || relocatedIds.has(task.id)) continue;
+    if (!task.id || !locations.has(task.id) || task.body === undefined || relocatedIds.has(task.id) || taskUnchanged(task)) continue;
     const relativePath = locations.get(task.id)!.relativePath;
     const source = currentSources.get(relativePath)!;
+    // Unchanged notes skip the rewrite, which splits and rejoins the whole
+    // file. Legacy comment blocks still go through it so they get migrated.
+    if (task.body === extractTaskMarkdownContent(source, task.id) && !hasLegacyComments(source)) continue;
     const next = patchTaskMarkdownContent(source, task.id, task.body);
     if (next !== source) {
       currentSources.set(relativePath, next);

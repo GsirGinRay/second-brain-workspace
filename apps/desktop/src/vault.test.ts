@@ -1190,3 +1190,85 @@ test("a new task naming a scanned file is appended there instead of the inbox", 
   const outside = applyDesiredSnapshot(files, { ...scanned, tasks: [...scanned.tasks, { ...next, sourcePath: "../outside.md" }] });
   assert.deepEqual(outside.map((change) => change.relativePath), ["10-收件匣/待辦收件匣.md"]);
 });
+
+test("a save in a file with thousands of tasks stays fast and patches only the edited lines", () => {
+  const count = 3000;
+  const ids = Array.from({ length: count }, (_, index) => `33333333-3333-4333-8333-${String(index).padStart(12, "0")}`);
+  const lines = ids.map((id, index) => formatTaskLine({
+    id, title: `task ${index}`, status: "todo", taskDate: "2026-10-21", priority: "normal",
+    projectId: null, projectName: null, rank: String(index).padStart(6, "0"), sourcePath: null,
+    sourceHeading: null, completedAt: null, startTime: null, durationMinutes: null,
+  }));
+  const text = `# Big\r\n\r\n${lines.join("\r\n")}\r\n`;
+  // The spread-based helper overflows the stack on a file this size.
+  const files = [{ relativePath: "big.md", sha256: "a".repeat(64), bytesBase64: Buffer.from(text, "utf8").toString("base64") }];
+  const scanned = scanStructuredVault(files);
+  const edited = new Map([[ids[5]!, "first edit"], [ids[1500]!, "middle edit"], [ids[count - 1]!, "last edit"]]);
+  const started = performance.now();
+  const changes = applyDesiredSnapshot(files, {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.map((task) => edited.has(task.id!) ? { ...task, title: edited.get(task.id!)! } : task),
+  });
+  const elapsed = performance.now() - started;
+  // Re-parsing the whole file once per task took tens of seconds here.
+  assert.ok(elapsed < 3000, `applyDesiredSnapshot took ${Math.round(elapsed)} ms`);
+  assert.equal(changes.length, 1);
+  const after = base64ToText(changes[0]!.replacementBase64).split("\r\n");
+  const before = base64ToText(files[0]!.bytesBase64).split("\r\n");
+  const differing = after.flatMap((line, index) => line !== before[index] ? [index] : []);
+  assert.deepEqual(differing, [7, 1502, count + 1]);
+  assert.match(after[7]!, /first edit/);
+  assert.match(after[1502]!, /middle edit/);
+  assert.match(after[count + 1]!, /last edit/);
+});
+
+test("passing the scanned base gives the same writes while skipping unchanged records", () => {
+  const otherId = "44444444-4444-4444-8444-444444444444";
+  const line = (id: string, title: string) => formatTaskLine({
+    id, title, status: "todo", taskDate: "2026-10-21", priority: "normal",
+    projectId: null, projectName: "Launch", rank: "a", sourcePath: "project.md",
+    sourceHeading: null, completedAt: null, startTime: null, durationMinutes: null,
+  });
+  const source = `---\r\ntype: project\r\nid: ${projectId}\r\nstatus: active\r\n---\r\n# Launch\r\n\r\n${line(taskId, "Ship")}\r\n${line(otherId, "Keep")}\r\n`;
+  // Start from a file the app has already saved once, so the plain diff has
+  // no frontmatter clean-up of its own and the two outputs are comparable.
+  const raw = [file("project.md", source)];
+  const files = applyDesiredSnapshot(raw, scanStructuredVault(raw).snapshot)
+    .map((change) => ({ ...raw[0]!, bytesBase64: change.replacementBase64 }));
+  assert.equal(files.length, 1);
+  const scanned = scanStructuredVault(files).snapshot;
+  const editTask ={ ...scanned, tasks: scanned.tasks.map((task) => task.id === taskId ? { ...task, title: "Ship it", body: "notes" } : task) };
+  const editProject = { ...scanned, projects: scanned.projects.map((project) => ({ ...project, status: "paused" })) };
+  for (const desired of [editTask, editProject, scanned]) {
+    const withBase = applyDesiredSnapshot(files, desired, scanned);
+    assert.deepEqual(withBase, applyDesiredSnapshot(files, desired));
+  }
+  const patched = base64ToText(applyDesiredSnapshot(files, editTask, scanned)[0]!.replacementBase64);
+  assert.match(patched, /Ship it/);
+  assert.match(patched, /\r\n  notes\r\n/);
+  assert.match(patched, /Keep/);
+  assert.match(base64ToText(applyDesiredSnapshot(files, editProject, scanned)[0]!.replacementBase64), /status: paused/);
+  assert.deepEqual(applyDesiredSnapshot(files, scanned, scanned), []);
+});
+
+test("a stale collection body cannot undo a newer task state when the base is passed", () => {
+  const line = formatTaskLine({
+    id: taskId, title: "Call bob", status: "todo", taskDate: null, priority: "normal",
+    projectId: null, projectName: null, rank: "a", sourcePath: "note.md",
+    sourceHeading: null, completedAt: null, startTime: null, durationMinutes: null,
+  });
+  const source = `---\r\ntype: collection\r\nid: ${projectId}\r\n---\r\n# Note\r\n\r\nintro\r\n\r\n${line}\r\n`;
+  const raw = [file("note.md", source)];
+  const files = applyDesiredSnapshot(raw, scanStructuredVault(raw).snapshot)
+    .map((change) => ({ ...raw[0]!, bytesBase64: change.replacementBase64 }));
+  const files0 = files.length ? files : raw;
+  const v1 = scanStructuredVault(files0).snapshot;
+  // Another save marked the task done; the editor still holds the v1 body.
+  const doneFiles = applyDesiredSnapshot(files0, { ...v1, tasks: v1.tasks.map((task) => ({ ...task, status: "done" as const, completedAt: "2026-10-21" })) })
+    .map((change) => ({ ...files0[0]!, bytesBase64: change.replacementBase64 }));
+  const latest = scanStructuredVault(doneFiles).snapshot;
+  const desired = { ...latest, collections: latest.collections.map((item) => ({ ...item, body: v1.collections[0]!.body!.replace("intro", "new intro") })) };
+  const written = base64ToText(applyDesiredSnapshot(doneFiles, desired, latest)[0]!.replacementBase64);
+  assert.match(written, /new intro/);
+  assert.match(written, /- \[x\] #task Call bob/);
+});

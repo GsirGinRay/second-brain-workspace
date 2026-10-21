@@ -1245,8 +1245,11 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     // even before React has had a chance to re-render.
     const snapshot = await reloadLocal(false, false);
     if (snapshot?.files) latestFilesRef.current = snapshot.files;
+    // The scan of currentFiles, so the diff can skip records it already matches.
+    let scannedBase: { tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; collections: BrainCollectionSnapshot[] } | undefined;
     if (snapshot) {
       const latest = { tasks: snapshot.tasks, projects: snapshot.projects, collections: snapshot.collections ?? [] };
+      scannedBase = latest;
       onLatest?.(latest);
       rebaseOnto(latest);
       addFollowUps(latest.tasks);
@@ -1260,7 +1263,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       projects: nextProjects,
       collections: nextCollections,
       fileHashes: {},
-    });
+    }, scannedBase);
     if (changes.length === 0) {
       setTasks(nextTasks);
       setProjects(nextProjects);
@@ -1295,7 +1298,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
               projects: nextProjects,
               collections: nextCollections,
               fileHashes: {},
-            });
+            }, { tasks: fresh.tasks, projects: fresh.projects, collections: fresh.collections ?? [] });
             if (retryChanges.length > 0) {
               await native.applyMarkdownChanges(retryChanges);
               setStatus(devicePaired ? "已儲存在本機 · 等待同步" : "已寫入本機 Markdown 資料夾");

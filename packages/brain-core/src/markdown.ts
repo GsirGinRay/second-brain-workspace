@@ -873,7 +873,12 @@ export function patchTaskLine(
       .sort((left, right) => left - right)[0];
     const titleEnd = firstToken ?? analysis.bodyEnd;
     const titleStart = analysis.bodyStart + (rawLine.slice(analysis.bodyStart, titleEnd).match(/^\s*/)?.[0].length ?? 0);
-    edits.push({ start: titleStart, end: titleEnd, replacement: desired.title });
+    // Keep the gap before the next token: replacing up to the token itself
+    // glued a renamed title onto its [[project]] link.
+    const textEnd = titleStart + rawLine.slice(titleStart, titleEnd).trimEnd().length;
+    // Block ids start at their leading space, so only add a gap that is missing.
+    const gap = firstToken !== undefined && textEnd === titleEnd && desired.title && !/\s/.test(rawLine[titleEnd] ?? "") ? " " : "";
+    edits.push({ start: titleStart, end: textEnd, replacement: desired.title + gap });
   }
 
   const patched = edits.length ? applyEdits(rawLine, edits) : rawLine;
@@ -1096,6 +1101,8 @@ interface TaskLineIndex {
   source: string;
   lines: readonly string[];
   firstLineById: ReadonlyMap<string, number>;
+  /** False for files with no legacy comment blocks, the common case. */
+  hasLegacyComments: boolean;
 }
 
 // A vault scan looks up every task of a file against the same source string.
@@ -1124,7 +1131,7 @@ function taskLineIndexFor(source: string): TaskLineIndex {
     skipUntil = endIndexOfTaskBody(lines, index);
     if (parsed.id && !firstLineById.has(parsed.id)) firstLineById.set(parsed.id, index);
   }
-  lastTaskLineIndex = { source, lines, firstLineById };
+  lastTaskLineIndex = { source, lines, firstLineById, hasLegacyComments: source.includes(`<!-- ${TASK_CONTENT_PREFIX}:`) };
   return lastTaskLineIndex;
 }
 
@@ -1134,6 +1141,8 @@ function findTaskLineIndexById(source: string, id: string): number {
 
 function extractLegacyTaskComment(source: string, id: string): string {
   if (!isManagedTaskId(id)) return "";
+  // Searching the whole file per task made reading notes quadratic.
+  if (!taskLineIndexFor(source).hasLegacyComments) return "";
   const markers = taskContentMarkers(id);
   const start = source.indexOf(markers.start);
   if (start < 0) return "";

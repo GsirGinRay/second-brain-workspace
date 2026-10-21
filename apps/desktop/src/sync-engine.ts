@@ -16,6 +16,9 @@ export type SyncResult =
   | { kind: "preview"; taskCount: number; projectCount: number; conflictCount: number; bootstrapFileCount: number }
   | { kind: "conflict"; plan: DevicePlanResponse; files: LocalMarkdownFile[]; journalPaths: string[]; state: DeviceOwnerState };
 
+// Keyed by adapter: the app builds a fresh SyncEngine for each local reload.
+const fileContentCache = new WeakMap<object, Map<string, LocalMarkdownFile>>();
+
 export class SyncEngine {
   private running: Promise<SyncResult> | null = null;
 
@@ -37,9 +40,30 @@ export class SyncEngine {
   async loadLocal(): Promise<{ files: LocalMarkdownFile[]; tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; collections: BrainCollectionSnapshot[]; bootstrapChanges: ReturnType<typeof scanStructuredVault>["bootstrapChanges"]; warnings: ReturnType<typeof scanStructuredVault>["warnings"] }> {
     const scan = await this.native.scanVault();
     if (scan.length === 0) return { files: [], tasks: [], projects: [], collections: [], bootstrapChanges: [], warnings: [] };
-    const files = await this.native.readMarkdownFiles(scan.map((file) => file.relativePath));
+    const files = await this.readChangedFiles(scan);
     const structured = scanStructuredVault(files);
     return { files, tasks: structured.snapshot.tasks, projects: structured.snapshot.projects, collections: structured.snapshot.collections, bootstrapChanges: structured.bootstrapChanges, warnings: structured.warnings };
+  }
+
+  /**
+   * Every save re-scans the vault, and sending every file's bytes over IPC
+   * again dominated large vaults. A file whose scanned hash matches the last
+   * read is reused; equal SHA-256 means equal bytes, so this cannot go stale.
+   */
+  private async readChangedFiles(scan: readonly { relativePath: string; sha256: string }[]): Promise<LocalMarkdownFile[]> {
+    let cache = fileContentCache.get(this.native);
+    if (!cache) {
+      cache = new Map();
+      fileContentCache.set(this.native, cache);
+    }
+    // Windows scans report "a\b.md" while reads return "a/b.md"; key both the same way.
+    const key = (relativePath: string) => relativePath.replace(/\\/g, "/");
+    const stale = scan.filter((file) => cache!.get(key(file.relativePath))?.sha256 !== file.sha256);
+    const fresh = stale.length ? await this.native.readMarkdownFiles(stale.map((file) => file.relativePath)) : [];
+    for (const file of fresh) cache.set(key(file.relativePath), file);
+    const present = new Set(scan.map((file) => key(file.relativePath)));
+    for (const relativePath of [...cache.keys()]) if (!present.has(relativePath)) cache.delete(relativePath);
+    return scan.flatMap((file) => cache!.get(key(file.relativePath)) ?? []);
   }
 
   private async run(previewOnly: boolean): Promise<SyncResult> {

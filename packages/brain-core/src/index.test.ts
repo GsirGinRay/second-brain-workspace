@@ -236,3 +236,18 @@ test("frontmatter updater preserves a BOM and CRLF", () => {
     "\uFEFF---\r\ntype: project\r\nfocus_today: true\r\n---\r\n# Project\r\n",
   );
 });
+
+test("renaming a task keeps the space before its project link and other tokens", () => {
+  const line = "- [ ] #task Ship [[Launch]] ⏳ 2026-10-21";
+  const task = parseTaskLine(line, "p.md", 0)!;
+  assert.equal(patchTaskLine(line, { ...task, title: "Ship it" }), "- [ ] #task Ship it [[Launch]] ⏳ 2026-10-21");
+  assert.equal(patchTaskLine(line, { ...task, title: "完成報告" }), "- [ ] #task 完成報告 [[Launch]] ⏳ 2026-10-21");
+  const dated = "- [ ] #task Call ⏳ 2026-10-21";
+  assert.equal(patchTaskLine(dated, { ...parseTaskLine(dated, "p.md", 0)!, title: "Call back" }), "- [ ] #task Call back ⏳ 2026-10-21");
+});
+
+test("renaming a task before a block id never piles up spaces", () => {
+  let line = "- [ ] #task Ship ^abc";
+  for (const title of ["A", "B", "C"]) line = patchTaskLine(line, { ...parseTaskLine(line, "p.md", 0)!, title });
+  assert.equal(line, "- [ ] #task C ^abc");
+});

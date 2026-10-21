@@ -65,3 +65,44 @@ test("shadow preview creates a plan without writing Markdown or committing", asy
   assert.equal(value.getPending(), null);
   assert.equal(value.confirmed.length, 0);
 });
+
+test("loading again only reads files whose hash changed since the last read", async () => {
+  const hashes: Record<string, string> = { "a.md": "a".repeat(64), "b.md": "b".repeat(64) };
+  const contents: Record<string, string> = { "a.md": "# A\r\n", "b.md": "# B\r\n" };
+  const requested: string[][] = [];
+  const native = {
+    async scanVault() {
+      return Object.keys(hashes).map((relativePath) => ({ relativePath, sha256: hashes[relativePath]!, bytes: 4, hasBom: false, newline: "cr_lf" as const }));
+    },
+    async readMarkdownFiles(paths: string[]) {
+      requested.push([...paths]);
+      return paths.map((relativePath) => ({ relativePath, sha256: hashes[relativePath]!, bytesBase64: base64(contents[relativePath]!) }));
+    },
+  } as unknown as ConstructorParameters<typeof SyncEngine>[0];
+  const engine = new SyncEngine(native, {} as SyncDeviceClient);
+  await engine.loadLocal();
+  hashes["b.md"] = "c".repeat(64);
+  contents["b.md"] = "# B2\r\n";
+  const second = await engine.loadLocal();
+  // A new engine on the same adapter (the app makes one per reload) shares the cache.
+  delete hashes["a.md"];
+  const third = await new SyncEngine(native, {} as SyncDeviceClient).loadLocal();
+  assert.deepEqual(requested, [["a.md", "b.md"], ["b.md"]]);
+  assert.deepEqual(second.files.map((file) => atob(file.bytesBase64)), ["# A\r\n", "# B2\r\n"]);
+  assert.deepEqual(third.files.map((file) => file.relativePath), ["b.md"]);
+});
+
+test("files in subfolders survive when the scan uses backslashes and reads use slashes", async () => {
+  const native = {
+    async scanVault() {
+      return ["10-收件匣\\待辦.md", "root.md"].map((relativePath) => ({ relativePath, sha256: "d".repeat(64), bytes: 4, hasBom: false, newline: "cr_lf" as const }));
+    },
+    async readMarkdownFiles(paths: string[]) {
+      return paths.map((relativePath) => ({ relativePath: relativePath.replace(/\\/g, "/"), sha256: "d".repeat(64), bytesBase64: base64("# X\r\n") }));
+    },
+  } as unknown as ConstructorParameters<typeof SyncEngine>[0];
+  for (let load = 0; load < 2; load += 1) {
+    const local = await new SyncEngine(native, {} as SyncDeviceClient).loadLocal();
+    assert.deepEqual(local.files.map((file) => file.relativePath), ["10-收件匣/待辦.md", "root.md"]);
+  }
+});
