@@ -9,7 +9,8 @@ const ONBOARDING_COMPLETED_KEY = "second-brain.onboardingCompleted";
 export const RELEASE_HIGHLIGHT_KEYS: Readonly<Record<string, readonly string[]>> = {
   "0.6.2": ["whatsNew.0.6.2.naturalDate", "whatsNew.0.6.2.quickCapture", "whatsNew.0.6.2.safeSave"],
   "0.7.0": ["whatsNew.0.7.0.repeat", "whatsNew.0.7.0.reminders", "whatsNew.0.7.0.today"],
-  "0.7.1": ["whatsNew.0.7.1.tray", "whatsNew.0.7.1.estimate", "whatsNew.0.7.0.repeat"],
+  "0.7.1": ["whatsNew.0.7.1.estimate", "whatsNew.0.7.0.repeat"],
+  "0.7.2": ["whatsNew.0.7.2.repeatField", "whatsNew.0.7.2.close", "whatsNew.0.7.1.estimate"],
 };
 
 function compareVersions(left: string, right: string): number {
