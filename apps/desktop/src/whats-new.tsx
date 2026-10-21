@@ -12,6 +12,7 @@ export const RELEASE_HIGHLIGHT_KEYS: Readonly<Record<string, readonly string[]>>
   "0.7.1": ["whatsNew.0.7.1.estimate", "whatsNew.0.7.0.repeat"],
   "0.7.2": ["whatsNew.0.7.2.repeatField", "whatsNew.0.7.2.close", "whatsNew.0.7.1.estimate"],
   "0.7.3": ["whatsNew.0.7.3.customRepeat", "whatsNew.0.7.2.repeatField", "whatsNew.0.7.2.close"],
+  "0.7.4": ["whatsNew.0.7.4.review", "whatsNew.0.7.3.customRepeat"],
 };
 
 function compareVersions(left: string, right: string): number {
