@@ -142,3 +142,50 @@ test("late evening without a date means tonight's midnight", () => {
     view.cleanup();
   }
 });
+function repeatSelect(container: HTMLElement) {
+  return container.querySelector<HTMLSelectElement>(".quick-repeat-field select")!;
+}
+
+function choose(select: HTMLSelectElement, value: string) {
+  flushSync(() => {
+    select.value = value;
+    select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event);
+  });
+}
+
+test("the repeat field sets a rule without typing a phrase", () => {
+  const view = mount({ initialTitle: "Water the plants" });
+  try {
+    choose(repeatSelect(view.container), "every day");
+    pressEnter(titleInput(view.container));
+    const task = view.saved.at(-1)?.at(-1);
+    assert.equal(task?.title, "Water the plants");
+    assert.equal(task?.recurrence, "every day");
+  } finally {
+    view.cleanup();
+  }
+});
+
+test("a typed English phrase shows up in the repeat field", () => {
+  const view = mount({ initialTitle: "Team sync every Monday" });
+  try {
+    assert.equal(repeatSelect(view.container).value, "every week on Monday");
+    pressEnter(titleInput(view.container));
+    const task = view.saved.at(-1)?.at(-1);
+    assert.equal(task?.title, "Team sync");
+    assert.equal(task?.recurrence, "every week on Monday");
+  } finally {
+    view.cleanup();
+  }
+});
+
+test("choosing does not repeat in the field overrides a typed phrase", () => {
+  const view = mount({ initialTitle: "每週一開週會" });
+  try {
+    choose(repeatSelect(view.container), "");
+    pressEnter(titleInput(view.container));
+    assert.equal(view.saved.at(-1)?.at(-1)?.recurrence ?? null, null);
+  } finally {
+    view.cleanup();
+  }
+});

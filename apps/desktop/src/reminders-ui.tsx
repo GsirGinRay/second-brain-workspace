@@ -12,17 +12,7 @@ import {
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 type Language = "zh-TW" | "en";
 
-export const KEEP_IN_TRAY_KEY = "second-brain.keepRunningInTray";
 const CHECK_INTERVAL_MS = 30_000;
-
-export function loadKeepInTray(storage: Pick<Storage, "getItem">): boolean {
-  try {
-    // On by default: reminders only work while the app keeps running.
-    return storage.getItem(KEEP_IN_TRAY_KEY) !== "false";
-  } catch {
-    return true;
-  }
-}
 
 /**
  * Checks every half minute for reminders that are due and hands them to the
@@ -59,12 +49,10 @@ export function useReminders({ tasks, settings, language, notify }: {
   }, [notify]);
 }
 
-export function ReminderSettingsCard({ settings, keepInTray, t, onChange, onKeepInTrayChange, onTest }: {
+export function ReminderSettingsCard({ settings, t, onChange, onTest }: {
   settings: ReminderSettings;
-  keepInTray: boolean;
   t: Translate;
   onChange: (settings: ReminderSettings) => void;
-  onKeepInTrayChange: (value: boolean) => void;
   onTest?: () => void;
 }) {
   return (
@@ -110,11 +98,7 @@ export function ReminderSettingsCard({ settings, keepInTray, t, onChange, onKeep
           </span>
         </label>
       </div>
-      <label className="detail-checkbox-property">
-        <input type="checkbox" checked={keepInTray} onChange={(event) => onKeepInTrayChange(event.target.checked)} />
-        {t("reminders.keepInTray")}
-      </label>
-      <small className="reminder-settings-note">{t("reminders.keepInTray.hint")}</small>
+      <small className="reminder-settings-note">{t("reminders.runningHint")}</small>
       {onTest && (
         <div className="input-action">
           <button type="button" className="secondary-button" disabled={!settings.enabled} onClick={onTest}>{t("reminders.test")}</button>

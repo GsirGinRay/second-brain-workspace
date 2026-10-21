@@ -32,11 +32,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, State, WindowEvent,
-};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 const MAX_NATIVE_BATCH_FILES: usize = 100_000;
 const MAX_NATIVE_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
@@ -799,43 +795,10 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
-fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "顯示第二大腦工作台", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "結束", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
-    let mut builder = TrayIconBuilder::new()
-        .menu(&menu)
-        .tooltip("第二大腦工作台")
-        .show_menu_on_left_click(false)
-        // Left click opens the window; right click shows the menu.
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_main_window(tray.app_handle());
-            }
-        })
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => show_main_window(app),
-            "quit" => app.exit(0),
-            _ => {}
-        });
-    // Without an image Windows shows an invisible tray entry, so a window
-    // closed to the tray looked like the app had quit.
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
-    }
-    builder.build(app)?;
-    Ok(())
-}
-
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
-        // Must be first: a second launch (desktop shortcut while the app sits
-        // in the tray) focuses this instance instead of starting another one.
+        // Must be first: a second launch (desktop shortcut while the app is
+        // minimized) focuses this instance instead of starting another one.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
@@ -876,7 +839,6 @@ pub fn run() -> tauri::Result<()> {
                 watcher: Mutex::new(watcher),
                 publisher,
             });
-            build_tray(app.handle())?;
             quick_capture::register(app.handle());
             Ok(())
         })

@@ -179,9 +179,9 @@ import { ShortcutsDialog, isShortcutHelpKey } from "./shortcuts-help";
 import { UpdateNotice, consumeUpdateNotice } from "./whats-new";
 import { closedProjectIds, withRecurringFollowUps } from "./recurring-tasks";
 import { TaskBadges } from "./task-badges";
-import { recurrenceLabel } from "./recurrence-picker";
+import { RecurrenceSelect, recurrenceLabel } from "./recurrence-picker";
 import { loadReminderSettings, saveReminderSettings, type ReminderSettings } from "./reminders";
-import { KEEP_IN_TRAY_KEY, ReminderSettingsCard, loadKeepInTray, useReminders } from "./reminders-ui";
+import { ReminderSettingsCard, useReminders } from "./reminders-ui";
 import { AVAILABLE_HOURS_KEY, focusQueue, loadAvailableHours, moveTasksToDate } from "./today-planning";
 import { FocusMode, LoadMeter, WaitingPanel, WrapUpDialog } from "./today-tools";
 import { parseNaturalDate, type NaturalDateMatch } from "./natural-date";
@@ -339,16 +339,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [updateNoticeOpen, setUpdateNoticeOpen] = useState(() => !providedAdapter && consumeUpdateNotice(localStorage, APP_VERSION));
   const [closeGuardOpen, setCloseGuardOpen] = useState(false);
   const [reminderSettings, setReminderSettings] = useState(() => loadReminderSettings(localStorage));
-  const [keepInTray, setKeepInTray] = useState(() => loadKeepInTray(localStorage));
-  const keepInTrayRef = useRef(keepInTray);
-  keepInTrayRef.current = keepInTray && !providedAdapter;
   const changeReminderSettings = useCallback((next: ReminderSettings) => {
     setReminderSettings(next);
     saveReminderSettings(localStorage, next);
-  }, []);
-  const changeKeepInTray = useCallback((next: boolean) => {
-    setKeepInTray(next);
-    try { localStorage.setItem(KEEP_IN_TRAY_KEY, String(next)); } catch { /* applies for this session */ }
   }, []);
   const [selectedBoardProjectId, setSelectedBoardProjectId] = useState<string | null>(null);
   const [pendingCompleteProjectId, setPendingCompleteProjectId] = useState<string | null>(null);
@@ -476,11 +469,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   // waiting for a React re-render between them.
   const latestFilesRef = useRef<LocalMarkdownFile[]>([]);
   useEffect(() => { latestFilesRef.current = files; }, [files]);
-  // Native code forgets the close behaviour on every launch, so re-apply it.
-  useEffect(() => {
-    if (providedAdapter) return;
-    void native.setCloseBehavior(keepInTray ? "hide_to_tray" : "exit").catch(() => undefined);
-  }, [keepInTray, native, providedAdapter]);
   const notifyReminder = useMemo(
     () => native.showReminder ? (title: string, body: string) => native.showReminder!(title, body) : undefined,
     [native],
@@ -543,13 +531,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     let unlisten: (() => void) | undefined;
     void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
       getCurrentWindow().onCloseRequested((event) => {
-        // Without preventDefault the JS API destroys the window, which would
-        // quit the app and stop reminders even though native code hid it.
-        if (keepInTrayRef.current && !allowCloseRef.current) {
-          event.preventDefault();
-          void getCurrentWindow().hide().catch(() => undefined);
-          return;
-        }
         if (allowCloseRef.current || diagnostics?.selectedVault || !hasDraftContent(loadDraftWorkspace())) return;
         event.preventDefault();
         setCloseGuardOpen(true);
@@ -561,13 +542,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   async function leaveWithLocalDraft(): Promise<void> {
     allowCloseRef.current = true;
     try {
-      // "Leave" means quit, even when closing normally keeps the app in the tray.
-      await native.setCloseBehavior("exit").catch(() => undefined);
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().close();
     } catch {
       allowCloseRef.current = false;
-      void native.setCloseBehavior(keepInTrayRef.current ? "hide_to_tray" : "exit").catch(() => undefined);
       setCloseGuardOpen(false);
     }
   }
@@ -1986,10 +1964,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         reminderCard={(
           <ReminderSettingsCard
             settings={reminderSettings}
-            keepInTray={keepInTray}
             t={t}
             onChange={changeReminderSettings}
-            onKeepInTrayChange={changeKeepInTray}
             onTest={notifyReminder ? () => void notifyReminder(t("reminders.test.title"), t("reminders.test.body")).catch((cause) => setError(describeError(cause, "NOTIFICATION_FAILED"))) : undefined}
           />
         )}
@@ -3303,7 +3279,11 @@ export function QuickAddModal({
   const [ideaInbox, setIdeaInbox] = useState(false);
   const [taskDate, setTaskDate] = useState(initialDate ?? taipeiDateKey());
   const [startTime, setStartTime] = useState(initialStartTime ?? "");
-  const [durationMinutes, setDurationMinutes] = useState(30);
+  // null = no estimate; a timed task falls back to 30 minutes.
+  const [durationMinutes, setDurationMinutes] = useState<number | null>(null);
+  // undefined follows a typed phrase such as "every Monday"; null is an
+  // explicit "does not repeat" picked in the field.
+  const [recurrenceChoice, setRecurrenceChoice] = useState<string | null | undefined>(undefined);
   const [important, setImportant] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   useEffect(() => titleRef.current?.focus(), []);
@@ -3328,6 +3308,7 @@ export function QuickAddModal({
     ? natural?.timeDayOffset && taskDate ? shiftDateKey(taskDate, natural.timeDayOffset) : undefined
     : natural?.date;
   const naturalApplies = Boolean(natural && (naturalDate || natural.time || natural.durationMinutes || natural.recurrence));
+  const recurrence = recurrenceChoice === undefined ? (naturalApplies ? natural?.recurrence ?? null : null) : recurrenceChoice;
   const submit = () => {
     if (!title.trim()) return false;
     const project = projects.find((item) => item.id === projectId)
@@ -3338,17 +3319,16 @@ export function QuickAddModal({
         taskDate: naturalDate ?? taskDate,
         startTime: natural.time ?? startTime,
         durationMinutes: natural.durationMinutes ?? durationMinutes,
-        recurrence: natural.recurrence ?? null,
       }
-      : { title, taskDate, startTime, durationMinutes, recurrence: null };
+      : { title, taskDate, startTime, durationMinutes };
     const task = newTask(effective.title, {
       taskDate: ideaInbox ? null : effective.taskDate || null,
       startTime: ideaInbox ? null : effective.startTime || null,
-      durationMinutes: effective.startTime ? effective.durationMinutes : null,
+      durationMinutes: effective.startTime ? (effective.durationMinutes ?? 30) : effective.durationMinutes,
       project,
     });
     task.body = body;
-    if (effective.recurrence && !ideaInbox) task.recurrence = effective.recurrence;
+    if (recurrence && !ideaInbox) task.recurrence = recurrence;
     const next = [
       ...tasks,
       important ? { ...task, priority: "highest" as const } : task,
@@ -3483,10 +3463,16 @@ export function QuickAddModal({
           </label>
           <label>
             {t("task.field.duration")}
-            <select disabled={ideaInbox || !startTime} value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))}>
-              {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分鐘</option>)}
+            <select disabled={ideaInbox} value={durationMinutes ?? (startTime ? 30 : "")} onChange={(event) => setDurationMinutes(event.target.value ? Number(event.target.value) : null)}>
+              {!startTime && <option value="">{preferences.language === "zh-TW" ? "未估" : "No estimate"}</option>}
+              {[15, 30, 45, 60, 90, 120, 180, 240].map((minutes) => <option key={minutes} value={minutes}>{minutes} {preferences.language === "zh-TW" ? "分鐘" : "min"}</option>)}
             </select>
           </label>
+          {!ideaInbox && (
+            <div className="quick-repeat-field">
+              <RecurrenceSelect value={recurrence} taskDate={naturalDate ?? taskDate} today={taipeiDateKey()} locale={preferences.language} label={t("task.field.recurrence")} onChange={setRecurrenceChoice} />
+            </div>
+          )}
         </div>
         <label className="important-toggle">
           <input
@@ -3546,7 +3532,7 @@ function newTask(
     sourceHeading: null,
     completedAt: null,
     startTime: options.startTime ?? null,
-    durationMinutes: options.startTime ? (options.durationMinutes ?? 30) : null,
+    durationMinutes: options.startTime ? (options.durationMinutes ?? 30) : (options.durationMinutes ?? null),
     timeZone: "Asia/Taipei",
   };
 }
