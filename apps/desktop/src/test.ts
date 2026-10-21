@@ -23,3 +23,4 @@ import "./recurring-tasks.test";
 import "./task-badges.test";
 import "./reminders.test";
 import "./today-planning.test";
+import "./weekly-review.test";

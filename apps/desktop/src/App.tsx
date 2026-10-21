@@ -3,6 +3,7 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  BarChart3,
   BookPlus,
   CalendarDays,
   CheckCircle2,
@@ -184,6 +185,7 @@ import { loadReminderSettings, saveReminderSettings, type ReminderSettings } fro
 import { ReminderSettingsCard, useReminders } from "./reminders-ui";
 import { AVAILABLE_HOURS_KEY, focusQueue, loadAvailableHours, moveTasksToDate } from "./today-planning";
 import { FocusMode, LoadMeter, WaitingPanel, WrapUpDialog } from "./today-tools";
+import { WeeklyReviewDialog } from "./weekly-review-ui";
 import { parseNaturalDate, type NaturalDateMatch } from "./natural-date";
 import { rebaseWorkspace } from "./workspace-rebase";
 import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH } from "./architecture";
@@ -2798,6 +2800,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
   const [templateOpen, setTemplateOpen] = useState(false);
   const [focusOpen, setFocusOpen] = useState(false);
   const [wrapUpOpen, setWrapUpOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [availableHours, setAvailableHours] = useState(() => loadAvailableHours(localStorage));
   const changeAvailableHours = (hours: number) => {
     setAvailableHours(hours);
@@ -2858,7 +2861,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     return () => window.removeEventListener(GLOBAL_SELECTION_DELETE_EVENT, handler as EventListener);
   });
   return <section className="command-center">
-    <header className="command-hero"><div><span className="eyebrow">{t("today.eyebrow", { date: today })}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="secondary-button" onClick={() => setWrapUpOpen(true)}><Moon />{t("today.wrap.open")}</button><button className="secondary-button" disabled={focusQueue(groups.today, groups.overdue).length === 0} onClick={() => setFocusOpen(true)}><Target />{t("today.focus.open")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
+    <header className="command-hero"><div><span className="eyebrow">{t("today.eyebrow", { date: today })}</span><h2>{t("today.heading")}</h2><p>{t("today.description")}</p></div><div className="hero-actions"><CompletedVisibilityButton showCompleted={showCompleted} onChange={onShowCompletedChange} /><button className="secondary-button" onClick={() => setTemplateOpen((open) => !open)} aria-expanded={templateOpen}><Settings2 />{t(templateOpen ? "today.template.collapse" : "today.template.manage")}</button><button className="secondary-button" onClick={() => setReviewOpen(true)}><BarChart3 />{t("review.open")}</button><button className="secondary-button" onClick={() => setWrapUpOpen(true)}><Moon />{t("today.wrap.open")}</button><button className="secondary-button" disabled={focusQueue(groups.today, groups.overdue).length === 0} onClick={() => setFocusOpen(true)}><Target />{t("today.focus.open")}</button><button className="primary start-day-button" onClick={startToday}><Plus />{t("today.start")}</button></div></header>
     {notice && <div className="routine-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="關閉提示"><X /></button></div>}
     <div className="command-summary"><article className="focus-summary"><span>今日最重要</span><strong>{important?.title ?? "尚未選定"}</strong><small>{important?.projectName ?? "在今日任務按下星號選定"}</small></article><article><span>逾期</span><strong>{groups.overdue.length}</strong><small>需要重新決定日期</small></article><article><span>今天</span><strong>{groups.today.length}</strong><small>{scheduled.length} 項已排時間</small></article><LoadMeter tasks={loadTasks} availableHours={availableHours} language={preferences.language} t={t} onAvailableHoursChange={changeAvailableHours} /></div>
     {groups.today.length === 0 && groups.overdue.length === 0 && (
@@ -2929,6 +2932,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     </section>
     <WaitingPanel tasks={tasks} today={today} t={t} onOpenTask={onOpenTask} onReceived={(task) => patchTask(task, { status: "done", completedAt: today })} />
     {focusOpen && <FocusMode queue={focusQueue(groups.today, groups.overdue)} language={preferences.language} t={t} onComplete={complete} onOpenTask={(taskId) => { setFocusOpen(false); onOpenTask(taskId); }} onClose={() => setFocusOpen(false)} />}
+    {reviewOpen && <WeeklyReviewDialog tasks={tasks} today={today} language={preferences.language} t={t} onClose={() => setReviewOpen(false)} />}
     {wrapUpOpen && <WrapUpDialog tasks={tasks} today={today} t={t} onMove={(ids, date) => { onSave(moveTasksToDate(tasks, ids, date)); setNotice(t("today.wrap.moved", { count: ids.size })); }} onClose={() => setWrapUpOpen(false)} />}
     <button className="today-quick-add-fab" type="button" onClick={onQuickAdd} aria-label={t("app.quickAdd")} title={t("app.quickAdd")}><Plus aria-hidden="true" /></button>
     {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} projects={projects} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} onPickProject={pickProject} onCreateProject={onCreateProject} />)}</div></details>}

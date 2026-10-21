@@ -21,6 +21,7 @@ globals.MouseEvent = window.MouseEvent;
 
 const { FocusMode, WaitingPanel, WrapUpDialog } = await import("./today-tools");
 const { RecurrenceSelect } = await import("./recurrence-picker");
+const { WeeklyReviewDialog } = await import("./weekly-review-ui");
 
 const t = (key: string, values?: Record<string, string | number>) => translate("zh-TW", key, values);
 const TODAY = "2026-10-20";
@@ -187,5 +188,30 @@ test("the custom repeat option opens an editor for weekdays and units", () => {
     assert.ok(host.container.querySelector(".recurrence-custom select[aria-label='日期']"));
   } finally {
     host.cleanup();
+  }
+});
+
+test("the weekly review shows this week's numbers and pages back a week", () => {
+  // TODAY (2026-10-20) is a Tuesday; the week starts on Monday 10-19.
+  const tasks = [
+    task("a", { status: "done", completedAt: "2026-10-19", projectName: "官網", durationMinutes: 60 }),
+    task("b", { status: "done", completedAt: TODAY, projectName: "官網" }),
+    task("c", { status: "done", completedAt: "2026-10-13" }),
+    task("late", { taskDate: "2026-10-18" }),
+  ];
+  const { container, cleanup } = mount(<WeeklyReviewDialog tasks={tasks} today={TODAY} language="zh-TW" t={t} onClose={() => undefined} />);
+  try {
+    const stats = container.querySelector(".review-stats")!.textContent!;
+    assert.match(stats, /2件完成/);
+    assert.match(stats, /比上週同期多 1 件/);
+    assert.match(stats, /1 小時預估投入時間/);
+    assert.match(stats, /2天連續有完成/);
+    assert.match(stats, /目前有 1 件逾期/);
+    assert.match(container.querySelector(".review-projects")!.textContent!, /官網.*2/);
+    click(container.querySelector("button[aria-label='上一週']"));
+    assert.match(container.querySelector(".review-week-nav")!.textContent!, /上週10\/12 – 10\/18/);
+    assert.match(container.querySelector(".review-stats")!.textContent!, /1件完成/);
+  } finally {
+    cleanup();
   }
 });
