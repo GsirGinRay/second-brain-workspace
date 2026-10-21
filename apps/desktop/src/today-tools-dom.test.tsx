@@ -151,10 +151,41 @@ test("the repeat picker offers presets anchored on the task date", () => {
   );
   try {
     const labels = [...container.querySelectorAll("option")].map((option) => option.textContent);
-    assert.deepEqual(labels.slice(0, 2), ["不重複", "每月 5 號"]);
+    // A rule outside the presets opens as a custom rule with its editor shown.
+    assert.ok(labels.includes("自訂：每月 5 號"));
+    assert.ok(container.querySelector(".recurrence-custom"));
     assert.ok(labels.includes("每週四"));
     assert.ok(labels.includes("每月 22 號"));
   } finally {
     cleanup();
+  }
+});
+
+test("the custom repeat option opens an editor for weekdays and units", () => {
+  let value: string | null = "every week on Thursday";
+  function Harness() {
+    const [current, setCurrent] = React.useState<string | null>(value);
+    return <RecurrenceSelect value={current} taskDate="2026-10-22" today={TODAY} locale="zh-TW" label="重複" onChange={(next) => { value = next; setCurrent(next); }} />;
+  }
+  const host = mount(<Harness />);
+  try {
+    const select = host.container.querySelector<HTMLSelectElement>(".recurrence-field select")!;
+    flushSync(() => {
+      select.value = "__custom__";
+      select.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event);
+    });
+    assert.ok(host.container.querySelector(".recurrence-custom"), "the editor opens");
+    const monday = [...host.container.querySelectorAll<HTMLButtonElement>(".recurrence-weekdays button")].find((button) => button.textContent === "一")!;
+    click(monday);
+    assert.equal(value, "every week on Monday, Thursday");
+    const unit = host.container.querySelector<HTMLSelectElement>(".recurrence-custom select[aria-label='單位']")!;
+    flushSync(() => {
+      unit.value = "month";
+      unit.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event);
+    });
+    assert.equal(value, "every month on the 22nd", "a month repeat starts on the task's day");
+    assert.ok(host.container.querySelector(".recurrence-custom select[aria-label='日期']"));
+  } finally {
+    host.cleanup();
   }
 });
