@@ -10,9 +10,9 @@ use second_brain_workspace_lib::error::NativeError;
 use second_brain_workspace_lib::key_store::{KeyBackend, KeyStore};
 use second_brain_workspace_lib::path_policy::{
     import_attachment_bytes, managed_subfolder, prepare_path_for_create, read_attachment_image,
-    resolve_attachment_for_open, scan_markdown, scan_markdown_with_hook,
+    resolve_attachment_for_open, scan_markdown, scan_markdown_cached, scan_markdown_with_hook,
     validate_attachment_relative_path, validate_path_under_root, validate_relative_path,
-    validate_vault_root, ScanLimits,
+    validate_vault_root, ScanCache, ScanLimits,
 };
 
 #[test]
@@ -696,6 +696,106 @@ fn scan_supports_cancellation_and_duplicate_id_hook() {
         ]),
         vec!["a".to_owned()]
     );
+}
+
+/// Writes `bytes` and backdates the file, as if it was last saved `age` ago.
+fn write_aged(path: &Path, bytes: &[u8], age: Duration) {
+    fs::write(path, bytes).unwrap();
+    let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+    file.set_modified(std::time::SystemTime::now() - age).unwrap();
+}
+
+fn cached_scan_reads(root: &Path, cache: &mut ScanCache) -> (second_brain_workspace_lib::path_policy::ScanResult, Vec<String>) {
+    let reads = std::cell::RefCell::new(Vec::<String>::new());
+    let result = scan_markdown_cached(root, ScanLimits::default(), &|| false, &|path| {
+        reads.borrow_mut().push(path.file_name().unwrap().to_string_lossy().into_owned());
+    }, cache)
+    .unwrap();
+    let mut names = reads.into_inner();
+    names.sort();
+    (result, names)
+}
+
+fn scan_digest(result: &second_brain_workspace_lib::path_policy::ScanResult) -> Vec<(PathBuf, String, u64)> {
+    result.files.iter().map(|file| (file.relative_path.clone(), file.sha256.clone(), file.bytes)).collect()
+}
+
+#[test]
+fn cached_scan_reads_only_files_whose_size_or_modified_time_changed() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir_all(root.join("10-收件匣")).unwrap();
+    let old = Duration::from_secs(60);
+    write_aged(&root.join("a.md"), b"# A", old);
+    write_aged(&root.join("10-收件匣").join("b.md"), b"# B", old);
+    write_aged(&root.join("c.md"), b"# C", old);
+    let mut cache = ScanCache::new();
+    let (_, first) = cached_scan_reads(&root, &mut cache);
+    assert_eq!(first, ["a.md", "b.md", "c.md"]);
+    let (_, second) = cached_scan_reads(&root, &mut cache);
+    assert!(second.is_empty(), "unchanged files were read again: {second:?}");
+
+    // Same length, new bytes: only the modified time tells them apart.
+    write_aged(&root.join("a.md"), b"# Z", Duration::from_secs(30));
+    write_aged(&root.join("10-收件匣").join("b.md"), b"# B grew", Duration::from_secs(30));
+    fs::remove_file(root.join("c.md")).unwrap();
+    let (cached, third) = cached_scan_reads(&root, &mut cache);
+    assert_eq!(third, ["a.md", "b.md"]);
+    assert_eq!(cache.len(), 2);
+
+    // Whatever the cache reused must match a scan that reads everything.
+    let full = scan_markdown(&root, ScanLimits::default(), &|| false).unwrap();
+    assert_eq!(scan_digest(&cached), scan_digest(&full));
+    let (reused, fourth) = cached_scan_reads(&root, &mut cache);
+    assert!(fourth.is_empty());
+    assert_eq!(scan_digest(&reused), scan_digest(&full));
+}
+
+#[test]
+fn cached_scan_never_trusts_a_file_written_moments_ago() {
+    // On FAT32 or a network share a second write in the same second keeps
+    // size and time, so a fresh file is re-read until it has settled.
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("fresh.md"), b"- [ ] #task 2026-10-21").unwrap();
+    let mut cache = ScanCache::new();
+    cached_scan_reads(&root, &mut cache);
+    let (_, again) = cached_scan_reads(&root, &mut cache);
+    assert_eq!(again, ["fresh.md"]);
+    assert!(cache.is_empty());
+}
+
+#[test]
+fn forgetting_a_file_works_whatever_way_its_path_is_spelled() {
+    // A program that restores the old modified time after an edit is only
+    // caught by the watcher, whose paths may differ from the scan's.
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir_all(root.join("10-收件匣")).unwrap();
+    let target = root.join("10-收件匣").join("Todo.md");
+    let when = std::time::SystemTime::now() - Duration::from_secs(60);
+    fs::write(&target, b"- [ ]").unwrap();
+    fs::OpenOptions::new().write(true).open(&target).unwrap().set_modified(when).unwrap();
+    let mut cache = ScanCache::new();
+    cached_scan_reads(&root, &mut cache);
+    fs::write(&target, b"- [x]").unwrap();
+    fs::OpenOptions::new().write(true).open(&target).unwrap().set_modified(when).unwrap();
+    let (_, unseen) = cached_scan_reads(&root, &mut cache);
+    assert!(unseen.is_empty(), "the restored time should hide the edit from the cache alone");
+    let spelled = PathBuf::from(format!("{}/10-收件匣/todo.md", dir.path().join("VAULT").to_string_lossy()));
+    cache.invalidate(&[root.join("other.md")], false);
+    assert_eq!(cache.len(), 1);
+    cache.invalidate(&[spelled], false);
+    let (result, reread) = cached_scan_reads(&root, &mut cache);
+    assert_eq!(reread, ["Todo.md"]);
+    assert_eq!(scan_digest(&result), scan_digest(&scan_markdown(&root, ScanLimits::default(), &|| false).unwrap()));
+    // Events with no paths, or that ask for a rescan, may hide any change.
+    cache.invalidate(&[], false);
+    assert!(cache.is_empty());
+    cached_scan_reads(&root, &mut cache);
+    cache.invalidate(&[root.join("other.md")], true);
+    assert!(cache.is_empty());
 }
 
 #[test]

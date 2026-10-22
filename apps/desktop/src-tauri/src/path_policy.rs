@@ -1,8 +1,10 @@
 use crate::error::NativeError;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScanLimits {
@@ -38,6 +40,80 @@ pub enum NewlineStyle {
     Lf,
     Mixed,
     None,
+}
+
+/// What a scan learned about one file, reused while its size and modified
+/// time stay the same so an unchanged file is not read and hashed again.
+#[derive(Debug, Clone)]
+pub struct CachedScan {
+    bytes: u64,
+    modified: SystemTime,
+    sha256: String,
+    has_bom: bool,
+    newline: NewlineStyle,
+}
+
+/// A file written this recently may be written again within the same
+/// modified-time tick (FAT32 and many network shares count in 1–2 s), which
+/// would leave size and time unchanged. Such files are re-read every scan,
+/// the same rule git uses for its index.
+const RACY_WINDOW: Duration = Duration::from_secs(3);
+
+/// Scan results by absolute path. Paths from a scan, a watcher event or a
+/// write are spelled differently (`\\?\` prefix, slashes, case), so keys are
+/// normalized.
+#[derive(Debug, Default)]
+pub struct ScanCache {
+    entries: HashMap<String, CachedScan>,
+}
+
+impl ScanCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Drops one file, e.g. after the app wrote it or a watcher saw it change.
+    pub fn forget(&mut self, path: &Path) {
+        self.entries.remove(&cache_key(path));
+    }
+
+    /// Applies one watcher event: its paths are dropped, and an event that
+    /// names no paths or asks for a rescan drops everything.
+    pub fn invalidate(&mut self, paths: &[PathBuf], rescan: bool) {
+        if rescan || paths.is_empty() {
+            self.clear();
+            return;
+        }
+        for path in paths {
+            self.forget(path);
+        }
+    }
+
+    fn get(&self, path: &Path) -> Option<&CachedScan> {
+        self.entries.get(&cache_key(path))
+    }
+
+    fn insert(&mut self, path: &Path, entry: CachedScan) {
+        self.entries.insert(cache_key(path), entry);
+    }
+}
+
+fn cache_key(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    let text = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    text.replace('/', "\\").to_lowercase()
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -503,7 +579,37 @@ pub fn scan_markdown_with_hook(
     cancelled: &dyn Fn() -> bool,
     before_read: &dyn Fn(&Path),
 ) -> Result<ScanResult, NativeError> {
+    scan_markdown_inner(root, limits, cancelled, before_read, None)
+}
+
+/// Like `scan_markdown`, but files whose size and modified time match
+/// `cache` keep their hash without being read. The cache is replaced with
+/// what this scan saw, so deleted files drop out of it. Files modified within
+/// `RACY_WINDOW` of the scan are never cached. A stale entry still cannot
+/// cause a lost write: every write re-checks the hash against the bytes on
+/// disk, and the caller clears the cache when that check fails.
+pub fn scan_markdown_cached(
+    root: &Path,
+    limits: ScanLimits,
+    cancelled: &dyn Fn() -> bool,
+    before_read: &dyn Fn(&Path),
+    cache: &mut ScanCache,
+) -> Result<ScanResult, NativeError> {
+    let mut seen = ScanCache::new();
+    let result = scan_markdown_inner(root, limits, cancelled, before_read, Some((cache, &mut seen)))?;
+    *cache = seen;
+    Ok(result)
+}
+
+fn scan_markdown_inner(
+    root: &Path,
+    limits: ScanLimits,
+    cancelled: &dyn Fn() -> bool,
+    before_read: &dyn Fn(&Path),
+    mut cache: Option<(&ScanCache, &mut ScanCache)>,
+) -> Result<ScanResult, NativeError> {
     let root = validate_vault_root(root)?;
+    let scan_started = SystemTime::now();
     let mut result = ScanResult::default();
     let mut stack = vec![root.clone()];
     while let Some(directory) = stack.pop() {
@@ -553,6 +659,23 @@ pub fn scan_markdown_with_hook(
             {
                 return Err(NativeError::LimitExceeded);
             }
+            let modified = metadata.modified().ok();
+            if let (Some((previous, seen)), Some(modified)) = (cache.as_mut(), modified) {
+                if let Some(hit) = previous
+                    .get(&path)
+                    .filter(|hit| hit.bytes == bytes && hit.modified == modified)
+                {
+                    result.files.push(ScannedFile {
+                        relative_path,
+                        sha256: hit.sha256.clone(),
+                        bytes,
+                        has_bom: hit.has_bom,
+                        newline: hit.newline,
+                    });
+                    seen.insert(&path, hit.clone());
+                    continue;
+                }
+            }
             before_read(&path);
             let contents = fs::read(&path)?;
             let after_metadata = fs::metadata(&path)?;
@@ -566,14 +689,33 @@ pub fn scan_markdown_with_hook(
                     return Err(NativeError::HashPrecondition);
                 }
             }
-            let digest = Sha256::digest(&contents);
-            result.files.push(ScannedFile {
+            let scanned = ScannedFile {
                 relative_path,
-                sha256: hex::encode(digest),
+                sha256: hex::encode(Sha256::digest(&contents)),
                 bytes,
                 has_bom: contents.starts_with(&[0xEF, 0xBB, 0xBF]),
                 newline: newline_style(&contents),
-            });
+            };
+            let settled = |modified: SystemTime| {
+                scan_started
+                    .duration_since(modified)
+                    .is_ok_and(|age| age >= RACY_WINDOW)
+            };
+            if let (Some((_, seen)), Some(modified)) =
+                (cache.as_mut(), modified.filter(|modified| settled(*modified)))
+            {
+                seen.insert(
+                    &path,
+                    CachedScan {
+                        bytes,
+                        modified,
+                        sha256: scanned.sha256.clone(),
+                        has_bom: scanned.has_bom,
+                        newline: scanned.newline,
+                    },
+                );
+            }
+            result.files.push(scanned);
         }
     }
     result

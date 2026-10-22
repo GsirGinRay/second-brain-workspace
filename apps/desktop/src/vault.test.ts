@@ -1222,6 +1222,34 @@ test("a save in a file with thousands of tasks stays fast and patches only the e
   assert.match(after[count + 1]!, /last edit/);
 });
 
+test("deleting half the tasks of a large file stays fast and removes exactly those tasks and their notes", () => {
+  const count = 3000;
+  const ids = Array.from({ length: count }, (_, index) => `55555555-5555-4555-8555-${String(index).padStart(12, "0")}`);
+  // Every third task carries an indented note, so both delete paths run.
+  const blocks = ids.map((id, index) => {
+    const line = formatTaskLine({
+      id, title: `task ${index}`, status: "todo", taskDate: "2026-10-21", priority: "normal",
+      projectId: null, projectName: null, rank: String(index).padStart(6, "0"), sourcePath: null,
+      sourceHeading: null, completedAt: null, startTime: null, durationMinutes: null,
+    });
+    return index % 3 === 0 ? [line, `  note ${index}`] : [line];
+  });
+  const textOf = (kept: (index: number) => boolean) =>
+    `# Big\r\n\r\n${blocks.flatMap((block, index) => kept(index) ? block : []).join("\r\n")}\r\n`;
+  const files = [{ relativePath: "big.md", sha256: "a".repeat(64), bytesBase64: Buffer.from(textOf(() => true), "utf8").toString("base64") }];
+  const scanned = scanStructuredVault(files);
+  const removed = new Set(ids.filter((_, index) => index % 2 === 0));
+  const started = performance.now();
+  const changes = applyDesiredSnapshot(files, {
+    ...scanned.snapshot,
+    tasks: scanned.snapshot.tasks.filter((task) => !removed.has(task.id!)),
+  });
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 3000, `applyDesiredSnapshot took ${Math.round(elapsed)} ms`);
+  assert.equal(changes.length, 1);
+  assert.equal(base64ToText(changes[0]!.replacementBase64), textOf((index) => index % 2 !== 0));
+});
+
 test("passing the scanned base gives the same writes while skipping unchanged records", () => {
   const otherId = "44444444-4444-4444-8444-444444444444";
   const line = (id: string, title: string) => formatTaskLine({

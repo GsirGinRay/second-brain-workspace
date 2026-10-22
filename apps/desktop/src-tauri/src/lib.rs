@@ -21,7 +21,7 @@ use crate::canonical::DeviceCanonicalRequest;
 use crate::diagnostics::{set_autostart, DiagnosticsSnapshot, WindowCloseBehavior};
 use crate::error::NativeError;
 use crate::key_store::{KeyStore, PublicIdentity};
-use crate::path_policy::{scan_markdown, validate_vault_root, ScanLimits, ScanResult};
+use crate::path_policy::{scan_markdown_cached, validate_vault_root, ScanCache, ScanLimits, ScanResult};
 use crate::publisher::{PublisherHttpRequest, PublisherHttpResponse, PublisherTransport};
 use crate::state::LocalState;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -47,6 +47,8 @@ pub struct AppState {
     data_dir: PathBuf,
     watcher: Mutex<Option<RecommendedWatcher>>,
     publisher: PublisherTransport,
+    // Every save scans the vault twice; this spares re-reading unchanged files.
+    scan_cache: Mutex<ScanCache>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -266,6 +268,11 @@ fn select_vault(
         .selected_vault
         .lock()
         .map_err(|_| NativeError::Database)? = Some(root.clone());
+    state
+        .scan_cache
+        .lock()
+        .map_err(|_| NativeError::Database)?
+        .clear();
     *state.watcher.lock().map_err(|_| NativeError::Io)? = Some(start_watcher(&app, &root)?);
     Ok(VaultSelection {
         vault_id,
@@ -276,6 +283,17 @@ fn select_vault(
 fn start_watcher(app: &AppHandle, root: &Path) -> Result<RecommendedWatcher, NativeError> {
     let app = app.clone();
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+        // A file changed by another program can keep its size and modified
+        // time, so the scan cache must not vouch for it. A watcher error may
+        // mean lost events, which only a full re-read can make up for.
+        if let Some(state) = app.try_state::<AppState>() {
+            if let Ok(mut cache) = state.scan_cache.lock() {
+                match &result {
+                    Ok(event) => cache.invalidate(&event.paths, event.need_rescan()),
+                    Err(_) => cache.clear(),
+                }
+            }
+        }
         if let Ok(event) = result {
             if event
                 .paths
@@ -301,7 +319,8 @@ fn scan_vault(state: State<'_, AppState>) -> Result<ScanResult, NativeError> {
         .map_err(|_| NativeError::Database)?
         .clone()
         .ok_or(NativeError::InvalidRequest)?;
-    scan_markdown(&root, ScanLimits::default(), &|| false)
+    let mut cache = state.scan_cache.lock().map_err(|_| NativeError::Database)?;
+    scan_markdown_cached(&root, ScanLimits::default(), &|| false, &|_| {}, &mut cache)
 }
 
 fn selected_root(state: &AppState) -> Result<PathBuf, NativeError> {
@@ -487,6 +506,29 @@ fn open_vault_attachment(
 fn apply_markdown_changes(
     changes: Vec<MarkdownChangeRequest>,
     state: State<'_, AppState>,
+) -> Result<MarkdownApplyResult, NativeError> {
+    let targets: Vec<PathBuf> = selected_root(&state)
+        .map(|root| changes.iter().map(|change| root.join(&change.relative_path)).collect())
+        .unwrap_or_default();
+    let result = apply_markdown_changes_checked(changes, &state);
+    if let Ok(mut cache) = state.scan_cache.lock() {
+        if matches!(result, Err(NativeError::HashPrecondition)) {
+            // The cache may have kept a hash the disk no longer has; the
+            // app's retry re-scans, and that scan must read every file again.
+            cache.clear();
+        } else {
+            // Even a failed write may have replaced some of these files.
+            for target in &targets {
+                cache.forget(target);
+            }
+        }
+    }
+    result
+}
+
+fn apply_markdown_changes_checked(
+    changes: Vec<MarkdownChangeRequest>,
+    state: &AppState,
 ) -> Result<MarkdownApplyResult, NativeError> {
     if changes.is_empty() || changes.len() > MAX_NATIVE_BATCH_FILES {
         return Err(NativeError::LimitExceeded);
@@ -838,6 +880,7 @@ pub fn run() -> tauri::Result<()> {
                 data_dir,
                 watcher: Mutex::new(watcher),
                 publisher,
+                scan_cache: Mutex::new(ScanCache::new()),
             });
             quick_capture::register(app.handle());
             Ok(())

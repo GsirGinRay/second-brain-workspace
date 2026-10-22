@@ -780,7 +780,30 @@ export function applyDesiredSnapshot(
     if (desiredTaskIds.has(id)) continue;
     removedByPath.set(location.relativePath, [...(removedByPath.get(location.relativePath) ?? []), id]);
   }
-  for (const [relativePath, ids] of removedByPath) {
+  for (const [relativePath, allIds] of removedByPath) {
+    // Each task line and its indented notes are cut straight from one index,
+    // bottom-up so the lines above stay put. Re-indexing per removed task made
+    // deleting many tasks from one file quadratic. Legacy comment blocks still
+    // take the slow path below, which also removes them.
+    let ids = allIds;
+    const indexed = taskLinesOf(relativePath);
+    if (indexed && !hasLegacyComments(indexed.source)) {
+      const plain = allIds
+        .map((id) => ({ id, lineIndex: indexed.byId.get(id) ?? -1 }))
+        .filter(({ lineIndex }) => lineIndex >= 0);
+      if (plain.length > 0) {
+        const lines = [...indexed.lines];
+        for (const { lineIndex } of [...plain].sort((left, right) => right.lineIndex - left.lineIndex)) {
+          lines.splice(lineIndex, endIndexOfTaskBody(indexed.lines, lineIndex) - lineIndex);
+        }
+        const newline = indexed.source.includes("\r\n") ? "\r\n" : "\n";
+        const hasTrailing = lines.length > 0 && lines[lines.length - 1] === "";
+        if (hasTrailing) lines.pop();
+        currentSources.set(relativePath, lines.join(newline) + (hasTrailing ? newline : ""));
+        const removed = new Set(plain.map(({ id }) => id));
+        ids = allIds.filter((id) => !removed.has(id));
+      }
+    }
     let source = currentSources.get(relativePath)!;
     for (const id of ids) {
       // Re-derive the line index from the latest source so a previous

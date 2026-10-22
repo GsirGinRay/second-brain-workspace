@@ -92,6 +92,25 @@ test("loading again only reads files whose hash changed since the last read", as
   assert.deepEqual(third.files.map((file) => file.relativePath), ["b.md"]);
 });
 
+test("loading an unchanged vault again reuses the parse but never shares it with callers", async () => {
+  let content = formatTaskLine(originalTask) + "\r\n";
+  let hash = "a".repeat(64);
+  const native = {
+    async scanVault() { return [{ relativePath: "tasks.md", sha256: hash, bytes: content.length, hasBom: false, newline: "cr_lf" as const }]; },
+    async readMarkdownFiles() { return [{ relativePath: "tasks.md", sha256: hash, bytesBase64: base64(content) }]; },
+  } as unknown as ConstructorParameters<typeof SyncEngine>[0];
+  const load = () => new SyncEngine(native, {} as SyncDeviceClient).loadLocal();
+  const first = await load();
+  first.tasks[0]!.title = "changed by a caller";
+  first.tasks.push({ ...originalTask, id: "33333333-3333-4333-8333-333333333333" });
+  const second = await load();
+  assert.deepEqual(second.tasks.map((task) => task.title), ["本機任務"]);
+  content = formatTaskLine({ ...originalTask, title: "改過的任務" }) + "\r\n";
+  hash = "b".repeat(64);
+  const third = await load();
+  assert.deepEqual(third.tasks.map((task) => task.title), ["改過的任務"]);
+});
+
 test("files in subfolders survive when the scan uses backslashes and reads use slashes", async () => {
   const native = {
     async scanVault() {

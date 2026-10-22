@@ -18,6 +18,7 @@ export type SyncResult =
 
 // Keyed by adapter: the app builds a fresh SyncEngine for each local reload.
 const fileContentCache = new WeakMap<object, Map<string, LocalMarkdownFile>>();
+const parseCache = new WeakMap<object, { files: LocalMarkdownFile[]; structured: ReturnType<typeof scanStructuredVault> }>();
 
 export class SyncEngine {
   private running: Promise<SyncResult> | null = null;
@@ -41,8 +42,28 @@ export class SyncEngine {
     const scan = await this.native.scanVault();
     if (scan.length === 0) return { files: [], tasks: [], projects: [], collections: [], bootstrapChanges: [], warnings: [] };
     const files = await this.readChangedFiles(scan);
-    const structured = scanStructuredVault(files);
+    const structured = this.parse(files);
     return { files, tasks: structured.snapshot.tasks, projects: structured.snapshot.projects, collections: structured.snapshot.collections, bootstrapChanges: structured.bootstrapChanges, warnings: structured.warnings };
+  }
+
+  /**
+   * A save loads the vault right before its diff, usually with nothing
+   * changed since the last load. The same cached file objects give the same
+   * parse, so it is reused. A parse that assigned new task ids is not cached:
+   * those ids are random and the bootstrap write changes the files anyway.
+   * Callers get a copy, so nothing they change can leak into the next load.
+   */
+  private parse(files: LocalMarkdownFile[]): ReturnType<typeof scanStructuredVault> {
+    const previous = parseCache.get(this.native);
+    const reused = previous
+      && previous.files.length === files.length
+      && previous.files.every((file, index) => file === files[index]);
+    const structured = reused ? previous.structured : scanStructuredVault(files);
+    if (!reused) {
+      if (structured.bootstrapChanges.length === 0) parseCache.set(this.native, { files, structured });
+      else parseCache.delete(this.native);
+    }
+    return structuredClone(structured);
   }
 
   /**
