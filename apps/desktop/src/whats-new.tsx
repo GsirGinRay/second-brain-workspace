@@ -15,6 +15,7 @@ export const RELEASE_HIGHLIGHT_KEYS: Readonly<Record<string, readonly string[]>>
   "0.7.4": ["whatsNew.0.7.4.review", "whatsNew.0.7.3.customRepeat"],
   "0.7.5": ["whatsNew.0.7.5.speed", "whatsNew.0.7.5.rename"],
   "0.7.6": ["whatsNew.0.7.6.speed", "whatsNew.0.7.6.delete"],
+  "0.7.7": ["whatsNew.0.7.7.bom", "whatsNew.0.7.6.speed"],
 };
 
 function compareVersions(left: string, right: string): number {
