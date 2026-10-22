@@ -624,7 +624,18 @@ export function applyDesiredSnapshot(
   const baseTaskUnchanged = unchangedIn(base?.tasks);
   const taskUnchanged = (task: BrainTaskSnapshot) => projectsUnchanged && baseTaskUnchanged(task);
   const byPath = new Map(files.map((file) => [file.relativePath, file]));
-  const currentSources = new Map(files.map((file) => [file.relativePath, decodeFile(file)]));
+  // The BOM belongs to the file, not to its first line: edits below work on
+  // the text without it and it is put back on write. Otherwise removing or
+  // moving a task on line one took the BOM along with it.
+  const bomPaths = new Set<string>();
+  const currentSources = new Map(files.map((file) => {
+    const source = decodeFile(file);
+    if (!source.startsWith("﻿")) return [file.relativePath, source] as const;
+    bomPaths.add(file.relativePath);
+    return [file.relativePath, source.slice(1)] as const;
+  }));
+  const finalSource = (relativePath: string) =>
+    (bomPaths.has(relativePath) ? "﻿" : "") + currentSources.get(relativePath)!;
   const resolvePath = (relativePath: string | null | undefined): string | undefined => {
     if (!relativePath) return undefined;
     if (byPath.has(relativePath)) return relativePath;
@@ -874,13 +885,13 @@ export function applyDesiredSnapshot(
   return [
     ...[...changed]
       .sort()
-      .map((relativePath) => makeChange(byPath.get(relativePath)!, currentSources.get(relativePath)!)),
+      .map((relativePath) => makeChange(byPath.get(relativePath)!, finalSource(relativePath))),
     ...[...createdPaths]
       .sort()
       .map((relativePath) => ({
         relativePath,
         expectedSha256: EMPTY_SHA256,
-        replacementBase64: encodeBase64(encoder.encode(currentSources.get(relativePath)!)),
+        replacementBase64: encodeBase64(encoder.encode(finalSource(relativePath))),
         operation: "create" as const,
       })),
   ];

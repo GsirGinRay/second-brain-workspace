@@ -48,6 +48,35 @@ test("structured vault scan assigns ids without losing BOM, CRLF, or unknown tok
   assert.match(patched, new RegExp(taskId));
 });
 
+test("removing or moving the task on the first line of a BOM file keeps the BOM where it belongs", () => {
+  const otherId = "44444444-4444-4444-8444-444444444444";
+  const line = (id: string, title: string) => formatTaskLine({
+    id, title, status: "todo", taskDate: "2026-10-21", priority: "normal",
+    projectId: null, projectName: null, rank: "a", sourcePath: "tasks.md",
+    sourceHeading: null, completedAt: null, startTime: null, durationMinutes: null,
+  });
+  const inbox = `﻿${line(taskId, "First")}\r\n  first note\r\n${line(otherId, "Second")}\r\n`;
+  const project = `---\r\ntype: project\r\nid: ${projectId}\r\n---\r\n# Launch\r\n`;
+  const files = [file("tasks.md", inbox), file("專案/Launch.md", project)];
+  const scanned = scanStructuredVault(files).snapshot;
+  assert.equal(scanned.tasks.length, 2);
+  const textOf = (changes: ReturnType<typeof applyDesiredSnapshot>, path: string) =>
+    base64ToText(changes.find((change) => change.relativePath === path)!.replacementBase64);
+
+  const deleted = applyDesiredSnapshot(files, { ...scanned, tasks: scanned.tasks.filter((task) => task.id !== taskId) });
+  assert.equal(textOf(deleted, "tasks.md"), `﻿${line(otherId, "Second")}\r\n`);
+
+  const moved = applyDesiredSnapshot(files, {
+    ...scanned,
+    tasks: scanned.tasks.map((task) => task.id === taskId ? { ...task, projectId, projectName: "Launch" } : task),
+  });
+  assert.ok(textOf(moved, "tasks.md").startsWith(`﻿${line(otherId, "Second").slice(0, 10)}`));
+  const projectText = textOf(moved, "專案/Launch.md");
+  assert.ok(!projectText.includes("﻿"), "the BOM travelled with the task into the project file");
+  assert.match(projectText, /First/);
+  assert.match(projectText, /first note/);
+});
+
 test("structured vault scan links tasks to project ids and rejects duplicate ids", () => {
   const project = "---\r\ntype: project\r\npublisher_id: " + projectId + "\r\n---\r\n# 專案 A\r\n正文\r\n";
   const task = formatTaskLine({
