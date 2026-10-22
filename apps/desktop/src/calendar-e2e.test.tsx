@@ -317,6 +317,204 @@ test("end-to-end: a stale-hash write is retried after re-scan so the date edit l
   }
 });
 
+// Mounts the app on a vault whose user writes (after the first, bootstrap
+// write) go through `write`, then drags the task from 08-15 to 08-16.
+async function dragWithWrites(write: (apply: () => Promise<unknown>) => Promise<unknown>) {
+  const root = setupVault();
+  const base = createVaultAdapter(root);
+  let writes = 0;
+  const adapter: NativeAdapter = {
+    ...base,
+    async applyMarkdownChanges(changes) {
+      writes += 1;
+      if (writes === 1) return base.applyMarkdownChanges(changes);
+      return write(() => base.applyMarkdownChanges(changes)) as ReturnType<NativeAdapter["applyMarkdownChanges"]>;
+    },
+  };
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const reactRoot = createRoot(container);
+  flushSync(() => {
+    reactRoot.render(<App adapter={adapter} />);
+  });
+  await waitFor(() => document.body.textContent?.includes("已載入") ?? false, 6000, "initial load");
+  openCalendar(container);
+  await waitFor(() => dayCell(container, "2026-08-15") !== null, 3000, "calendar grid");
+  const source = container.querySelector<HTMLElement>(".calendar-task-title");
+  assert.ok(source, "task chip exists");
+  flushSync(() => {
+    pointerDragTo(source!, dayCell(container, "2026-08-16")!);
+  });
+  const chipOn = (date: string) => Boolean(dayCell(container, date)?.querySelector(".calendar-task-title"));
+  const cleanup = () => {
+    reactRoot.unmount();
+    container.remove();
+    rmSync(root, { recursive: true, force: true });
+  };
+  return { root, container, chipOn, cleanup };
+}
+
+test("end-to-end: a moved task shows on its new date before the write finishes", async () => {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const view = await dragWithWrites(async (apply) => { await gate; return apply(); });
+  try {
+    await waitFor(() => view.chipOn("2026-08-16"), 3000, "task on the new date while the write waits");
+    assert.match(readFileSync(join(view.root, "Inbox.md"), "utf8"), /⏳ 2026-08-15/);
+    release();
+    await waitFor(() => readFileSync(join(view.root, "Inbox.md"), "utf8").includes("⏳ 2026-08-16"), 6000, "write lands");
+    assert.ok(view.chipOn("2026-08-16"));
+  } finally {
+    release();
+    view.cleanup();
+  }
+});
+
+test("end-to-end: a second move stays on screen while the first one's write and re-read land", async () => {
+  const root = setupMultiTaskVault();
+  const base = createVaultAdapter(root);
+  let writes = 0;
+  const gates: (() => void)[] = [];
+  const adapter: NativeAdapter = {
+    ...base,
+    async applyMarkdownChanges(changes) {
+      writes += 1;
+      // Only the moves are held; the AI index and other writes pass through.
+      if (writes > 1 && changes.some((change) => change.relativePath === "Inbox.md")) {
+        await new Promise<void>((resolve) => gates.push(resolve));
+      }
+      return base.applyMarkdownChanges(changes);
+    },
+  };
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const reactRoot = createRoot(container);
+  const titlesOn = (date: string) =>
+    [...(dayCell(container, date)?.querySelectorAll(".calendar-task-title") ?? [])].map((chip) => chip.textContent ?? "");
+  const chipNamed = (name: string) =>
+    [...container.querySelectorAll<HTMLElement>(".calendar-task-title")].find((chip) => chip.textContent?.includes(name));
+  try {
+    flushSync(() => {
+      reactRoot.render(<App adapter={adapter} />);
+    });
+    await waitFor(() => document.body.textContent?.includes("已載入") ?? false, 6000, "initial load");
+    openCalendar(container);
+    await waitFor(() => titlesOn("2026-08-15").length === 3, 3000, "three tasks on 08-15");
+    flushSync(() => pointerDragTo(chipNamed("買牛奶")!, dayCell(container, "2026-08-16")!));
+    await waitFor(() => gates.length === 1, 3000, "first write waiting");
+    flushSync(() => pointerDragTo(chipNamed("買麵包")!, dayCell(container, "2026-08-17")!));
+    await waitFor(() => titlesOn("2026-08-17").some((title) => title.includes("買麵包")), 3000, "second move on screen");
+    gates.shift()!();
+    // The first write lands and is re-read; the second is queued behind it.
+    await waitFor(() => gates.length === 1, 6000, "second write waiting");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(titlesOn("2026-08-17").some((title) => title.includes("買麵包")), "second move blinked back");
+    assert.ok(titlesOn("2026-08-16").some((title) => title.includes("買牛奶")));
+    gates.shift()!();
+    await waitFor(() => readFileSync(join(root, "Inbox.md"), "utf8").includes("⏳ 2026-08-17"), 6000, "second write lands");
+    assert.ok(titlesOn("2026-08-17").some((title) => title.includes("買麵包")));
+    assert.ok(titlesOn("2026-08-16").some((title) => title.includes("買牛奶")));
+  } finally {
+    for (const release of gates) release();
+    reactRoot.unmount();
+    container.remove();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("end-to-end: a failed background write puts the task back where the disk has it", async () => {
+  const view = await dragWithWrites(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    throw new Error("disk full");
+  });
+  try {
+    await waitFor(() => view.container.textContent?.includes("本機寫入失敗") ?? false, 6000, "write error shown");
+    await waitFor(() => view.chipOn("2026-08-15") && !view.chipOn("2026-08-16"), 6000, "task back on its saved date");
+    assert.match(readFileSync(join(view.root, "Inbox.md"), "utf8"), /⏳ 2026-08-15/);
+  } finally {
+    view.cleanup();
+  }
+});
+
+async function mountOnCalendar(adapter: NativeAdapter) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const reactRoot = createRoot(container);
+  flushSync(() => {
+    reactRoot.render(<App adapter={adapter} />);
+  });
+  await waitFor(() => document.body.textContent?.includes("已載入") ?? false, 6000, "initial load");
+  openCalendar(container);
+  await waitFor(() => dayCell(container, "2026-08-15") !== null, 3000, "calendar grid");
+  const chipOn = (date: string) => Boolean(dayCell(container, date)?.querySelector(".calendar-task-title"));
+  return { container, chipOn, unmount: () => { reactRoot.unmount(); container.remove(); } };
+}
+
+for (const failingScans of [1, 3]) {
+  test(`end-to-end: when the scan before a save fails ${failingScans === 1 ? "once" : "and the recovery read fails too"}, the screen goes back and says so`, async () => {
+    const root = setupVault();
+    const base = createVaultAdapter(root);
+    let scansToFail = 0;
+    const adapter: NativeAdapter = {
+      ...base,
+      async scanVault() {
+        if (scansToFail > 0) {
+          scansToFail -= 1;
+          throw new Error("file vanished while reading");
+        }
+        return base.scanVault();
+      },
+    };
+    const view = await mountOnCalendar(adapter);
+    try {
+      scansToFail = failingScans;
+      flushSync(() => pointerDragTo(view.container.querySelector(".calendar-task-title")!, dayCell(view.container, "2026-08-16")!));
+      await waitFor(() => view.container.textContent?.includes("本機寫入失敗") ?? false, 6000, "error shown");
+      await waitFor(() => view.chipOn("2026-08-15") && !view.chipOn("2026-08-16"), 6000, "task back on its saved date");
+      assert.match(readFileSync(join(root, "Inbox.md"), "utf8"), /⏳ 2026-08-15/);
+    } finally {
+      view.unmount();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("end-to-end: undo while a save is still writing waits instead of reverting it", async () => {
+  const root = setupVault();
+  const base = createVaultAdapter(root);
+  let writes = 0;
+  let release: (() => void) | null = null;
+  const adapter: NativeAdapter = {
+    ...base,
+    async applyMarkdownChanges(changes) {
+      writes += 1;
+      if (writes > 1 && changes.some((change) => change.relativePath === "Inbox.md")) {
+        await new Promise<void>((resolve) => { release = resolve; });
+      }
+      return base.applyMarkdownChanges(changes);
+    },
+  };
+  const view = await mountOnCalendar(adapter);
+  try {
+    flushSync(() => pointerDragTo(view.container.querySelector(".calendar-task-title")!, dayCell(view.container, "2026-08-16")!));
+    await waitFor(() => view.chipOn("2026-08-16"), 3000, "move on screen");
+    flushSync(() => {
+      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+    });
+    await waitFor(() => view.container.textContent?.includes("正在儲存") ?? false, 3000, "undo deferred");
+    await waitFor(() => release !== null, 3000, "write waiting");
+    release!();
+    await waitFor(() => readFileSync(join(root, "Inbox.md"), "utf8").includes("⏳ 2026-08-16"), 6000, "write lands");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.match(readFileSync(join(root, "Inbox.md"), "utf8"), /⏳ 2026-08-16/);
+    assert.ok(view.chipOn("2026-08-16"));
+  } finally {
+    (release as (() => void) | null)?.();
+    view.unmount();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("end-to-end: drag task to idea drawer removes the date in Markdown", async () => {
   const root = setupVault();
   const adapter = createVaultAdapter(root);

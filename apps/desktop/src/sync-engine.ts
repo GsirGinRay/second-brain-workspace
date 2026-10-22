@@ -1,7 +1,7 @@
 import type { BrainCollectionSnapshot, BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
 import type { DeviceClient, DeviceOwnerState, DevicePlanResponse, ConflictChoice } from "./device-client";
 import type { NativeAdapter, PendingCommitRecord } from "./ipc";
-import { applyDesiredSnapshot, scanStructuredVault, type LocalMarkdownFile } from "./vault";
+import { applyDesiredSnapshot, createIncrementalVaultScanner, scanStructuredVault, type LocalMarkdownFile } from "./vault";
 
 type NativeSyncAdapter = Pick<NativeAdapter,
   "scanVault" | "readMarkdownFiles" | "applyMarkdownChanges" | "confirmServerCommit" |
@@ -18,7 +18,7 @@ export type SyncResult =
 
 // Keyed by adapter: the app builds a fresh SyncEngine for each local reload.
 const fileContentCache = new WeakMap<object, Map<string, LocalMarkdownFile>>();
-const parseCache = new WeakMap<object, { files: LocalMarkdownFile[]; structured: ReturnType<typeof scanStructuredVault> }>();
+const vaultScanners = new WeakMap<object, ReturnType<typeof createIncrementalVaultScanner>>();
 
 export class SyncEngine {
   private running: Promise<SyncResult> | null = null;
@@ -47,23 +47,17 @@ export class SyncEngine {
   }
 
   /**
-   * A save loads the vault right before its diff, usually with nothing
-   * changed since the last load. The same cached file objects give the same
-   * parse, so it is reused. A parse that assigned new task ids is not cached:
-   * those ids are random and the bootstrap write changes the files anyway.
+   * A save loads the vault twice, and most files are unchanged each time.
+   * The cached file objects let the scanner re-parse only the changed ones.
    * Callers get a copy, so nothing they change can leak into the next load.
    */
   private parse(files: LocalMarkdownFile[]): ReturnType<typeof scanStructuredVault> {
-    const previous = parseCache.get(this.native);
-    const reused = previous
-      && previous.files.length === files.length
-      && previous.files.every((file, index) => file === files[index]);
-    const structured = reused ? previous.structured : scanStructuredVault(files);
-    if (!reused) {
-      if (structured.bootstrapChanges.length === 0) parseCache.set(this.native, { files, structured });
-      else parseCache.delete(this.native);
+    let scan = vaultScanners.get(this.native);
+    if (!scan) {
+      scan = createIncrementalVaultScanner();
+      vaultScanners.set(this.native, scan);
     }
-    return structuredClone(structured);
+    return structuredClone(scan(files));
   }
 
   /**

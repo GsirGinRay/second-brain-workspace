@@ -16,6 +16,7 @@ import {
   buildProjectCreateChange,
   withRelatedProjectWikilink,
   buildProjectDeleteChanges,
+  createIncrementalVaultScanner,
   scanStructuredVault,
   type LocalMarkdownFile,
 } from "./vault";
@@ -1328,4 +1329,57 @@ test("a stale collection body cannot undo a newer task state when the base is pa
   const written = base64ToText(applyDesiredSnapshot(doneFiles, desired, latest)[0]!.replacementBase64);
   assert.match(written, /new intro/);
   assert.match(written, /- \[x\] #task Call bob/);
+});
+
+test("the incremental scanner returns what a full scan returns through a run of edits", () => {
+  const id = (n: number) => `66666666-6666-4666-8666-${String(n).padStart(12, "0")}`;
+  const projectFile = (n: number, name: string) =>
+    file(`專案/P${n}.md`, `---\r\ntype: project\r\nid: ${id(900 + n)}\r\nstatus: active\r\n---\r\n# ${name}\r\n\r\nGoal ${n}\r\n`);
+  const taskLine = (n: number, project: string | null, title = `task ${n}`) => formatTaskLine({
+    id: id(n), title, status: "todo", taskDate: "2026-10-21", priority: "normal",
+    projectId: null, projectName: project, rank: String(n).padStart(4, "0"), sourcePath: null,
+    sourceHeading: null, completedAt: null, startTime: null, durationMinutes: null,
+  });
+  const inbox = (lines: string[]) => file("收件匣/待辦.md", `﻿# 待辦\r\n\r\n${lines.join("\r\n")}\r\n`);
+  const knowledge = file("知識/Note.md", `---\r\ntype: knowledge\r\nid: ${id(950)}\r\n---\r\n# Note\r\n\r\n${taskLine(40, "Alpha")}\r\n  a note\r\n`);
+  let files = [
+    projectFile(1, "Alpha"),
+    projectFile(2, "Beta"),
+    inbox([taskLine(1, "Alpha"), "  note under one", taskLine(2, "Beta"), taskLine(3, null)]),
+    knowledge,
+    file("tmp/ignored.md", `${taskLine(70, null)}\r\n`),
+  ];
+  const scan = createIncrementalVaultScanner();
+  const compared: string[] = [];
+  const check = (step: string) => {
+    const full = scanStructuredVault(files, () => "77777777-7777-4777-8777-777777777777");
+    const incremental = scan(files);
+    if (full.bootstrapChanges.length > 0) {
+      // Minted ids differ between calls; the files that need patching must not.
+      assert.deepEqual(incremental.bootstrapChanges.map((change) => change.relativePath), full.bootstrapChanges.map((change) => change.relativePath), step);
+      return;
+    }
+    compared.push(step);
+    assert.deepEqual(incremental, full, step);
+  };
+  check("first load");
+  check("unchanged");
+  files = files.map((item) => item.relativePath === "收件匣/待辦.md" ? inbox([taskLine(1, "Alpha", "renamed"), taskLine(2, "Beta"), taskLine(3, null), taskLine(4, "Beta")]) : item);
+  check("inbox edited");
+  files = files.map((item) => item.relativePath === "專案/P2.md" ? projectFile(2, "Gamma") : item);
+  check("project renamed, so tasks naming Beta lose their link");
+  files = files.filter((item) => item.relativePath !== "專案/P1.md");
+  check("project file deleted");
+  files = [...files, projectFile(1, "Alpha")];
+  check("project file back, in a different order");
+  files = [...files, file("Other.md", `${taskLine(2, null)}\r\n`)];
+  check("an id duplicated across files");
+  files = files.filter((item) => item.relativePath !== "Other.md");
+  check("duplicate gone");
+  files = [...files, file("New.md", "- [ ] #task no id yet\r\n")];
+  check("a task without an id");
+  files = files.filter((item) => item.relativePath !== "New.md");
+  check("clean again");
+  // Only the steps that need no Markdown patching compare whole results.
+  assert.deepEqual(compared, ["first load", "unchanged", "inbox edited", "project renamed, so tasks naming Beta lose their link", "project file deleted", "project file back, in a different order", "duplicate gone", "clean again"]);
 });

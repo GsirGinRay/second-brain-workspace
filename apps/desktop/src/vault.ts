@@ -565,6 +565,62 @@ export function scanStructuredVault(
   };
 }
 
+/**
+ * `scanStructuredVault` with each file's parse kept between calls, so a save
+ * re-parses only the files it changed. A vault scan links files in three
+ * ways: tasks name projects from other files, ids must be unique across
+ * files, and ranks and ids are minted in vault order. The first is
+ * recomputed on every call. The other two only happen when the scan has to
+ * patch Markdown, so then, and on any cross-file duplicate, this falls back
+ * to the full scan and returns exactly what it returns.
+ *
+ * Files are cached by object, so callers must pass the same object for
+ * unchanged bytes and never mutate one.
+ */
+export function createIncrementalVaultScanner(): (files: LocalMarkdownFile[]) => StructuredVaultScan {
+  let perFile = new WeakMap<LocalMarkdownFile, StructuredVaultScan>();
+  return (files) => {
+    const scannedFiles = files.filter((file) => !isContentScanExcludedPath(file.relativePath));
+    const next = new WeakMap<LocalMarkdownFile, StructuredVaultScan>();
+    const parts: StructuredVaultScan[] = [];
+    for (const file of scannedFiles) {
+      const part = perFile.get(file) ?? scanStructuredVault([file]);
+      next.set(file, part);
+      parts.push(part);
+    }
+    perFile = next;
+    const clean = parts.every((part) => part.bootstrapChanges.length === 0 && part.warnings.length === 0);
+    if (!clean) return scanStructuredVault(files);
+    const projects = parts.flatMap((part) => part.snapshot.projects);
+    const collections = parts.flatMap((part) => part.snapshot.collections);
+    const taskIds = new Set<string>();
+    const projectIds = new Set<string>();
+    const collectionIds = new Set<string>();
+    const unique = (seen: Set<string>, id: string | null) => !id || (!seen.has(id) && Boolean(seen.add(id)));
+    if (!projects.every((project) => unique(projectIds, project.id))
+      || !collections.every((collection) => unique(collectionIds, collection.id))
+      || !parts.every((part) => part.snapshot.tasks.every((task) => unique(taskIds, task.id)))) {
+      return scanStructuredVault(files);
+    }
+    const projectIdByName = new Map(projects.map((project) => [project.name, project.id]));
+    return {
+      snapshot: {
+        schemaVersion: 6,
+        routineTemplates: [],
+        tasks: parts.flatMap((part) => part.snapshot.tasks.map((task) => ({
+          ...task,
+          projectId: task.projectName ? projectIdByName.get(task.projectName) ?? null : null,
+        }))),
+        projects,
+        collections,
+        fileHashes: Object.fromEntries(scannedFiles.map((file) => [file.relativePath, file.sha256])),
+      },
+      bootstrapChanges: [],
+      warnings: [],
+    };
+  };
+}
+
 function taskLocations(files: LocalMarkdownFile[]): Map<string, TaskLocation> {
   const locations = new Map<string, TaskLocation>();
   for (const file of files) {

@@ -465,6 +465,16 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   // promise chain makes the second call wait for the first to finish, then
   // re-reads `files` and `tasks` against the freshest state.
   const pendingPersistRef = useRef<Promise<boolean> | null>(null);
+  // Saves queued or running. The screen shows their result before it is on
+  // disk, so a reload must not put the older disk state back meanwhile.
+  const pendingWritesRef = useRef(0);
+  // Bumped whenever one of those saves finishes. A reload that started
+  // before then may have scanned the disk before that write.
+  const writeGenerationRef = useRef(0);
+  // The last disk state put on screen, to fall back on when a failed save
+  // cannot re-read the disk.
+  const lastAppliedRef = useRef<WorkspaceSnapshot | null>(null);
+  const reloadLocalRef = useRef<((updateStatus?: boolean) => Promise<unknown>) | null>(null);
   // `files` is a React state, which means a second onSave chained on the
   // first still reads the *pre-first-write* array. Mirror the latest scan
   // into a ref so chained writes always see the freshest file hashes without
@@ -887,7 +897,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   };
 
   const reloadLocal = useCallback(
-    async (updateStatus = true, applyState = true) => {
+    async (updateStatus = true, applyState = true, ownWrite = false) => {
+      const generation = writeGenerationRef.current;
       const nextDiagnostics = await native.getDiagnostics();
       setDiagnostics(nextDiagnostics);
       if (nextDiagnostics.publisherOrigin) {
@@ -953,11 +964,25 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         );
       lastScanRef.current = signatures;
       if (!applyState) return local;
+      // The save that just wrote may apply what it wrote; any other queued
+      // save would have its edit blink away until its own write lands. The
+      // last save to finish applies the disk state.
+      const queuedSaves = pendingWritesRef.current > (ownWrite ? 1 : 0);
+      if (queuedSaves || (!ownWrite && generation !== writeGenerationRef.current)) {
+        lastScanRef.current = null;
+        // Held only because a save finished mid-read: nothing queued will
+        // apply the disk later (a sync write may be in it), so read again.
+        if (!queuedSaves && pendingWritesRef.current === 0) {
+          queueMicrotask(() => void reloadLocalRef.current?.(false).catch(() => undefined));
+        }
+        return local;
+      }
       if (unchanged && !updateStatus) return local;
       setFiles(local.files);
       setTasks(local.tasks);
       setProjects(local.projects);
       setCollections(local.collections ?? []);
+      lastAppliedRef.current = { tasks: local.tasks, projects: local.projects, collections: local.collections ?? [] };
       if (nextDiagnostics.selectedVault) {
         void refreshAiIndex(
           {
@@ -978,6 +1003,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     },
     [engine, native, refreshAiIndex, loadTemplates],
   );
+  reloadLocalRef.current = reloadLocal;
 
   const startWithFolder = async () => {
     const ok = await browseVault();
@@ -1268,6 +1294,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setTasks(nextTasks);
       setProjects(nextProjects);
       setCollections(nextCollections);
+      // An earlier save held back its reload for this one; apply it now so
+      // the file list and AI index catch up too.
+      if (lastScanRef.current === null) await reloadLocal(false, true, true).catch(() => undefined);
       return true;
     }
     setWorking(true);
@@ -1275,7 +1304,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     try {
       await native.applyMarkdownChanges(changes);
       setStatus(devicePaired ? "已儲存在本機 · 等待同步" : "已寫入本機 Markdown 資料夾");
-      await reloadLocal();
+      await reloadLocal(true, true, true);
       if (devicePaired) {
         window.setTimeout(() => void runSync({ background: true }), 50);
       }
@@ -1288,7 +1317,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       // of being silently dropped.
       if (/changed before write|HASH_PRECONDITION/i.test(message)) {
         try {
-          const fresh = await reloadLocal();
+          const fresh = await reloadLocal(true, true, true);
           if (fresh && fresh.files.length > 0) {
             rebaseOnto({ tasks: fresh.tasks, projects: fresh.projects, collections: fresh.collections ?? [] });
             addFollowUps(fresh.tasks);
@@ -1302,7 +1331,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             if (retryChanges.length > 0) {
               await native.applyMarkdownChanges(retryChanges);
               setStatus(devicePaired ? "已儲存在本機 · 等待同步" : "已寫入本機 Markdown 資料夾");
-              await reloadLocal();
+              await reloadLocal(true, true, true);
               if (devicePaired) {
                 window.setTimeout(() => void runSync({ background: true }), 50);
               }
@@ -1332,6 +1361,14 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     // Chain on the previous write so two rapid drags don't race on the same
     // pre-write `files` snapshot. The later call sees the freshly persisted
     // state by the time it actually runs.
+    // Show the edit now and write it in the background: on a large vault the
+    // write and re-read take a moment, and the screen should not wait on it.
+    if (diagnostics?.selectedVault) {
+      setTasks(nextTasks);
+      setProjects(nextProjects);
+      setCollections(nextCollections);
+    }
+    pendingWritesRef.current += 1;
     const tail = pendingPersistRef.current ?? Promise.resolve(true);
     const next = tail.catch(() => true).then(() => applyPersistLocal(
       nextTasks,
@@ -1339,9 +1376,33 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       nextCollections,
       callerBase,
       (latest) => { previous = latest; },
-    ));
+    )).finally(() => {
+      pendingWritesRef.current -= 1;
+      writeGenerationRef.current += 1;
+    });
     pendingPersistRef.current = next;
-    const ok = await next;
+    let ok = false;
+    try {
+      ok = await next;
+    } catch (cause) {
+      // The scan before the write can fail too (a file removed mid-read, a
+      // copied project file); the edit is already on screen, so say so.
+      setError(`本機寫入失敗：${describeError(cause, "WRITE_FAILED")}`);
+    }
+    if (!ok) {
+      // The edit is on screen but not on disk: show the disk again, or at
+      // least the state before this edit if the disk cannot be read.
+      lastScanRef.current = null;
+      void reloadLocal(false).catch(() => {
+        if (pendingWritesRef.current > 0) return;
+        // `previous` may hold an earlier save that failed the same way.
+        const fallback = lastAppliedRef.current ?? previous;
+        setTasks(fallback.tasks);
+        setProjects(fallback.projects);
+        setCollections(fallback.collections);
+      });
+      return false;
+    }
     if (ok) {
       undoRef.current = recordUndo(undoRef.current, previous);
       syncUndoCounts();
@@ -1428,16 +1489,31 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     // Queue behind pending saves and revert only what this undo step changed:
     // the current render is the base, so edits that landed since are kept.
     const callerBase: WorkspaceSnapshot = { tasks, projects, collections };
+    pendingWritesRef.current += 1;
     const tail = pendingPersistRef.current ?? Promise.resolve(true);
     const run = tail.catch(() => true).then(() =>
-      applyPersistLocal(snapshot.tasks, snapshot.projects, snapshot.collections, callerBase));
+      applyPersistLocal(snapshot.tasks, snapshot.projects, snapshot.collections, callerBase))
+      .finally(() => {
+        pendingWritesRef.current -= 1;
+        writeGenerationRef.current += 1;
+      });
     pendingPersistRef.current = run;
     void run.then((ok) => {
       if (ok) setStatus(message);
     });
   }
 
+  // The screen already shows saves that are still being written, but they
+  // join the undo history only once written. Undoing in between would revert
+  // them too and drop the redo step, so it waits for them instead.
+  function savesStillWriting(): boolean {
+    if (pendingWritesRef.current === 0) return false;
+    setStatus(preferences.language === "zh-TW" ? "正在儲存，存好後再按一次即可復原" : "Still saving; try again in a moment");
+    return true;
+  }
+
   function performUndo() {
+    if (savesStillWriting()) return;
     const result = applyUndo(undoRef.current, { tasks, projects, collections });
     if (!result.snapshot) return;
     undoRef.current = result.next;
@@ -1446,6 +1522,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   }
 
   function performRedo() {
+    if (savesStillWriting()) return;
     const result = applyRedo(undoRef.current, { tasks, projects, collections });
     if (!result.snapshot) return;
     undoRef.current = result.next;
