@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="no-referrer" />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="theme-color" content="#111214" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="第二大腦" />
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -26,7 +26,17 @@
 
       <form id="composer" hidden>
         <label for="text" class="visually-hidden" data-i18n="placeholder"></label>
-        <textarea id="text" rows="4" enterkeyhint="send" autocomplete="off"></textarea>
+        <textarea id="text" rows="3" enterkeyhint="send" autocomplete="off"></textarea>
+        <div id="composer-options" class="chips" hidden>
+          <button type="button" class="chip" data-add-date="today" data-i18n="today"></button>
+          <button type="button" class="chip" data-add-date="tomorrow" data-i18n="tomorrow"></button>
+          <label class="chip chip-date">
+            <span id="add-date-label" data-i18n="pickDate"></span>
+            <input id="add-date" type="date" />
+          </label>
+          <label class="visually-hidden" for="add-project" data-i18n="projectLabel"></label>
+          <select id="add-project" class="chip"></select>
+        </div>
         <div class="composer-row">
           <small id="counter"></small>
           <button id="send" type="submit" data-i18n="send"></button>
@@ -38,6 +48,18 @@
         <div class="today-head">
           <h2 data-i18n="todayTitle"></h2>
           <small id="today-updated"></small>
+        </div>
+        <div id="progress" class="progress" hidden>
+          <span id="progress-text"></span>
+          <progress id="progress-bar" max="1" value="0"></progress>
+        </div>
+        <div id="view-bar" class="view-bar" hidden>
+          <div class="segmented" role="group">
+            <button type="button" data-days="3" data-i18n="days3"></button>
+            <button type="button" data-days="7" data-i18n="days7"></button>
+          </div>
+          <label class="visually-hidden" for="view-project" data-i18n="projectLabel"></label>
+          <select id="view-project"></select>
         </div>
         <p id="today-note" class="hint" hidden></p>
         <div id="today-lists"></div>
@@ -70,6 +92,36 @@
         <p data-i18n="privacy"></p>
       </footer>
     </main>
+
+    <dialog id="task-sheet" class="sheet" aria-labelledby="sheet-title">
+      <div class="sheet-grip" aria-hidden="true"></div>
+      <h2 id="sheet-title"></h2>
+      <p id="sheet-pending" class="pending-badge" data-i18n="pendingSync" hidden></p>
+      <dl id="sheet-details"></dl>
+      <p id="sheet-notes" class="sheet-notes" hidden></p>
+      <div class="sheet-actions">
+        <button id="sheet-complete" type="button" data-i18n="markDone"></button>
+        <button id="sheet-focus" type="button" class="secondary" data-i18n="setFocus"></button>
+      </div>
+      <div id="sheet-move" class="sheet-move">
+        <h3 data-i18n="moveTo"></h3>
+        <div class="chips">
+          <button type="button" class="chip" data-move="today" data-i18n="today"></button>
+          <button type="button" class="chip" data-move="tomorrow" data-i18n="tomorrow"></button>
+          <button type="button" class="chip" data-move="nextMonday" data-i18n="nextMonday"></button>
+          <label class="chip chip-date">
+            <span data-i18n="pickDate"></span>
+            <input id="sheet-date" type="date" />
+          </label>
+        </div>
+      </div>
+      <button id="sheet-close" type="button" class="secondary sheet-close" data-i18n="close"></button>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" hidden>
+      <span id="toast-text"></span>
+      <button id="toast-undo" type="button" data-i18n="undo"></button>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
