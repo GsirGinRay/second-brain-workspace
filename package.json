@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev": "npm --workspace @second-brain/desktop run dev",
-    "test": "tsx --test packages/brain-core/src/*.test.ts packages/brain-ui/src/*.test.ts apps/desktop/src/test.ts && npm run test:dom",
+    "test": "tsx --test packages/brain-core/src/*.test.ts packages/brain-ui/src/*.test.ts apps/desktop/src/test.ts apps/mobile-capture/src/*.test.ts && npm run test:dom",
     "test:dom": "tsx --tsconfig tsconfig.dom-test.json --test --test-force-exit apps/desktop/src/calendar-dom.test.tsx apps/desktop/src/calendar-e2e.test.tsx apps/desktop/src/today-routine-dom.test.tsx apps/desktop/src/inline-edit.test.tsx apps/desktop/src/day-schedule-view.test.tsx apps/desktop/src/category-input.test.tsx apps/desktop/src/markdown-block-editor.test.tsx apps/desktop/src/global-shift-marquee.test.tsx apps/desktop/src/project-picker.test.tsx apps/desktop/src/entity-detail-dialog.test.tsx apps/desktop/src/board-view.test.tsx apps/desktop/src/project-view.test.tsx apps/desktop/src/collection-editor-dom.test.tsx apps/desktop/src/quick-add-natural-dom.test.tsx apps/desktop/src/today-tools-dom.test.tsx apps/desktop/src/inbox-relay-dom.test.tsx",
     "build": "npm --workspace @second-brain/desktop run build",
     "desktop:dev": "npm --workspace @second-brain/desktop run tauri:dev",
@@ -19,7 +19,9 @@
     "desktop:release": "node scripts/release-desktop.mjs",
     "rust:test": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets",
     "relay:test": "cargo test --manifest-path services/inbox-relay/Cargo.toml --all-targets",
-    "relay:dev": "cargo run --manifest-path services/inbox-relay/Cargo.toml"
+    "relay:dev": "cargo run --manifest-path services/inbox-relay/Cargo.toml",
+    "mobile:dev": "npm --workspace @second-brain/mobile-capture run dev",
+    "mobile:build": "npm --workspace @second-brain/mobile-capture run build"
   },
   "engines": {
     "node": ">=20"

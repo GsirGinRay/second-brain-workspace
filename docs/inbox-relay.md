@@ -131,6 +131,24 @@ relay answers `200` for a retry. If an ack is lost the relay sends the item
 again, so the desktop keeps the ids it wrote during the last 30 days and acks
 a repeated id without writing it again.
 
+## Phone web app
+
+`apps/mobile-capture` is a small PWA served by the relay at its origin.
+
+- Opening the QR link stores the pairing in `localStorage`. Inside an
+  installed app the fragment is removed from the address bar; in Safari it is
+  kept so "Add to Home Screen" carries it. If the home screen app still shows
+  "not paired", the page offers to copy the pairing link to paste there.
+- Each item is sealed when it is submitted and kept in a local outbox until
+  the relay answers `200` or `201`; network errors and `429`/`5xx` retry on
+  reconnect, when the app comes back to the foreground and every 30 seconds.
+  `401` or `404` drops the pairing and asks to scan again; pairing again
+  reseals unsent items for the new key.
+- Android installs register a share target, so other apps can share text to
+  it (`/?title=…&text=…&url=…`). iOS has no share target for web apps.
+- The relay sends a strict Content-Security-Policy, `no-referrer` and
+  `nosniff` with every response; hashed assets are cached for a year.
+
 ## Desktop
 
 `apps/desktop/src-tauri/src/inbox_relay.rs` holds the pairing and the stream;

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="收件匣" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-256.png" />
+    <title>第二大腦收件匣</title>
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <img src="/icon.svg" alt="" width="36" height="36" />
+        <div>
+          <h1 data-i18n="title"></h1>
+          <p id="subtitle"></p>
+        </div>
+      </header>
+
+      <p id="notice" class="notice" role="status" hidden></p>
+
+      <form id="composer" hidden>
+        <label for="text" class="visually-hidden" data-i18n="placeholder"></label>
+        <textarea id="text" rows="4" enterkeyhint="send" autocomplete="off"></textarea>
+        <div class="composer-row">
+          <small id="counter"></small>
+          <button id="send" type="submit" data-i18n="send"></button>
+        </div>
+        <p class="hint" data-i18n="hint"></p>
+      </form>
+
+      <section id="unpaired" class="card" hidden>
+        <h2 data-i18n="unpairedTitle"></h2>
+        <p data-i18n="unpairedBody"></p>
+        <form id="paste-form">
+          <label for="paste" data-i18n="pasteLabel"></label>
+          <div class="composer-row">
+            <input id="paste" type="url" inputmode="url" autocomplete="off" />
+            <button type="submit" data-i18n="pasteButton"></button>
+          </div>
+        </form>
+      </section>
+
+      <section id="install" class="card" hidden>
+        <h2 data-i18n="installTitle"></h2>
+        <p id="install-body"></p>
+        <button id="copy-link" type="button" class="secondary" data-i18n="copyLink" hidden></button>
+      </section>
+
+      <section id="history-section" hidden>
+        <h2 data-i18n="history"></h2>
+        <ul id="history"></ul>
+      </section>
+
+      <footer>
+        <p data-i18n="privacy"></p>
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

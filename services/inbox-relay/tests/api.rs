@@ -635,3 +635,52 @@ async fn desktop_requests_and_streams_are_limited_per_inbox() {
     }
     assert!(reconnected, "a closed stream frees its slot");
 }
+
+#[tokio::test]
+async fn the_web_app_is_served_with_strict_headers() {
+    let dir = std::env::temp_dir().join(format!("inbox-relay-static-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("index.html"), "<!doctype html><title>app</title>").unwrap();
+    std::fs::write(dir.join("assets/app-1234.js"), "console.log(1)").unwrap();
+    let harness = harness(Limits::default());
+    let app = inbox_relay::router_with_static(Arc::clone(&harness.state), &dir);
+    let get = |path: &str| {
+        let app = app.clone();
+        let request = Request::get(path).body(Body::empty()).unwrap();
+        async move { app.oneshot(request).await.unwrap() }
+    };
+
+    let index = get("/").await;
+    assert_eq!(index.status(), StatusCode::OK);
+    let headers = index.headers();
+    assert!(
+        headers["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("default-src 'self'")
+    );
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert_eq!(headers["referrer-policy"], "no-referrer");
+    assert_eq!(headers["cache-control"], "no-cache");
+
+    let shared = get("/?text=hello").await;
+    assert_eq!(shared.status(), StatusCode::OK);
+    let body = shared.into_body().collect().await.unwrap().to_bytes();
+    assert!(String::from_utf8_lossy(&body).contains("<title>app</title>"));
+
+    let asset = get("/assets/app-1234.js").await;
+    assert_eq!(asset.status(), StatusCode::OK);
+    assert!(
+        asset.headers()["cache-control"]
+            .to_str()
+            .unwrap()
+            .contains("immutable")
+    );
+
+    let unknown_api = get("/v1/nope").await;
+    assert_eq!(unknown_api.status(), StatusCode::NOT_FOUND);
+    assert_eq!(unknown_api.headers()["content-type"], "application/json");
+    assert_eq!(get("/api/health").await.status(), StatusCode::OK);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}

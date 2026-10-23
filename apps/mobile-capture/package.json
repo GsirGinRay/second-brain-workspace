@@ -1,0 +1,17 @@
+{
+  "name": "@second-brain/mobile-capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5175",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "@second-brain/brain-core": "file:../../packages/brain-core"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^7.1.2"
+  }
+}

@@ -16,7 +16,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{any, delete, get, post};
 use axum::{Json, Router};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::digest::{SHA256, digest};
@@ -86,8 +86,7 @@ impl AppState {
     }
 }
 
-pub fn router(state: Arc<AppState>) -> Router {
-    let body_limit = state.limits.envelope_bytes;
+fn api_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/health", get(health))
         .route("/v1/inboxes", post(create_inbox))
@@ -96,9 +95,70 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/inboxes/{id}/items", post(put_item).get(list_items))
         .route("/v1/inboxes/{id}/items/{item_id}", delete(delete_item))
         .route("/v1/inboxes/{id}/stream", get(stream))
+        // Unknown API paths stay JSON errors instead of falling to the web app.
+        .route("/v1/{*rest}", any(|| async { ApiError::NotFound }))
+        .route("/api/{*rest}", any(|| async { ApiError::NotFound }))
+}
+
+fn finish(routes: Router<Arc<AppState>>, state: Arc<AppState>) -> Router {
+    let body_limit = state.limits.envelope_bytes;
+    routes
         .layer(DefaultBodyLimit::max(body_limit))
         .layer(middleware::from_fn(log_request))
+        .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+pub fn router(state: Arc<AppState>) -> Router {
+    finish(api_routes(), state)
+}
+
+/// The API plus the phone web app built into `static_dir`. Unknown paths get
+/// `index.html`, so share-sheet URLs such as `/?text=…` load the app.
+pub fn router_with_static(state: Arc<AppState>, static_dir: &std::path::Path) -> Router {
+    let site = tower_http::services::ServeDir::new(static_dir).not_found_service(
+        tower_http::services::ServeFile::new(static_dir.join("index.html")),
+    );
+    finish(api_routes().fallback_service(site), state)
+}
+
+const CONTENT_SECURITY_POLICY: &str = concat!(
+    "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; ",
+    "connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; ",
+    "form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+);
+
+/// Strict headers for the API and the web app; hashed assets cache for a year,
+/// everything else is revalidated so a deploy reaches phones right away.
+async fn security_headers(request: Request, next: Next) -> Response {
+    let immutable = request.uri().path().starts_with("/assets/");
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    let fixed = [
+        ("content-security-policy", CONTENT_SECURITY_POLICY),
+        ("x-content-type-options", "nosniff"),
+        ("referrer-policy", "no-referrer"),
+        ("x-frame-options", "DENY"),
+        (
+            "permissions-policy",
+            "camera=(), microphone=(), geolocation=()",
+        ),
+        (
+            "cache-control",
+            if immutable {
+                "public, max-age=31536000, immutable"
+            } else {
+                "no-cache"
+            },
+        ),
+    ];
+    for (name, value) in fixed {
+        headers.insert(
+            HeaderName::from_static(name),
+            axum::http::HeaderValue::from_static(value),
+        );
+    }
+    response
 }
 
 /// Logs method, route template and status only: no ids, tokens or addresses.

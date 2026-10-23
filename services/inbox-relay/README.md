@@ -1,7 +1,8 @@
 # inbox-relay
 
 Encrypted phone-to-desktop inbox relay. It stores sealed items until the
-desktop acknowledges them and never sees task text. Protocol, limits and
+desktop acknowledges them and never sees task text. It also serves the phone
+web app from `apps/mobile-capture`. Protocol, limits and
 retention: [docs/inbox-relay.md](../../docs/inbox-relay.md).
 
 ## Run
@@ -9,18 +10,20 @@ retention: [docs/inbox-relay.md](../../docs/inbox-relay.md).
 ```bash
 npm run relay:dev    # listens on 127.0.0.1:8114, data in data/
 npm run relay:test
+npm run mobile:dev   # phone web app on 127.0.0.1:5175, proxies the API to 8114
 ```
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `INBOX_RELAY_ADDR` | `127.0.0.1:8114` | Listen address |
 | `INBOX_RELAY_DB` | `data/inbox-relay.sqlite` | SQLite file |
+| `INBOX_RELAY_STATIC` | unset | Folder with the built phone web app (`npm run mobile:build` → `apps/mobile-capture/dist`) |
 | `INBOX_RELAY_CLIENT_IP_HEADER` | unset | Client IP header set by a trusted proxy, e.g. `cf-connecting-ip`. Leave unset when clients connect directly, or they can spoof it. |
 
 ## Deploy
 
 ```bash
-docker build -t inbox-relay services/inbox-relay
+docker build -f services/inbox-relay/Dockerfile -t inbox-relay .   # from the repository root
 docker run -d --memory 64m -p 127.0.0.1:8114:8114 -v inbox-relay:/data inbox-relay
 ```
 

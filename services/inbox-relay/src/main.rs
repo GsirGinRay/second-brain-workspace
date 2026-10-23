@@ -1,7 +1,7 @@
 use axum::http::HeaderName;
 use inbox_relay::limits::Limits;
 use inbox_relay::store::Store;
-use inbox_relay::{AppState, router, system_clock};
+use inbox_relay::{AppState, router, router_with_static, system_clock};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +13,7 @@ const PURGE_INTERVAL: Duration = Duration::from_secs(600);
 /// - `INBOX_RELAY_ADDR` (default `127.0.0.1:8114`)
 /// - `INBOX_RELAY_DB` (default `data/inbox-relay.sqlite`)
 /// - `INBOX_RELAY_CLIENT_IP_HEADER`, only behind a proxy that sets it
+/// - `INBOX_RELAY_STATIC`, the built phone web app (`apps/mobile-capture/dist`)
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = std::env::var("INBOX_RELAY_ADDR")
@@ -46,11 +47,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let app = match std::env::var("INBOX_RELAY_STATIC") {
+        Ok(dir) if !dir.trim().is_empty() => {
+            router_with_static(state, std::path::Path::new(dir.trim()))
+        }
+        _ => router(state),
+    };
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!("inbox-relay listening on {addr}");
     axum::serve(
         listener,
-        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+        app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await?;
