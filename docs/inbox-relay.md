@@ -110,6 +110,12 @@ Phone requests use `Authorization: Bearer <captureToken>`.
 | `DELETE /v1/inboxes/{id}/items/{itemId}` | desktop | `204`, also when the item is already gone. |
 | `GET /v1/inboxes/{id}/stream` | desktop | WebSocket upgrade, signed like any other request. |
 | `GET /api/health` | anyone | `200` |
+| `GET /v1/inboxes/{id}/entitlement` | desktop | `200 {entitled, email}` |
+| `POST /v1/inboxes/{id}/entitlement/code` | desktop | Emails a 6-digit code to a paid member. `{email}`; `403 not_member`, `503 directory_unavailable` or `mail_unavailable`. |
+| `POST /v1/inboxes/{id}/entitlement/verify` | desktop | `{code}`; `200 {entitled, email}`, `400 wrong_code`, `410 code_expired`, `429 too_many_attempts`. |
+| `DELETE /v1/inboxes/{id}/entitlement` | desktop | `204`; also deletes the snapshot. |
+| `PUT /v1/inboxes/{id}/snapshot` | desktop | Replaces the sealed "today" snapshot; `403 not_entitled`, `409` for an older version. |
+| `GET /v1/inboxes/{id}/snapshot` | phone | `200` envelope, `403 not_entitled`, `404 no_snapshot`. |
 
 Errors: `400` malformed, `401` bad token or signature, `404` unknown inbox,
 `413` body over 4096 bytes, `429` rate limited (`Retry-After`), `507` relay
@@ -130,6 +136,39 @@ Delivery is at least once. The phone retries with the same item id, and the
 relay answers `200` for a retry. If an ack is lost the relay sends the item
 again, so the desktop keeps the ids it wrote during the last 30 days and acks
 a repeated id without writing it again.
+
+## Today list (option B, paid)
+
+Paid Skool members also see overdue tasks, today and the next 3 days on the
+phone and can tick them off.
+
+- **View key.** Pairing creates a random 32-byte view key, stored with the
+  inbox key and added to the QR fragment as `s=`. Phones paired before 0.8.0
+  scan again to get it.
+- **Snapshot.** After tasks change (3-second debounce, and every 30 minutes so
+  the phone can tell the computer is on) the desktop builds
+  `{v, generatedAt, today, tasks}` with only id, title, date, time, duration,
+  priority, status and project name of open tasks dated up to 3 days ahead,
+  never notes. It is sealed with AES-256-GCM under
+  HKDF-SHA256(view key, salt = inbox id, info = `second-brain-snapshot-v1`),
+  AAD `snapshot-v1\n<inboxId>\n<version>`, where the version is the sealing
+  time in milliseconds. The relay keeps only the newest version, and the phone
+  ignores a version older than one it already showed. Locked to
+  `docs/fixtures/inbox-snapshot-v1.json`.
+- **Ticks.** A tick is an ordinary inbox item whose payload adds
+  `"action":"complete","taskId":"…"` (the text is the task title). The desktop
+  marks that task done through the normal save path, so repeating tasks get
+  their next occurrence; an unknown or finished task is ignored.
+- **Entitlement.** The desktop asks for a code for the user's Skool email. The
+  relay checks the `Members(自動化)` tab of the member Sheet that the member
+  data site keeps in sync with Skool (a row with that Email and a Status other
+  than `inactive` or `expired`), or a manual grant, then emails the code with
+  Resend. Codes last 10 minutes, one per minute, five per hour, five attempts.
+  Entitlements are re-checked daily; a Sheet or network outage never revokes
+  anyone, and an empty Sheet counts as an outage. Manual grants for people who
+  paid outside Skool: `inbox-relay grant <email> [note]`, `ungrant <email>`,
+  `grants`, run inside the container; `inbox-relay check <email>` reads the
+  Sheet without sending mail.
 
 ## Phone web app
 
@@ -179,6 +218,7 @@ a repeated id without writing it again.
 | Item uploads | 60 per inbox and 120 per IP per minute |
 | Desktop requests | 120 per inbox per minute |
 | Open streams | 3 per inbox |
+| Snapshot | 128 KB, one per inbox |
 
 The relay logs method, route template and status. It never logs tokens,
 signatures, envelopes, inbox ids or IP addresses.

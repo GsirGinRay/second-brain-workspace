@@ -8,6 +8,7 @@ pub mod error;
 mod external_url;
 pub mod inbox_envelope;
 pub mod inbox_relay;
+pub mod inbox_snapshot;
 pub mod key_store;
 pub mod path_policy;
 pub mod publisher;
@@ -925,7 +926,12 @@ pub fn run() -> tauri::Result<()> {
             inbox_relay::inbox_relay_rotate,
             inbox_relay::inbox_relay_unpair,
             inbox_relay::inbox_relay_pending,
-            inbox_relay::inbox_relay_ack
+            inbox_relay::inbox_relay_ack,
+            inbox_relay::inbox_relay_entitlement,
+            inbox_relay::inbox_relay_request_code,
+            inbox_relay::inbox_relay_verify_code,
+            inbox_relay::inbox_relay_cancel_entitlement,
+            inbox_relay::inbox_relay_publish_snapshot
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {

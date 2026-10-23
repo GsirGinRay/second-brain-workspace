@@ -39,6 +39,17 @@ pub struct InboxPayload {
     pub text: String,
     pub created_at: String,
     pub source: InboxSource,
+    /// `complete` marks an existing task done instead of adding one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<InboxAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InboxAction {
+    Complete,
 }
 
 pub fn is_inbox_id(value: &str) -> bool {
@@ -111,6 +122,11 @@ fn validate_payload(payload: InboxPayload) -> Result<InboxPayload, NativeError> 
         || text.len() > INBOX_TEXT_BYTES_LIMIT
         || payload.created_at.is_empty()
         || payload.created_at.len() > 40
+        || payload.action.is_some() != payload.task_id.is_some()
+        || payload
+            .task_id
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 100)
     {
         return Err(NativeError::InvalidRequest);
     }

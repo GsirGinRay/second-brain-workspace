@@ -8,7 +8,7 @@
 
 use crate::canonical::DeviceCanonicalRequest;
 use crate::error::NativeError;
-use crate::inbox_envelope::{self, InboxEnvelope, InboxSource};
+use crate::inbox_envelope::{self, InboxAction, InboxEnvelope, InboxSource};
 use crate::key_store::{protect_key, unprotect_key};
 use crate::AppState;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -96,6 +96,9 @@ struct PersistedPairing {
 struct PairingSecret {
     private_scalar_base64_url: String,
     capture_token: String,
+    /// Added in 0.8.0; pairings saved earlier get one on first load.
+    #[serde(default)]
+    view_key_base64_url: Option<String>,
 }
 
 pub struct Pairing {
@@ -104,17 +107,20 @@ pub struct Pairing {
     pub public_key: String,
     capture_token: Zeroizing<String>,
     secret: SecretKey,
+    /// Shared with paired phones through the QR fragment; seals the "today" snapshot.
+    view_key: Zeroizing<[u8; 32]>,
 }
 
 impl Pairing {
     /// The QR code target. Everything after `#` stays on the phone.
     pub fn pairing_url(&self) -> String {
         format!(
-            "{}/#v=1&i={}&t={}&k={}",
+            "{}/#v=1&i={}&t={}&k={}&s={}",
             self.origin,
             self.inbox_id,
             self.capture_token.as_str(),
-            self.public_key
+            self.public_key,
+            URL_SAFE_NO_PAD.encode(self.view_key.as_ref())
         )
     }
 
@@ -125,6 +131,7 @@ impl Pairing {
             public_key: self.public_key.clone(),
             capture_token: Zeroizing::new(capture_token),
             secret: self.secret.clone(),
+            view_key: self.view_key.clone(),
         }
     }
 
@@ -134,6 +141,7 @@ impl Pairing {
             serde_json::to_vec(&PairingSecret {
                 private_scalar_base64_url: URL_SAFE_NO_PAD.encode(scalar.as_slice()),
                 capture_token: self.capture_token.to_string(),
+                view_key_base64_url: Some(URL_SAFE_NO_PAD.encode(self.view_key.as_ref())),
             })
             .map_err(|_| NativeError::KeyStorageUnavailable)?,
         );
@@ -177,12 +185,23 @@ impl Pairing {
         {
             return Err(NativeError::KeyStorageUnavailable);
         }
+        let view_key = match secret.view_key_base64_url.as_deref() {
+            Some(encoded) => Zeroizing::new(
+                URL_SAFE_NO_PAD
+                    .decode(encoded)
+                    .ok()
+                    .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok())
+                    .ok_or(NativeError::KeyStorageUnavailable)?,
+            ),
+            None => generate_view_key()?,
+        };
         Ok(Some(Self {
             origin: validate_origin(&persisted.origin)?,
             inbox_id: persisted.inbox_id,
             public_key,
             capture_token: Zeroizing::new(secret.capture_token),
             secret: key,
+            view_key,
         }))
     }
 }
@@ -192,6 +211,14 @@ fn write_replacing(path: &Path, bytes: &[u8]) -> Result<(), NativeError> {
     fs::write(&temporary, bytes)?;
     fs::rename(&temporary, path)?;
     Ok(())
+}
+
+fn generate_view_key() -> Result<Zeroizing<[u8; 32]>, NativeError> {
+    let mut key = Zeroizing::new([0u8; 32]);
+    SystemRandom::new()
+        .fill(key.as_mut())
+        .map_err(|_| NativeError::KeyStorageUnavailable)?;
+    Ok(key)
 }
 
 fn generate_secret() -> Result<SecretKey, NativeError> {
@@ -279,6 +306,10 @@ pub struct DeliveredItem {
     pub text: String,
     pub created_at: String,
     pub source: InboxSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<InboxAction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -363,6 +394,8 @@ impl Session {
                     text: payload.text,
                     created_at: payload.created_at,
                     source: payload.source,
+                    action: payload.action,
+                    task_id: payload.task_id,
                 });
                 (self.notify)(ITEMS_EVENT);
             }
@@ -448,6 +481,32 @@ fn signed_headers(
     Ok(headers)
 }
 
+struct RelayAnswer {
+    ok: bool,
+    error: Option<String>,
+    body: serde_json::Value,
+}
+
+/// The phone "today" list entitlement, or why a request about it failed.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxRelayEntitlement {
+    pub entitled: bool,
+    pub email: Option<String>,
+    /// A relay error code such as `not_member`, `wrong_code` or `not_entitled`.
+    pub error: Option<String>,
+}
+
+impl From<RelayAnswer> for InboxRelayEntitlement {
+    fn from(answer: RelayAnswer) -> Self {
+        Self {
+            entitled: answer.ok && answer.body["entitled"] == serde_json::Value::Bool(true),
+            email: answer.body["email"].as_str().map(str::to_owned),
+            error: answer.error,
+        }
+    }
+}
+
 pub struct RelayClient {
     http: reqwest::Client,
     signer: Signer,
@@ -486,7 +545,7 @@ impl RelayClient {
         Ok(Self { http, signer })
     }
 
-    async fn send(
+    async fn send_raw(
         &self,
         method: reqwest::Method,
         origin: &str,
@@ -499,16 +558,68 @@ impl RelayClient {
         for (name, value) in headers {
             request = request.header(name, value);
         }
-        let response = request
+        request
             .body(body)
             .send()
             .await
-            .map_err(|_| NativeError::InboxRelayUnavailable)?;
+            .map_err(|_| NativeError::InboxRelayUnavailable)
+    }
+
+    async fn send(
+        &self,
+        method: reqwest::Method,
+        origin: &str,
+        path: &str,
+        body: Vec<u8>,
+        device_id: Option<&str>,
+    ) -> Result<reqwest::Response, NativeError> {
+        let response = self.send_raw(method, origin, path, body, device_id).await?;
         if response.status().is_success() {
             Ok(response)
         } else {
             Err(NativeError::InboxRelayUnavailable)
         }
+    }
+
+    /// A signed call whose error codes the UI explains, such as `not_member`.
+    async fn call(
+        &self,
+        pairing: &Pairing,
+        method: reqwest::Method,
+        suffix: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<RelayAnswer, NativeError> {
+        let path = format!("/v1/inboxes/{}{suffix}", pairing.inbox_id);
+        let bytes = match body {
+            Some(value) => serde_json::to_vec(&value).map_err(|_| NativeError::InvalidRequest)?,
+            None => Vec::new(),
+        };
+        let response = self
+            .send_raw(
+                method,
+                &pairing.origin,
+                &path,
+                bytes,
+                Some(&pairing.inbox_id),
+            )
+            .await?;
+        let ok = response.status().is_success();
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|_| NativeError::InboxRelayUnavailable)?;
+        let body: serde_json::Value =
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        let error = (!ok).then(|| {
+            body["error"]
+                .as_str()
+                .filter(|code| {
+                    code.len() <= 40 && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+                })
+                .unwrap_or("unavailable")
+                .to_owned()
+        });
+        Ok(RelayAnswer { ok, error, body })
     }
 
     /// Creates the inbox and returns a pairing that is not saved yet.
@@ -535,6 +646,7 @@ impl RelayClient {
             public_key: URL_SAFE_NO_PAD.encode(inbox_envelope::public_key_bytes(&secret)),
             capture_token: Zeroizing::new(created.capture_token),
             secret,
+            view_key: generate_view_key()?,
         })
     }
 
@@ -671,6 +783,8 @@ pub struct InboxRelayManager {
     written: Arc<Mutex<WrittenLog>>,
     /// A pairing file exists but this Windows account cannot open it.
     unreadable: Mutex<bool>,
+    /// The last snapshot version sent; versions only grow.
+    snapshot_version: Mutex<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -709,6 +823,7 @@ impl InboxRelayManager {
             active: Mutex::new(None),
             written: Arc::new(Mutex::new(written)),
             unreadable: Mutex::new(false),
+            snapshot_version: Mutex::new(0),
         }
     }
 
@@ -780,6 +895,7 @@ pub fn resume<R: Runtime>(app: &AppHandle<R>) {
     let manager = &state.inbox_relay;
     match Pairing::load(&manager.pairing_path(), unprotect_key) {
         Ok(Some(pairing)) => {
+            let _ = pairing.save(&manager.pairing_path(), protect_key);
             let _ = manager.start(app, Arc::new(pairing));
         }
         Ok(None) => {}
@@ -884,6 +1000,119 @@ pub async fn inbox_relay_unpair(
     Ok(())
 }
 
+async fn entitlement_call(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    method: reqwest::Method,
+    suffix: &str,
+    body: Option<serde_json::Value>,
+) -> Result<InboxRelayEntitlement, NativeError> {
+    let pairing = state
+        .inbox_relay
+        .pairing()
+        .ok_or(NativeError::InvalidRequest)?;
+    let client = RelayClient::new(device_signer(app))?;
+    Ok(client.call(&pairing, method, suffix, body).await?.into())
+}
+
+#[tauri::command]
+pub async fn inbox_relay_entitlement(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InboxRelayEntitlement, NativeError> {
+    entitlement_call(&app, &state, reqwest::Method::GET, "/entitlement", None).await
+}
+
+/// Emails a 6-digit code when the address belongs to a paid member.
+#[tauri::command]
+pub async fn inbox_relay_request_code(
+    email: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InboxRelayEntitlement, NativeError> {
+    if email.trim().is_empty() || email.len() > 254 {
+        return Err(NativeError::InvalidRequest);
+    }
+    let body = serde_json::json!({ "email": email.trim() });
+    entitlement_call(
+        &app,
+        &state,
+        reqwest::Method::POST,
+        "/entitlement/code",
+        Some(body),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn inbox_relay_verify_code(
+    code: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InboxRelayEntitlement, NativeError> {
+    let code = code.trim();
+    if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Ok(InboxRelayEntitlement {
+            entitled: false,
+            email: None,
+            error: Some("wrong_code".to_owned()),
+        });
+    }
+    let body = serde_json::json!({ "code": code });
+    entitlement_call(
+        &app,
+        &state,
+        reqwest::Method::POST,
+        "/entitlement/verify",
+        Some(body),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn inbox_relay_cancel_entitlement(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InboxRelayEntitlement, NativeError> {
+    entitlement_call(&app, &state, reqwest::Method::DELETE, "/entitlement", None).await
+}
+
+/// Seals the "today" snapshot with the view key and replaces the one on the
+/// relay. Returns `not_entitled` without the paid list.
+#[tauri::command]
+pub async fn inbox_relay_publish_snapshot(
+    snapshot: serde_json::Value,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InboxRelayEntitlement, NativeError> {
+    let manager = &state.inbox_relay;
+    let pairing = manager.pairing().ok_or(NativeError::InvalidRequest)?;
+    if !snapshot.is_object() {
+        return Err(NativeError::InvalidRequest);
+    }
+    let plaintext = serde_json::to_vec(&snapshot).map_err(|_| NativeError::InvalidRequest)?;
+    let version = {
+        let mut last = lock(&manager.snapshot_version);
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_millis() as i64);
+        *last = now_ms.max(*last + 1);
+        *last
+    };
+    let envelope =
+        crate::inbox_snapshot::seal(&plaintext, &pairing.inbox_id, &pairing.view_key, version)?;
+    let body = serde_json::to_value(envelope).map_err(|_| NativeError::InvalidRequest)?;
+    let client = RelayClient::new(device_signer(&app))?;
+    let answer = client
+        .call(&pairing, reqwest::Method::PUT, "/snapshot", Some(body))
+        .await?;
+    Ok(InboxRelayEntitlement {
+        entitled: answer.ok,
+        email: None,
+        error: answer.error,
+    })
+}
+
 #[tauri::command]
 pub fn inbox_relay_pending(state: State<'_, AppState>) -> Vec<DeliveredItem> {
     state
@@ -948,6 +1177,7 @@ mod tests {
             public_key: URL_SAFE_NO_PAD.encode(inbox_envelope::public_key_bytes(&secret)),
             capture_token: Zeroizing::new("token-abc".to_owned()),
             secret,
+            view_key: Zeroizing::new([9; 32]),
         }
     }
 
@@ -1003,8 +1233,10 @@ mod tests {
         assert_eq!(
             fragment,
             format!(
-                "v=1&i={}&t=token-abc&k={}",
-                pairing.inbox_id, pairing.public_key
+                "v=1&i={}&t=token-abc&k={}&s={}",
+                pairing.inbox_id,
+                pairing.public_key,
+                URL_SAFE_NO_PAD.encode([9u8; 32])
             )
         );
         assert!(pairing_dto(&pairing).unwrap().qr_svg.starts_with("<?xml"));
@@ -1230,5 +1462,97 @@ mod tests {
         let _ = stop.send(true);
         running.await.unwrap();
         client.delete_inbox(&pairing).await.unwrap();
+    }
+
+    #[test]
+    fn pairings_saved_before_the_view_key_get_one_on_load() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(PAIRING_FILE);
+        let pairing = test_pairing();
+        let legacy = serde_json::to_vec(&serde_json::json!({
+            "privateScalarBase64Url": URL_SAFE_NO_PAD.encode(pairing.secret.to_bytes()),
+            "captureToken": "token-abc",
+        }))
+        .unwrap();
+        let persisted = PersistedPairing {
+            version: 1,
+            origin: pairing.origin.clone(),
+            inbox_id: pairing.inbox_id.clone(),
+            public_key_base64_url: pairing.public_key.clone(),
+            protected_secret_base64_url: URL_SAFE_NO_PAD.encode(legacy),
+        };
+        fs::write(&path, serde_json::to_vec(&persisted).unwrap()).unwrap();
+        let loaded = Pairing::load(&path, plain).unwrap().unwrap();
+        assert!(loaded.pairing_url().contains("&s="));
+        loaded.save(&path, plain).unwrap();
+        let again = Pairing::load(&path, plain).unwrap().unwrap();
+        assert_eq!(again.view_key.as_ref(), loaded.view_key.as_ref());
+    }
+
+    #[test]
+    fn complete_actions_reach_the_webview_with_their_task_id() {
+        let (session, events, _acks) = session();
+        let pairing = test_pairing();
+        let plaintext = r#"{"v":1,"text":"繳電話費","createdAt":"2026-10-23T09:30:00.000Z","source":"pwa","action":"complete","taskId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}"#;
+        let id = "44444444-4444-4444-8444-444444444444";
+        let envelope = inbox_envelope::seal_with(
+            plaintext.as_bytes(),
+            &pairing.inbox_id,
+            id,
+            &inbox_envelope::public_key_bytes(&pairing.secret),
+            &fixture_secret("ephemeral"),
+            [5; 12],
+        );
+        session.receive(&envelope, &pairing.inbox_id, &pairing.secret);
+        let delivered = session.pending();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0].action, Some(InboxAction::Complete));
+        assert_eq!(
+            delivered[0].task_id.as_deref(),
+            Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        );
+        assert_eq!(events.load(Ordering::SeqCst), 1);
+        let json = serde_json::to_value(&delivered[0]).unwrap();
+        assert_eq!(json["action"], "complete");
+        assert_eq!(json["taskId"], "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+
+        let half = r#"{"v":1,"text":"x","createdAt":"2026-10-23T09:30:00.000Z","source":"pwa","action":"complete"}"#;
+        let envelope = inbox_envelope::seal_with(
+            half.as_bytes(),
+            &pairing.inbox_id,
+            "55555555-5555-4555-8555-555555555555",
+            &inbox_envelope::public_key_bytes(&pairing.secret),
+            &fixture_secret("ephemeral"),
+            [6; 12],
+        );
+        session.receive(&envelope, &pairing.inbox_id, &pairing.secret);
+        assert_eq!(session.pending().len(), 1);
+        assert_eq!(session.discarded(), 1);
+    }
+
+    #[test]
+    fn relay_answers_become_entitlement_results() {
+        let entitled: InboxRelayEntitlement = RelayAnswer {
+            ok: true,
+            error: None,
+            body: serde_json::json!({ "entitled": true, "email": "me@example.com" }),
+        }
+        .into();
+        assert_eq!(
+            entitled,
+            InboxRelayEntitlement {
+                entitled: true,
+                email: Some("me@example.com".to_owned()),
+                error: None
+            }
+        );
+        let refused: InboxRelayEntitlement = RelayAnswer {
+            ok: false,
+            error: Some("not_member".to_owned()),
+            body: serde_json::json!({ "error": "not_member" }),
+        }
+        .into();
+        assert!(!refused.entitled);
+        assert_eq!(refused.error.as_deref(), Some("not_member"));
     }
 }

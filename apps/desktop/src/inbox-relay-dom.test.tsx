@@ -5,7 +5,8 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
 import { translate } from "./ui-preferences";
-import type { InboxRelayApi, InboxRelayItem, InboxRelayStatus } from "./inbox-relay";
+import type { BrainTaskSnapshot, InboxSnapshot } from "@second-brain/brain-core";
+import type { InboxRelayApi, InboxRelayEntitlement, InboxRelayItem, InboxRelayStatus } from "./inbox-relay";
 
 const window = new Window({ url: "http://localhost/" });
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -19,7 +20,7 @@ globals.Event = window.Event;
 globals.KeyboardEvent = window.KeyboardEvent;
 globals.MouseEvent = window.MouseEvent;
 
-const { InboxRelaySettingsCard, useInboxRelay } = await import("./inbox-relay-ui");
+const { InboxRelaySettingsCard, useInboxRelay, useTodaySnapshot } = await import("./inbox-relay-ui");
 
 const t = (key: string, values?: Record<string, string | number>) => translate("zh-TW", key, values);
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
@@ -47,6 +48,8 @@ function fakeApi(initial: Partial<InboxRelayStatus> = {}) {
     ...initial,
   };
   let pending: InboxRelayItem[] = [];
+  let entitlement: InboxRelayEntitlement = { entitled: false, email: null, error: null };
+  const snapshots: InboxSnapshot[] = [];
   const api: InboxRelayApi = {
     async status() { return status; },
     async pair() {
@@ -62,8 +65,38 @@ function fakeApi(initial: Partial<InboxRelayStatus> = {}) {
       calls.push(`ack:${ids.join(",")}`);
       pending = pending.filter((item) => !ids.includes(item.id));
     },
+    async entitlement() { return entitlement; },
+    async requestCode(email) {
+      calls.push(`code:${email}`);
+      return email === "member@example.com"
+        ? { entitled: false, email: null, error: null }
+        : { entitled: false, email: null, error: "not_member" };
+    },
+    async verifyCode(code) {
+      calls.push(`verify:${code}`);
+      if (code !== "123456") return { entitled: false, email: null, error: "wrong_code" };
+      entitlement = { entitled: true, email: "member@example.com", error: null };
+      return entitlement;
+    },
+    async cancelEntitlement() {
+      calls.push("cancel");
+      entitlement = { entitled: false, email: null, error: null };
+      return entitlement;
+    },
+    async publishSnapshot(snapshot) {
+      snapshots.push(snapshot);
+      return entitlement.entitled
+        ? { entitled: true, email: null, error: null }
+        : { entitled: false, email: null, error: "not_entitled" };
+    },
   };
-  return { api, calls, setPending: (items: InboxRelayItem[]) => { pending = items; } };
+  return {
+    api,
+    calls,
+    snapshots,
+    setPending: (items: InboxRelayItem[]) => { pending = items; },
+    setEntitled: (value: boolean) => { entitlement = { entitled: value, email: value ? "member@example.com" : null, error: null }; },
+  };
 }
 
 function mount(element: React.ReactElement) {
@@ -97,7 +130,7 @@ test("phone items are acknowledged only after the write succeeds", async () => {
     api,
     ready: true,
     write: async (items: InboxRelayItem[]) => { written.push(items); return succeed; },
-    onReceived: (count: number) => { received += count; },
+    onReceived: (items: InboxRelayItem[]) => { received += items.length; },
   };
   const view = mount(<Harness {...props} />);
   await settle();
@@ -161,5 +194,79 @@ test("a failed request shows an error instead of a QR code", async () => {
   await settle();
   assert.deepEqual(errors, [t("inboxRelay.error")]);
   assert.equal(view.container.querySelector("img"), null);
+  view.cleanup();
+});
+
+function SnapshotHarness(props: Parameters<typeof useTodaySnapshot>[0]) {
+  useTodaySnapshot(props);
+  return null;
+}
+
+const waitFor = async (check: () => boolean, ms = 6_000) => {
+  const started = Date.now();
+  while (!check() && Date.now() - started < ms) await new Promise((resolve) => setTimeout(resolve, 50));
+  return check();
+};
+
+const TASK: BrainTaskSnapshot = {
+  schemaVersion: 5,
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  title: "繳電話費",
+  status: "todo",
+  taskDate: "2026-10-23",
+  priority: "highest",
+  projectId: null,
+  projectName: null,
+  rank: "a",
+  sourcePath: null,
+  sourceHeading: null,
+  completedAt: null,
+  startTime: "15:00",
+  durationMinutes: 30,
+};
+
+test("the today snapshot is published only for entitled inboxes", async () => {
+  const unpaid = fakeApi({ paired: true });
+  const quiet = mount(<SnapshotHarness api={unpaid.api} ready tasks={[TASK]} todayKey={() => "2026-10-23"} />);
+  await new Promise((resolve) => setTimeout(resolve, 3_500));
+  assert.equal(unpaid.snapshots.length, 0);
+  quiet.cleanup();
+
+  const paid = fakeApi({ paired: true });
+  paid.setEntitled(true);
+  const view = mount(<SnapshotHarness api={paid.api} ready tasks={[TASK]} todayKey={() => "2026-10-23"} />);
+  assert.ok(await waitFor(() => paid.snapshots.length === 1), "published after the debounce");
+  assert.equal(paid.snapshots[0]?.today, "2026-10-23");
+  assert.deepEqual(paid.snapshots[0]?.tasks.map((task) => task.title), ["繳電話費"]);
+  view.cleanup();
+});
+
+test("members unlock the today list with an emailed code", async () => {
+  const { api, calls } = fakeApi({ paired: true, connection: "connected" });
+  const view = mount(<InboxRelaySettingsCard api={api} t={t} onError={() => undefined} />);
+  await settle();
+  view.render(<InboxRelaySettingsCard api={api} t={t} onError={() => undefined} />);
+  await settle();
+  const container = view.container;
+  const emailInput = container.querySelector<HTMLInputElement>("input[type='email']");
+  assert.ok(emailInput, "email field");
+
+  const submit = (input: HTMLInputElement, value: string) => {
+    input.value = value;
+    flushSync(() => input.form!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }) as unknown as Event));
+  };
+
+  submit(emailInput, "someone@example.com");
+  await settle();
+  assert.ok(container.textContent?.includes(t("inboxRelay.today.error.not_member")));
+
+  submit(emailInput, "member@example.com");
+  await settle();
+  const codeInput = container.querySelector<HTMLInputElement>("input[name='code']");
+  assert.ok(codeInput, "code field after sending");
+  submit(codeInput, "123456");
+  await settle();
+  assert.ok(container.textContent?.includes(t("inboxRelay.today.active", { email: "member@example.com" })));
+  assert.deepEqual(calls, ["code:someone@example.com", "code:member@example.com", "verify:123456"]);
   view.cleanup();
 });

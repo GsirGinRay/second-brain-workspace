@@ -183,8 +183,8 @@ import { TaskBadges } from "./task-badges";
 import { RecurrenceSelect, recurrenceLabel } from "./recurrence-picker";
 import { loadReminderSettings, saveReminderSettings, type ReminderSettings } from "./reminders";
 import { ReminderSettingsCard, useReminders } from "./reminders-ui";
-import { InboxRelaySettingsCard, useInboxRelay } from "./inbox-relay-ui";
-import { inboxItemsToTasks } from "./inbox-relay";
+import { InboxRelaySettingsCard, useInboxRelay, useTodaySnapshot } from "./inbox-relay-ui";
+import { applyInboxItems } from "./inbox-relay";
 import { AVAILABLE_HOURS_KEY, focusQueue, loadAvailableHours, moveTasksToDate } from "./today-planning";
 import { FocusMode, LoadMeter, WaitingPanel, WrapUpDialog } from "./today-tools";
 import { WeeklyReviewDialog } from "./weekly-review-ui";
@@ -493,8 +493,23 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   useInboxRelay({
     api: native.inboxRelay,
     ready: Boolean(diagnostics?.selectedVault),
-    write: (items) => persistLocal([...tasks, ...inboxItemsToTasks(items, taipeiDateKey())]),
-    onReceived: (count) => void notifyReminder?.(t("inboxRelay.title"), t("inboxRelay.received", { count })).catch(() => undefined),
+    write: (items) => persistLocal(applyInboxItems(tasks, items, taipeiDateKey())),
+    onReceived: (items) => {
+      const completed = items.filter((item) => item.action === "complete").length;
+      const added = items.length - completed;
+      const body = [
+        added > 0 ? t("inboxRelay.received", { count: added }) : "",
+        completed > 0 ? t("inboxRelay.completed", { count: completed }) : "",
+      ].filter(Boolean).join("\n");
+      void notifyReminder?.(t("inboxRelay.title"), body).catch(() => undefined);
+    },
+  });
+  // Paid members also get today's list on the phone, refreshed as tasks change.
+  useTodaySnapshot({
+    api: native.inboxRelay,
+    ready: Boolean(diagnostics?.selectedVault),
+    tasks,
+    todayKey: taipeiDateKey,
   });
   const checkAppUpdate = useCallback(async (promptIfAvailable = false, showBusy = false) => {
     if (!native.checkAppUpdate) return;

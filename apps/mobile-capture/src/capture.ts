@@ -7,14 +7,20 @@ import {
   INBOX_TEXT_BYTES_LIMIT,
   decodeBase64Url,
   isInboxId,
+  isViewKey,
+  openSnapshot,
   sealInboxItem,
   type InboxEnvelope,
+  type InboxSnapshot,
+  type SnapshotTask,
 } from "@second-brain/brain-core";
 
 export interface Pairing {
   inboxId: string;
   token: string;
   publicKey: string;
+  /** Opens the "today" snapshot; QR codes from desktop 0.8.0 and later carry it. */
+  viewKey?: string;
 }
 
 export type OutboxState = "queued" | "sent" | "failed";
@@ -25,6 +31,8 @@ export interface OutboxEntry {
   createdAt: string;
   state: OutboxState;
   envelope: InboxEnvelope;
+  /** Set for a tick in the "today" list. */
+  completes?: string;
 }
 
 export interface KeyValueStore {
@@ -35,6 +43,7 @@ export interface KeyValueStore {
 
 const PAIRING_KEY = "second-brain.capture.pairing";
 const OUTBOX_KEY = "second-brain.capture.outbox";
+const SNAPSHOT_KEY = "second-brain.capture.snapshot";
 /** Sent items shown in the history list; queued items are never dropped. */
 const SENT_HISTORY = 20;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
@@ -56,21 +65,28 @@ export function parsePairingFragment(hash: string): Pairing | null {
   const inboxId = params.get("i") ?? "";
   const token = params.get("t") ?? "";
   const publicKey = params.get("k") ?? "";
+  const viewKey = params.get("s");
   if (params.get("v") !== "1" || !isInboxId(inboxId) || !TOKEN_PATTERN.test(token)) return null;
+  if (viewKey !== null && !isViewKey(viewKey)) return null;
   try {
     const key = decodeBase64Url(publicKey);
     if (key.byteLength !== 65 || key[0] !== 0x04) return null;
   } catch {
     return null;
   }
-  return { inboxId, token, publicKey };
+  return viewKey ? { inboxId, token, publicKey, viewKey } : { inboxId, token, publicKey };
+}
+
+export function pairingFragment(pairing: Pairing): string {
+  const view = pairing.viewKey ? `&s=${pairing.viewKey}` : "";
+  return `#v=1&i=${pairing.inboxId}&t=${pairing.token}&k=${pairing.publicKey}${view}`;
 }
 
 export function loadPairing(store: KeyValueStore): Pairing | null {
   try {
     const value = JSON.parse(store.getItem(PAIRING_KEY) ?? "null") as Partial<Pairing> | null;
     if (!value) return null;
-    return parsePairingFragment(`v=1&i=${value.inboxId}&t=${value.token}&k=${value.publicKey}`);
+    return parsePairingFragment(pairingFragment(value as Pairing));
   } catch {
     return null;
   }
@@ -113,6 +129,23 @@ export async function createEntry(pairing: Pairing, text: string, now = new Date
   return { id, text: text.trim(), createdAt, state: "queued", envelope };
 }
 
+/** A tick in the "today" list: marks the task done on the computer. */
+export async function createCompleteEntry(
+  pairing: Pairing,
+  task: Pick<SnapshotTask, "id" | "title">,
+  now = new Date(),
+): Promise<OutboxEntry> {
+  const id = crypto.randomUUID();
+  const createdAt = now.toISOString();
+  const envelope = await sealInboxItem({
+    recipientPublicKey: pairing.publicKey,
+    inboxId: pairing.inboxId,
+    itemId: id,
+    payload: { v: 1, text: task.title, createdAt, source: "pwa", action: "complete", taskId: task.id },
+  });
+  return { id, text: task.title, createdAt, state: "queued", envelope, completes: task.id };
+}
+
 /** After pairing again, unsent items are sealed for the new inbox key. */
 export async function resealQueued(pairing: Pairing, entries: readonly OutboxEntry[]): Promise<OutboxEntry[]> {
   return Promise.all(entries.map(async (entry) => {
@@ -121,7 +154,9 @@ export async function resealQueued(pairing: Pairing, entries: readonly OutboxEnt
       recipientPublicKey: pairing.publicKey,
       inboxId: pairing.inboxId,
       itemId: entry.id,
-      payload: { v: 1, text: entry.text, createdAt: entry.createdAt, source: "pwa" },
+      payload: entry.completes
+        ? { v: 1, text: entry.text, createdAt: entry.createdAt, source: "pwa", action: "complete", taskId: entry.completes }
+        : { v: 1, text: entry.text, createdAt: entry.createdAt, source: "pwa" },
     });
     return { ...entry, envelope };
   }));
@@ -185,4 +220,88 @@ export async function flushOutbox(
     }
   }
   return { entries: next, unpaired: false, sent };
+}
+
+export type SnapshotResult =
+  | { kind: "ok"; snapshot: InboxSnapshot; version: number }
+  | { kind: "not_entitled" }
+  | { kind: "none" }
+  | { kind: "unpaired" }
+  | { kind: "error" };
+
+export interface CachedSnapshot {
+  inboxId: string;
+  version: number;
+  snapshot: InboxSnapshot;
+}
+
+export function loadCachedSnapshot(store: KeyValueStore, pairing: Pairing): CachedSnapshot | null {
+  try {
+    const value = JSON.parse(store.getItem(SNAPSHOT_KEY) ?? "null") as CachedSnapshot | null;
+    return value && value.inboxId === pairing.inboxId ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveCachedSnapshot(store: KeyValueStore, cached: CachedSnapshot | null): void {
+  if (cached) store.setItem(SNAPSHOT_KEY, JSON.stringify(cached));
+  else store.removeItem(SNAPSHOT_KEY);
+}
+
+/** Downloads and opens the "today" snapshot with the pairing's view key. */
+export type JsonFetcher = (url: string, init: RequestInit) => Promise<{ status: number; json(): Promise<unknown> }>;
+
+export async function fetchSnapshot(origin: string, pairing: Pairing, fetcher: JsonFetcher): Promise<SnapshotResult> {
+  if (!pairing.viewKey) return { kind: "error" };
+  let response: { status: number; json(): Promise<unknown> };
+  try {
+    response = await fetcher(`${origin}/v1/inboxes/${pairing.inboxId}/snapshot`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${pairing.token}` },
+      credentials: "omit",
+      cache: "no-store",
+    });
+  } catch {
+    return { kind: "error" };
+  }
+  if (response.status === 401) return { kind: "unpaired" };
+  if (response.status === 403) return { kind: "not_entitled" };
+  if (response.status === 404) {
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    return body?.error === "no_snapshot" ? { kind: "none" } : { kind: "unpaired" };
+  }
+  if (response.status !== 200) return { kind: "error" };
+  try {
+    const envelope = await response.json() as { version: number };
+    const snapshot = await openSnapshot(envelope, pairing.inboxId, pairing.viewKey);
+    return { kind: "ok", snapshot, version: envelope.version };
+  } catch {
+    return { kind: "error" };
+  }
+}
+
+export interface TodayGroups {
+  /** The most important open task today, shown on top. */
+  focus: SnapshotTask | null;
+  overdue: SnapshotTask[];
+  today: SnapshotTask[];
+  upcoming: { date: string; tasks: SnapshotTask[] }[];
+}
+
+/** Groups a snapshot for display, leaving out tasks ticked on this phone. */
+export function groupSnapshot(snapshot: InboxSnapshot, ticked: ReadonlySet<string>): TodayGroups {
+  const open = snapshot.tasks.filter((task) => task.status !== "done" && !ticked.has(task.id));
+  const todayTasks = open.filter((task) => task.date === snapshot.today);
+  const focus = todayTasks.find((task) => task.priority === "highest") ?? null;
+  const upcoming = new Map<string, SnapshotTask[]>();
+  for (const task of open) {
+    if (task.date && task.date > snapshot.today) upcoming.set(task.date, [...(upcoming.get(task.date) ?? []), task]);
+  }
+  return {
+    focus,
+    overdue: open.filter((task) => task.date !== null && task.date < snapshot.today),
+    today: todayTasks.filter((task) => task !== focus),
+    upcoming: [...upcoming.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([date, tasks]) => ({ date, tasks })),
+  };
 }

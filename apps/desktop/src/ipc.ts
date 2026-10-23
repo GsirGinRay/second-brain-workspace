@@ -5,6 +5,7 @@ import {
   type RoutineTemplate,
 } from "@second-brain/brain-core";
 import {
+  validateInboxRelayEntitlement,
   validateInboxRelayItems,
   validateInboxRelayPairing,
   validateInboxRelayStatus,
@@ -620,6 +621,21 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
       },
       async ack(ids: string[]) {
         await invoke("inbox_relay_ack", { ids });
+      },
+      async entitlement() {
+        return validateInboxRelayEntitlement(await invoke("inbox_relay_entitlement"));
+      },
+      async requestCode(email: string) {
+        return validateInboxRelayEntitlement(await invoke("inbox_relay_request_code", { email }));
+      },
+      async verifyCode(code: string) {
+        return validateInboxRelayEntitlement(await invoke("inbox_relay_verify_code", { code }));
+      },
+      async cancelEntitlement() {
+        return validateInboxRelayEntitlement(await invoke("inbox_relay_cancel_entitlement"));
+      },
+      async publishSnapshot(snapshot) {
+        return validateInboxRelayEntitlement(await invoke("inbox_relay_publish_snapshot", { snapshot }));
       },
     },
   };

@@ -115,3 +115,29 @@ button.secondary { background: transparent; color: var(--ink); border: 1px solid
 }
 
 [hidden] { display: none !important; }
+
+#today { display: grid; gap: 10px; }
+.today-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.today-head h2 { margin: 0; }
+.today-head small { color: var(--muted); }
+.focus-card { background: var(--card); border: 2px solid var(--accent); border-radius: 14px; padding: 12px 14px; }
+.focus-card > small { color: var(--muted); font-weight: 600; }
+.task-group h3 { font-size: 13px; color: var(--muted); margin: 6px 0; font-weight: 600; }
+.task-group[data-group="overdue"] h3 { color: var(--bad); }
+.task-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.task-row { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px 6px 6px; }
+.focus-card .task-row { border: 0; padding: 4px 0 0; background: transparent; }
+.task-row .tick {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  border: 2px solid var(--muted);
+}
+.task-row .tick:active { background: var(--ok); }
+.task-body { display: grid; min-width: 0; }
+.task-body span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-body small { color: var(--muted); font-size: 13px; }

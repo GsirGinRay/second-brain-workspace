@@ -28,7 +28,8 @@ public build does not include built-in cloud sync.
 To add tasks from a phone without syncing files, pair it in Settings → Phone
 inbox. The phone web app encrypts each task with a key only your computer has;
 the relay at `inbox.aizbrain.com` keeps the unreadable data until the computer
-writes the task into the inbox, then deletes it. See
+writes the task into the inbox, then deletes it. Paid Skool members can also
+see and tick off today's tasks on the phone. See
 [docs/inbox-relay.md](docs/inbox-relay.md).
 
 ## Development
