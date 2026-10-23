@@ -142,6 +142,8 @@ a repeated id without writing it again.
 | Relay storage | 100 MB total (`507` above it) |
 | Inbox creation | 10 per IP per hour |
 | Item uploads | 60 per inbox and 120 per IP per minute |
+| Desktop requests | 120 per inbox per minute |
+| Open streams | 3 per inbox |
 
-The relay logs method, route template, status and size. It never logs tokens,
-signatures, envelopes, inbox ids or full IP addresses.
+The relay logs method, route template and status. It never logs tokens,
+signatures, envelopes, inbox ids or IP addresses.

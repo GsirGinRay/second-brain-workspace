@@ -17,7 +17,9 @@
     "desktop:installer": "npm --workspace @second-brain/desktop run tauri:installer",
     "desktop:publisher-installer": "node scripts/build-publisher-installer.mjs",
     "desktop:release": "node scripts/release-desktop.mjs",
-    "rust:test": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets"
+    "rust:test": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets",
+    "relay:test": "cargo test --manifest-path services/inbox-relay/Cargo.toml --all-targets",
+    "relay:dev": "cargo run --manifest-path services/inbox-relay/Cargo.toml"
   },
   "engines": {
     "node": ">=20"

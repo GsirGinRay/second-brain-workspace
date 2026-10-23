@@ -30,3 +30,13 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - run: npm run rust:test
+
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/inbox-relay
+      - run: npm run relay:test
