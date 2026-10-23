@@ -310,6 +310,10 @@ pub struct DeliveredItem {
     pub action: Option<InboxAction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -396,6 +400,8 @@ impl Session {
                     source: payload.source,
                     action: payload.action,
                     task_id: payload.task_id,
+                    date: payload.date,
+                    project_id: payload.project_id,
                 });
                 (self.notify)(ITEMS_EVENT);
             }

@@ -232,8 +232,10 @@ export {
   openInboxItem,
   parseInboxEnvelope,
   sealInboxItem,
+  INBOX_ACTIONS,
 } from "./inbox-envelope";
 export type {
+  InboxAction,
   InboxEnvelope,
   InboxPayload,
   InboxSource,
@@ -243,7 +245,9 @@ export type {
 export {
   SNAPSHOT_BYTES_LIMIT,
   SNAPSHOT_HKDF_INFO,
+  SNAPSHOT_NOTES_LIMIT,
   SNAPSHOT_PRIORITIES,
+  SNAPSHOT_PROJECT_LIMIT,
   SNAPSHOT_STATUSES,
   SNAPSHOT_TASK_LIMIT,
   SNAPSHOT_TITLE_LIMIT,
@@ -255,7 +259,14 @@ export {
   sealSnapshot,
   snapshotAssociatedData,
 } from "./inbox-snapshot";
-export type { InboxSnapshot, SealSnapshotOverrides, SnapshotEnvelope, SnapshotTask } from "./inbox-snapshot";
+export type {
+  InboxSnapshot,
+  SealSnapshotOverrides,
+  SnapshotEnvelope,
+  SnapshotFeature,
+  SnapshotProject,
+  SnapshotTask,
+} from "./inbox-snapshot";
 export type {
   BrainDeviceDto,
   BrainDeviceListDto,

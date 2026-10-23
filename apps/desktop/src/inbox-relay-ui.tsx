@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Smartphone } from "lucide-react";
 import { ActionConfirmDialog } from "./danger-confirm";
-import type { BrainTaskSnapshot } from "@second-brain/brain-core";
+import type { BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
 import {
   buildTodaySnapshot,
   qrDataUrl,
@@ -24,9 +24,29 @@ const SNAPSHOT_DEBOUNCE_MS = 3_000;
 /** Republish even without changes so the phone can tell the computer is on. */
 const SNAPSHOT_REFRESH_MS = 30 * 60_000;
 const ENTITLEMENT_POLL_MS = 30 * 60_000;
+/** Whether the phone list shows the first 200 characters of notes; on by default. */
+const NOTES_KEY = "second-brain.inbox-relay.notes";
+const NOTES_EVENT = "second-brain:inbox-notes";
 
 function notifyEntitlementChanged() {
   window.dispatchEvent(new Event(ENTITLEMENT_EVENT));
+}
+
+export function readShareNotes(): boolean {
+  try {
+    return window.localStorage.getItem(NOTES_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+function writeShareNotes(value: boolean) {
+  try {
+    window.localStorage.setItem(NOTES_KEY, value ? "on" : "off");
+  } catch {
+    // The choice then lasts until the app restarts.
+  }
+  window.dispatchEvent(new Event(NOTES_EVENT));
 }
 
 function useNativeEvent(name: string, handler: () => void) {
@@ -102,13 +122,15 @@ export function useInboxRelay({ api, ready, write, onReceived }: {
  * The relay refuses snapshots from other inboxes, so the hook stops when it
  * hears `not_entitled` and checks again when settings change.
  */
-export function useTodaySnapshot({ api, ready, tasks, todayKey }: {
+export function useTodaySnapshot({ api, ready, tasks, projects, todayKey }: {
   api?: InboxRelayApi;
   ready: boolean;
   tasks: readonly BrainTaskSnapshot[];
+  projects: readonly BrainProjectSnapshot[];
   todayKey: () => string;
 }) {
   const [entitled, setEntitled] = useState(false);
+  const [includeNotes, setIncludeNotes] = useState(readShareNotes);
   const [today, setToday] = useState(todayKey);
   const [tick, setTick] = useState(0);
   const sent = useRef({ key: "", at: 0 });
@@ -133,18 +155,21 @@ export function useTodaySnapshot({ api, ready, tasks, todayKey }: {
       setToday(latestTodayKey.current());
       setTick((value) => value + 1);
     }, 60_000);
+    const notes = () => setIncludeNotes(readShareNotes());
     window.addEventListener(ENTITLEMENT_EVENT, refresh);
+    window.addEventListener(NOTES_EVENT, notes);
     return () => {
       window.clearInterval(poll);
       window.clearInterval(clock);
       window.removeEventListener(ENTITLEMENT_EVENT, refresh);
+      window.removeEventListener(NOTES_EVENT, notes);
     };
   }, [refresh]);
 
   useEffect(() => {
     if (!api || !ready || !entitled) return;
     const timer = window.setTimeout(() => {
-      const snapshot = buildTodaySnapshot(tasks, today);
+      const snapshot = buildTodaySnapshot(tasks, today, { projects, includeNotes });
       const key = JSON.stringify({ ...snapshot, generatedAt: "" });
       if (key === sent.current.key && Date.now() - sent.current.at < SNAPSHOT_REFRESH_MS) return;
       void api.publishSnapshot(snapshot)
@@ -155,7 +180,7 @@ export function useTodaySnapshot({ api, ready, tasks, todayKey }: {
         .catch(() => undefined);
     }, SNAPSHOT_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [api, ready, entitled, tasks, today, tick]);
+  }, [api, ready, entitled, tasks, projects, includeNotes, today, tick]);
 }
 
 type Confirm = "rotate" | "unpair" | null;
@@ -290,6 +315,7 @@ function TodayListSection({ api, t }: { api: InboxRelayApi; t: Translate }) {
   const [codeSent, setCodeSent] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [shareNotes, setShareNotes] = useState(readShareNotes);
 
   useEffect(() => {
     void api.entitlement().then(setEntitlement).catch(() => setEntitlement(null));
@@ -316,6 +342,17 @@ function TodayListSection({ api, t }: { api: InboxRelayApi; t: Translate }) {
         <>
           <p>{t("inboxRelay.today.active", { email: entitlement.email ?? "" })}</p>
           <small>{t("inboxRelay.today.rescan")}</small>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={shareNotes}
+              onChange={(event) => {
+                setShareNotes(event.currentTarget.checked);
+                writeShareNotes(event.currentTarget.checked);
+              }}
+            />
+            {t("inboxRelay.today.notes")}
+          </label>
           <div className="input-action">
             <button
               type="button"

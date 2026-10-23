@@ -14,6 +14,9 @@ export const SNAPSHOT_HKDF_INFO = "second-brain-snapshot-v1";
 export const SNAPSHOT_TASK_LIMIT = 300;
 export const SNAPSHOT_TITLE_LIMIT = 200;
 export const SNAPSHOT_BYTES_LIMIT = 128 * 1024;
+/** Characters of a task's notes that reach the phone, when the user allows it. */
+export const SNAPSHOT_NOTES_LIMIT = 200;
+export const SNAPSHOT_PROJECT_LIMIT = 100;
 const VIEW_KEY_BYTES = 32;
 const NONCE_BYTES = 12;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -31,7 +34,23 @@ export interface SnapshotTask {
   priority: (typeof SNAPSHOT_PRIORITIES)[number];
   status: (typeof SNAPSHOT_STATUSES)[number];
   project: string | null;
+  /** Obsidian Tasks wording, e.g. "every week on Monday". */
+  recurrence?: string;
+  /** The start of the task's notes, only when the user allows it. */
+  notes?: string;
 }
+
+export interface SnapshotProject {
+  id: string;
+  name: string;
+}
+
+/**
+ * Phone actions this desktop understands: `reschedule`, `focus` and
+ * `add-options` (a date and project on added tasks). Older desktops omit the
+ * list and only handle ticks.
+ */
+export type SnapshotFeature = "reschedule" | "focus" | "add-options";
 
 export interface InboxSnapshot {
   v: 1;
@@ -39,6 +58,11 @@ export interface InboxSnapshot {
   /** The desktop's today (Asia/Taipei), YYYY-MM-DD. */
   today: string;
   tasks: SnapshotTask[];
+  /** Tasks completed today, for the phone's progress. */
+  doneToday?: number;
+  /** Open projects a task added on the phone can go to. */
+  projects?: SnapshotProject[];
+  features?: SnapshotFeature[];
 }
 
 export interface SnapshotEnvelope {
@@ -59,6 +83,15 @@ const taskSchema = z
     priority: z.enum(SNAPSHOT_PRIORITIES),
     status: z.enum(SNAPSHOT_STATUSES),
     project: z.string().max(200).nullable(),
+    recurrence: z.string().min(1).max(200).optional(),
+    notes: z.string().min(1).max(SNAPSHOT_NOTES_LIMIT).optional(),
+  })
+  .strict();
+
+const projectSchema = z
+  .object({
+    id: z.string().min(1).max(100),
+    name: z.string().min(1).max(200),
   })
   .strict();
 
@@ -68,6 +101,9 @@ const snapshotSchema = z
     generatedAt: z.string().datetime({ offset: true }),
     today: z.string().regex(DATE),
     tasks: z.array(taskSchema).max(SNAPSHOT_TASK_LIMIT),
+    doneToday: z.number().int().min(0).max(10_000).optional(),
+    projects: z.array(projectSchema).max(SNAPSHOT_PROJECT_LIMIT).optional(),
+    features: z.array(z.enum(["reschedule", "focus", "add-options"])).max(10).optional(),
   })
   .strict();
 

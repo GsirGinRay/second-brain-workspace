@@ -39,17 +39,34 @@ pub struct InboxPayload {
     pub text: String,
     pub created_at: String,
     pub source: InboxSource,
-    /// `complete` marks an existing task done instead of adding one.
+    /// Changes an existing task instead of adding one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<InboxAction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    /// The new date of a `reschedule`, or the date of an added task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    /// The project of an added task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InboxAction {
     Complete,
+    Reschedule,
+    Focus,
+}
+
+fn is_date_key(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes.iter().enumerate().all(|(index, &byte)| match index {
+            4 | 7 => byte == b'-',
+            _ => byte.is_ascii_digit(),
+        })
 }
 
 pub fn is_inbox_id(value: &str) -> bool {
@@ -125,6 +142,17 @@ fn validate_payload(payload: InboxPayload) -> Result<InboxPayload, NativeError> 
         || payload.action.is_some() != payload.task_id.is_some()
         || payload
             .task_id
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 100)
+        || payload
+            .date
+            .as_deref()
+            .is_some_and(|date| !is_date_key(date))
+        || (payload.action == Some(InboxAction::Reschedule))
+            != (payload.action.is_some() && payload.date.is_some())
+        || (payload.action.is_some() && payload.project_id.is_some())
+        || payload
+            .project_id
             .as_ref()
             .is_some_and(|id| id.is_empty() || id.len() > 100)
     {
@@ -350,6 +378,49 @@ mod tests {
             r#"{"v":1,"text":"a","createdAt":"2026-10-23T09:30:00.000Z","source":"fax"}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn validates_actions_dates_and_projects() {
+        let fixture = fixture();
+        let inbox_id = str_field(&fixture, "inboxId");
+        let item_id = str_field(&fixture, "itemId");
+        let recipient_public = public_key_bytes(&fixture.recipient);
+        let open = |extra: &str| {
+            let plaintext = format!(
+                r#"{{"v":1,"text":"a","createdAt":"2026-10-23T09:30:00.000Z","source":"pwa"{extra}}}"#
+            );
+            let sealed = seal_with(
+                plaintext.as_bytes(),
+                inbox_id,
+                item_id,
+                &recipient_public,
+                &fixture.ephemeral,
+                [8; AES_GCM_NONCE_BYTES],
+            );
+            open_inbox_item(&sealed, inbox_id, &fixture.recipient)
+        };
+        let task = r#","taskId":"t1""#;
+        let moved = open(&format!(
+            r#","action":"reschedule"{task},"date":"2026-10-24""#
+        ))
+        .unwrap();
+        assert_eq!(moved.action, Some(InboxAction::Reschedule));
+        assert_eq!(moved.date.as_deref(), Some("2026-10-24"));
+        assert_eq!(
+            open(&format!(r#","action":"focus"{task}"#)).unwrap().action,
+            Some(InboxAction::Focus)
+        );
+        let added = open(r#","date":"2026-10-25","projectId":"p1""#).unwrap();
+        assert_eq!(added.project_id.as_deref(), Some("p1"));
+        assert!(open(&format!(r#","action":"reschedule"{task}"#)).is_err());
+        assert!(open(&format!(
+            r#","action":"complete"{task},"date":"2026-10-24""#
+        ))
+        .is_err());
+        assert!(open(&format!(r#","action":"focus"{task},"projectId":"p1""#)).is_err());
+        assert!(open(r#","date":"10/24/2026""#).is_err());
+        assert!(open(&format!(r#","action":"delete"{task}"#)).is_err());
     }
 
     #[test]

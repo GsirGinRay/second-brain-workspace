@@ -227,14 +227,14 @@ const TASK: BrainTaskSnapshot = {
 
 test("the today snapshot is published only for entitled inboxes", async () => {
   const unpaid = fakeApi({ paired: true });
-  const quiet = mount(<SnapshotHarness api={unpaid.api} ready tasks={[TASK]} todayKey={() => "2026-10-23"} />);
+  const quiet = mount(<SnapshotHarness api={unpaid.api} ready tasks={[TASK]} projects={[]} todayKey={() => "2026-10-23"} />);
   await new Promise((resolve) => setTimeout(resolve, 3_500));
   assert.equal(unpaid.snapshots.length, 0);
   quiet.cleanup();
 
   const paid = fakeApi({ paired: true });
   paid.setEntitled(true);
-  const view = mount(<SnapshotHarness api={paid.api} ready tasks={[TASK]} todayKey={() => "2026-10-23"} />);
+  const view = mount(<SnapshotHarness api={paid.api} ready tasks={[TASK]} projects={[]} todayKey={() => "2026-10-23"} />);
   assert.ok(await waitFor(() => paid.snapshots.length === 1), "published after the debounce");
   assert.equal(paid.snapshots[0]?.today, "2026-10-23");
   assert.deepEqual(paid.snapshots[0]?.tasks.map((task) => task.title), ["繳電話費"]);

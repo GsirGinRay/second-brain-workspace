@@ -23,15 +23,26 @@ const BASE64_URL_PATTERN = /^[A-Za-z0-9_-]*$/;
 export const INBOX_SOURCES = ["pwa", "line", "email"] as const;
 export type InboxSource = (typeof INBOX_SOURCES)[number];
 
+export const INBOX_ACTIONS = ["complete", "reschedule", "focus"] as const;
+export type InboxAction = (typeof INBOX_ACTIONS)[number];
+
 export interface InboxPayload {
   v: 1;
-  /** The task to add, or for `complete` the task's title, kept for logs. */
+  /** The task to add, or for an action the task's title, kept for logs. */
   text: string;
   createdAt: string;
   source: InboxSource;
-  /** Marks an existing task done instead of adding one (phone "today" list). */
-  action?: "complete";
+  /**
+   * Changes an existing task instead of adding one (phone "today" list):
+   * `complete` marks it done, `reschedule` moves it to `date`, `focus` makes it
+   * today's most important task.
+   */
+  action?: InboxAction;
   taskId?: string;
+  /** YYYY-MM-DD: the new date for `reschedule`, or the date of an added task. */
+  date?: string;
+  /** Project of an added task, from the snapshot's project list. */
+  projectId?: string;
 }
 
 export interface InboxEnvelope {
@@ -51,12 +62,23 @@ const payloadSchema = z
     text: z.string(),
     createdAt: z.string().datetime({ offset: true }),
     source: z.enum(INBOX_SOURCES),
-    action: z.literal("complete").optional(),
+    action: z.enum(INBOX_ACTIONS).optional(),
     taskId: z.string().min(1).max(100).optional(),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    projectId: z.string().min(1).max(100).optional(),
   })
   .strict()
   .refine((payload) => (payload.action === undefined) === (payload.taskId === undefined), {
-    message: "A complete action needs a task id",
+    message: "An action needs a task id",
+  })
+  .refine((payload) => payload.action === undefined || payload.action === "reschedule" || payload.date === undefined, {
+    message: "Only reschedule actions carry a date",
+  })
+  .refine((payload) => payload.action !== "reschedule" || payload.date !== undefined, {
+    message: "A reschedule action needs a date",
+  })
+  .refine((payload) => payload.action === undefined || payload.projectId === undefined, {
+    message: "Only added tasks carry a project",
   });
 
 const envelopeSchema = z
@@ -109,6 +131,8 @@ export function encodeInboxPayload(payload: InboxPayload): Uint8Array<ArrayBuffe
     createdAt: parsed.createdAt,
     source: parsed.source,
     ...(parsed.action ? { action: parsed.action, taskId: parsed.taskId } : {}),
+    ...(parsed.date ? { date: parsed.date } : {}),
+    ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
   };
   return utf8Encoder.encode(JSON.stringify(ordered));
 }

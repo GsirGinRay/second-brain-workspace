@@ -493,13 +493,15 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   useInboxRelay({
     api: native.inboxRelay,
     ready: Boolean(diagnostics?.selectedVault),
-    write: (items) => persistLocal(applyInboxItems(tasks, items, taipeiDateKey())),
+    write: (items) => persistLocal(applyInboxItems(tasks, items, taipeiDateKey(), projects)),
     onReceived: (items) => {
       const completed = items.filter((item) => item.action === "complete").length;
-      const added = items.length - completed;
+      const changed = items.filter((item) => item.action === "reschedule" || item.action === "focus").length;
+      const added = items.length - completed - changed;
       const body = [
         added > 0 ? t("inboxRelay.received", { count: added }) : "",
         completed > 0 ? t("inboxRelay.completed", { count: completed }) : "",
+        changed > 0 ? t("inboxRelay.changed", { count: changed }) : "",
       ].filter(Boolean).join("\n");
       void notifyReminder?.(t("inboxRelay.title"), body).catch(() => undefined);
     },
@@ -509,6 +511,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     api: native.inboxRelay,
     ready: Boolean(diagnostics?.selectedVault),
     tasks,
+    projects,
     todayKey: taipeiDateKey,
   });
   const checkAppUpdate = useCallback(async (promptIfAvailable = false, showBusy = false) => {

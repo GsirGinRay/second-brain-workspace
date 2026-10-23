@@ -51,6 +51,21 @@ test("snapshot contents and envelopes are validated", () => {
   assert.equal(isViewKey("short"), false);
 });
 
+test("optional details, progress, projects and features round-trip", async () => {
+  const detailed = parseSnapshot({
+    ...snapshot,
+    tasks: [{ ...snapshot.tasks[0], recurrence: "every day", notes: "帶收據" }],
+    doneToday: 2,
+    projects: [{ id: "p1", name: "家務" }],
+    features: ["reschedule", "focus", "add-options"],
+  });
+  const sealed = await sealSnapshot(detailed, fixture.inboxId, fixture.viewKeyBase64Url, 6);
+  assert.deepEqual(await openSnapshot(sealed, fixture.inboxId, fixture.viewKeyBase64Url), detailed);
+  assert.throws(() => parseSnapshot({ ...snapshot, tasks: [{ ...snapshot.tasks[0], notes: "x".repeat(201) }] }));
+  assert.throws(() => parseSnapshot({ ...snapshot, features: ["delete"] }));
+  assert.throws(() => parseSnapshot({ ...snapshot, doneToday: -1 }));
+});
+
 test("fresh seals use a new nonce and round-trip", async () => {
   const first = await sealSnapshot(snapshot, fixture.inboxId, fixture.viewKeyBase64Url, 5);
   const second = await sealSnapshot(snapshot, fixture.inboxId, fixture.viewKeyBase64Url, 5);

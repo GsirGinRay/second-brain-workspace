@@ -3,28 +3,38 @@
  * (docs/inbox-relay.md) become inbox tasks, parsed like a quick add.
  */
 import {
+  INBOX_ACTIONS,
+  SNAPSHOT_NOTES_LIMIT,
+  SNAPSHOT_PROJECT_LIMIT,
   SNAPSHOT_TASK_LIMIT,
   SNAPSHOT_TITLE_LIMIT,
   isInboxItemId,
+  isValidDateKey,
   parseSnapshot,
   rankForIndex,
+  type BrainProjectSnapshot,
   type BrainTaskSnapshot,
+  type InboxAction,
   type InboxSnapshot,
   type InboxSource,
   type SnapshotTask,
 } from "@second-brain/brain-core";
 import { addDateDays } from "@second-brain/brain-ui";
 import { parseNaturalDate } from "./natural-date";
-import { archiveTask } from "./task-actions";
+import { archiveTask, markMostImportant, scheduleTask } from "./task-actions";
 
 export interface InboxRelayItem {
   id: string;
   text: string;
   createdAt: string;
   source: InboxSource;
-  /** Set when the phone ticked a task in its "today" list. */
-  action?: "complete";
+  /** Set when the phone changed a task in its "today" list. */
+  action?: InboxAction;
   taskId?: string;
+  /** The new date of a reschedule, or the date picked for an added task. */
+  date?: string;
+  /** The project picked for an added task. */
+  projectId?: string;
 }
 
 /** The paid phone "today" list, or the relay's reason for refusing a request. */
@@ -65,6 +75,7 @@ export interface InboxRelayApi {
 }
 
 const SOURCES = new Set<InboxSource>(["pwa", "line", "email"]);
+const ACTIONS = new Set<string>(INBOX_ACTIONS);
 const CONNECTIONS = new Set(["connecting", "connected", "offline"]);
 
 function record(value: unknown): Record<string, unknown> {
@@ -127,16 +138,21 @@ export function validateInboxRelayItems(value: unknown): InboxRelayItem[] {
       || typeof input.createdAt !== "string"
       || typeof input.source !== "string"
       || !SOURCES.has(input.source as InboxSource)
-      || (input.action !== undefined && input.action !== "complete")
-      || (input.action === "complete") !== (typeof input.taskId === "string" && input.taskId !== "")
+      || (input.action !== undefined && (typeof input.action !== "string" || !ACTIONS.has(input.action)))
+      || (input.action !== undefined) !== (typeof input.taskId === "string" && input.taskId !== "")
+      || (input.date !== undefined && (typeof input.date !== "string" || !isValidDateKey(input.date)))
+      || (input.action === "reschedule") !== (input.action !== undefined && input.date !== undefined)
+      || (input.projectId !== undefined && (typeof input.projectId !== "string" || input.projectId === "" || input.action !== undefined))
     ) {
       throw new Error("Invalid inbox relay item");
     }
     const item: InboxRelayItem = { id: input.id, text: input.text, createdAt: input.createdAt, source: input.source as InboxSource };
-    if (input.action === "complete") {
-      item.action = "complete";
+    if (input.action !== undefined) {
+      item.action = input.action as InboxAction;
       item.taskId = input.taskId as string;
     }
+    if (typeof input.date === "string") item.date = input.date;
+    if (typeof input.projectId === "string") item.projectId = input.projectId;
     return item;
   });
 }
@@ -157,16 +173,44 @@ export function validateInboxRelayEntitlement(value: unknown): InboxRelayEntitle
   };
 }
 
-/** Days after today that the phone list shows. */
-export const SNAPSHOT_UPCOMING_DAYS = 3;
+/** Days after today that the phone list can show; the phone picks 3 or 7. */
+export const SNAPSHOT_UPCOMING_DAYS = 7;
+/** Plaintext budget, well under the relay's 128 KB for the sealed envelope. */
+const SNAPSHOT_PLAINTEXT_BYTES = 90_000;
 const PRIORITY_ORDER: Record<BrainTaskSnapshot["priority"], number> = { highest: 0, high: 1, medium: 2, normal: 3, low: 4 };
+const CLOSED_PROJECTS = new Set(["done", "archived"]);
+
+/** The first characters of a task's notes, cut on a whole character. */
+export function notesPreview(body: string | undefined): string | undefined {
+  const text = (body ?? "").replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (!text) return undefined;
+  let preview = "";
+  for (const character of text) {
+    if (preview.length + character.length > SNAPSHOT_NOTES_LIMIT) break;
+    preview += character;
+  }
+  return preview;
+}
+
+export interface TodaySnapshotOptions {
+  now?: Date;
+  /** Open projects become the phone's choices for new tasks. */
+  projects?: readonly BrainProjectSnapshot[];
+  /** Sends the first 200 characters of each task's notes. */
+  includeNotes?: boolean;
+}
 
 /**
  * What the phone shows: open tasks that are overdue, due today or within the
- * next three days. Only titles, times, priority and project names leave the
- * computer, never notes.
+ * next seven days, with titles, times, priority, repeat and project names.
+ * Notes leave the computer only when the user allows it, and then only their
+ * first 200 characters.
  */
-export function buildTodaySnapshot(tasks: readonly BrainTaskSnapshot[], today: string, now = new Date()): InboxSnapshot {
+export function buildTodaySnapshot(
+  tasks: readonly BrainTaskSnapshot[],
+  today: string,
+  { now = new Date(), projects = [], includeNotes = false }: TodaySnapshotOptions = {},
+): InboxSnapshot {
   const last = addDateDays(today, SNAPSHOT_UPCOMING_DAYS);
   const picked: SnapshotTask[] = tasks
     .filter((task) => task.status !== "done" && Boolean(task.taskDate) && (task.taskDate as string) <= last && Boolean(task.id))
@@ -185,20 +229,67 @@ export function buildTodaySnapshot(tasks: readonly BrainTaskSnapshot[], today: s
       priority: task.priority,
       status: task.status,
       project: task.projectName ? task.projectName.slice(0, 200) : null,
+      ...(task.recurrence ? { recurrence: task.recurrence } : {}),
+      ...(includeNotes && notesPreview(task.body) ? { notes: notesPreview(task.body) } : {}),
     }));
-  return parseSnapshot({ v: 1, generatedAt: now.toISOString(), today, tasks: picked });
+  const snapshot: InboxSnapshot = {
+    v: 1,
+    generatedAt: now.toISOString(),
+    today,
+    tasks: picked,
+    doneToday: tasks.filter((task) => task.status === "done" && task.completedAt === today).length,
+    projects: projects
+      .filter((project) => project.id && project.name.trim() && !CLOSED_PROJECTS.has(project.status))
+      .sort((left, right) => Number(right.focusToday) - Number(left.focusToday) || left.name.localeCompare(right.name, "zh-Hant"))
+      .slice(0, SNAPSHOT_PROJECT_LIMIT)
+      .map((project) => ({ id: project.id as string, name: project.name.trim().slice(0, 200) })),
+    features: ["reschedule", "focus", "add-options"],
+  };
+  return parseSnapshot(fitSnapshot(snapshot));
 }
 
-/** Ticks from the phone mark tasks done; other items become new inbox tasks. */
+/** Drops notes, then the furthest tasks, until the snapshot fits the relay. */
+function fitSnapshot(snapshot: InboxSnapshot): InboxSnapshot {
+  const size = (value: InboxSnapshot) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  if (size(snapshot) <= SNAPSHOT_PLAINTEXT_BYTES) return snapshot;
+  const tasks = snapshot.tasks.map(({ notes: _notes, ...task }) => task);
+  const fitted = { ...snapshot, tasks };
+  while (tasks.length > 0 && size(fitted) > SNAPSHOT_PLAINTEXT_BYTES) tasks.pop();
+  return fitted;
+}
+
+/**
+ * Applies phone changes in the order they were made: ticks mark tasks done,
+ * reschedules move them (keeping their time), focus makes a task today's most
+ * important; anything else becomes a new inbox task. Changes to a task that is
+ * gone or already finished are ignored.
+ */
 export function applyInboxItems(
   tasks: readonly BrainTaskSnapshot[],
   items: readonly InboxRelayItem[],
   today: string,
+  projects: readonly BrainProjectSnapshot[] = [],
 ): BrainTaskSnapshot[] {
-  const completed = new Set(items.filter((item) => item.action === "complete").map((item) => item.taskId));
-  const updated = tasks.map((task) =>
-    task.id && completed.has(task.id) && task.status !== "done" ? archiveTask(task, today) : task);
-  return [...updated, ...inboxItemsToTasks(items.filter((item) => item.action !== "complete"), today)];
+  let current = [...tasks];
+  const added: InboxRelayItem[] = [];
+  const ordered = [...items].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  for (const item of ordered) {
+    if (!item.action) {
+      added.push(item);
+      continue;
+    }
+    const target = current.find((task) => task.id === item.taskId);
+    if (!target || target.status === "done") continue;
+    if (item.action === "complete") {
+      current = current.map((task) => (task === target ? archiveTask(task, today) : task));
+    } else if (item.action === "reschedule" && item.date) {
+      const date = item.date;
+      current = current.map((task) => (task === target ? scheduleTask(task, date) : task));
+    } else if (item.action === "focus") {
+      current = markMostImportant(current, target.id as string, today);
+    }
+  }
+  return [...current, ...inboxItemsToTasks(added, today, Date.now(), projects)];
 }
 
 /** A data URL for the pairing QR code; the SVG comes from the native side. */
@@ -220,7 +311,12 @@ function parseInboxText(text: string, today: string) {
  * repeats the same way quick add does; any further lines become the body.
  * Items keep the order they were sent in.
  */
-export function inboxItemsToTasks(items: readonly InboxRelayItem[], today: string, rankSeed = Date.now()): BrainTaskSnapshot[] {
+export function inboxItemsToTasks(
+  items: readonly InboxRelayItem[],
+  today: string,
+  rankSeed = Date.now(),
+  projects: readonly BrainProjectSnapshot[] = [],
+): BrainTaskSnapshot[] {
   return [...items]
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
     .map((item, index) => {
@@ -229,16 +325,18 @@ export function inboxItemsToTasks(items: readonly InboxRelayItem[], today: strin
       const natural = parseInboxText(typed, today);
       const title = (natural?.title.trim() || typed).slice(0, 500);
       const startTime = natural?.time ?? null;
+      const project = item.projectId ? projects.find((entry) => entry.id === item.projectId) : undefined;
       const task: BrainTaskSnapshot = {
         schemaVersion: 5,
         id: crypto.randomUUID(),
         title,
         status: "todo",
-        // A time alone means today; no date at all leaves it undated in the inbox.
-        taskDate: natural?.date ?? (startTime ? today : null),
+        // A date picked on the phone wins over one typed in the text; a time
+        // alone means today; no date at all leaves it undated in the inbox.
+        taskDate: item.date ?? natural?.date ?? (startTime ? today : null),
         priority: "normal",
-        projectId: null,
-        projectName: null,
+        projectId: project?.id ?? null,
+        projectName: project?.name ?? null,
         rank: rankForIndex((rankSeed + index) % 100000),
         sourcePath: null,
         sourceHeading: null,

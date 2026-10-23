@@ -72,6 +72,9 @@ Plaintext is UTF-8 JSON with this exact key order:
 - `text` is trimmed, CRLF becomes LF, it must not be empty, and it is at most
   2400 UTF-8 bytes (about 800 Chinese characters). The desktop parses dates
   and tokens from it the same way as quick add.
+- Optional, in this order after `source`: `action` and `taskId` (both or
+  neither; see "Today list"), `date` (YYYY-MM-DD; required for `reschedule`,
+  otherwise only on added tasks) and `projectId` (added tasks only).
 - `source` is `pwa`, `line` or `email`. LINE and email items arrive at the
   relay in plain text; the relay seals them with the inbox public key on
   arrival and stores only the envelope.
@@ -139,26 +142,38 @@ a repeated id without writing it again.
 
 ## Today list (option B, paid)
 
-Paid Skool members also see overdue tasks, today and the next 3 days on the
-phone and can tick them off.
+Paid Skool members also see overdue tasks, today and the next 3 or 7 days on
+the phone, and can tick, reschedule or star them and add tasks with a date and
+a project.
 
 - **View key.** Pairing creates a random 32-byte view key, stored with the
   inbox key and added to the QR fragment as `s=`. Phones paired before 0.8.0
   scan again to get it.
 - **Snapshot.** After tasks change (3-second debounce, and every 30 minutes so
   the phone can tell the computer is on) the desktop builds
-  `{v, generatedAt, today, tasks}` with only id, title, date, time, duration,
-  priority, status and project name of open tasks dated up to 3 days ahead,
-  never notes. It is sealed with AES-256-GCM under
+  `{v, generatedAt, today, tasks, doneToday, projects, features}`. Tasks are
+  the open ones dated up to 7 days ahead, with id, title, date, time,
+  duration, priority, status, project name and repeat rule. The first 200
+  characters of a task's notes are added only while "show notes on the phone"
+  is on in settings (on by default). `projects` lists open projects (id and
+  name) for new tasks; `features` lists the phone actions this desktop
+  understands (`reschedule`, `focus`, `add-options`), and the phone hides the
+  rest. Above 90 KB of plaintext the desktop drops notes, then the furthest
+  tasks. It is sealed with AES-256-GCM under
   HKDF-SHA256(view key, salt = inbox id, info = `second-brain-snapshot-v1`),
   AAD `snapshot-v1\n<inboxId>\n<version>`, where the version is the sealing
   time in milliseconds. The relay keeps only the newest version, and the phone
   ignores a version older than one it already showed. Locked to
   `docs/fixtures/inbox-snapshot-v1.json`.
-- **Ticks.** A tick is an ordinary inbox item whose payload adds
-  `"action":"complete","taskId":"…"` (the text is the task title). The desktop
-  marks that task done through the normal save path, so repeating tasks get
-  their next occurrence; an unknown or finished task is ignored.
+- **Changes.** A change is an ordinary inbox item whose payload adds
+  `"action"` and `"taskId"` (the text is the task title): `complete` marks the
+  task done (repeating tasks get their next occurrence), `reschedule` moves it
+  to `date` and keeps its time, and `focus` makes it today's single most
+  important task. The desktop applies changes in `createdAt` order through the
+  normal save path and ignores changes to a task that is gone or finished.
+- **On the phone.** A change shows at once and is marked "waiting for your
+  computer" until a snapshot newer than the change arrives. It waits 5
+  seconds in the outbox before it is sent, so the toast can undo it.
 - **Entitlement.** The desktop asks for a code for the user's Skool email. The
   relay checks the `Members(自動化)` tab of the member Sheet that the member
   data site keeps in sync with Skool (a row with that Email and a Status other

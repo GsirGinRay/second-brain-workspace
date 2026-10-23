@@ -138,3 +138,19 @@ test("a complete action carries the task id and round-trips", async () => {
   assert.throws(() => encodeInboxPayload({ ...payload, action: "complete" }));
   assert.throws(() => encodeInboxPayload({ ...payload, taskId: "x" }));
 });
+
+test("reschedule needs a date; only added tasks carry a project", () => {
+  const taskId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const decoded = (value: object) => JSON.parse(new TextDecoder().decode(encodeInboxPayload(value as never)));
+  assert.deepEqual(
+    Object.keys(decoded({ ...payload, action: "reschedule", taskId, date: "2026-10-24" })),
+    ["v", "text", "createdAt", "source", "action", "taskId", "date"],
+  );
+  assert.equal(decoded({ ...payload, action: "focus", taskId }).action, "focus");
+  assert.deepEqual(decoded({ ...payload, projectId: "p1", date: "2026-10-25" }).projectId, "p1");
+  assert.throws(() => encodeInboxPayload({ ...payload, action: "reschedule", taskId }));
+  assert.throws(() => encodeInboxPayload({ ...payload, action: "complete", taskId, date: "2026-10-24" }));
+  assert.throws(() => encodeInboxPayload({ ...payload, action: "focus", taskId, projectId: "p1" }));
+  assert.throws(() => encodeInboxPayload({ ...payload, date: "10/24" }));
+  assert.throws(() => encodeInboxPayload({ ...payload, action: "delete" as never, taskId }));
+});
