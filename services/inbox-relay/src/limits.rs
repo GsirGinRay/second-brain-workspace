@@ -14,6 +14,8 @@ pub struct Limits {
     pub storage_bytes: usize,
     pub signature_skew_secs: i64,
     pub inbox_creations_per_ip_hour: u32,
+    /// Caps creation even when a client spoofs its IP header by bypassing the proxy.
+    pub inbox_creations_per_hour: u32,
     pub uploads_per_inbox_minute: u32,
     pub uploads_per_ip_minute: u32,
     pub desktop_requests_per_inbox_minute: u32,
@@ -30,6 +32,7 @@ impl Default for Limits {
             storage_bytes: 100 * 1024 * 1024,
             signature_skew_secs: 300,
             inbox_creations_per_ip_hour: 10,
+            inbox_creations_per_hour: 200,
             uploads_per_inbox_minute: 60,
             uploads_per_ip_minute: 120,
             desktop_requests_per_inbox_minute: 120,

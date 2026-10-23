@@ -467,6 +467,7 @@ fn harness_with_storage(storage_bytes: usize) -> Harness {
 async fn creation_and_uploads_are_rate_limited() {
     let harness = harness(Limits {
         inbox_creations_per_ip_hour: 2,
+        inbox_creations_per_hour: 3,
         uploads_per_inbox_minute: 3,
         uploads_per_ip_minute: 2,
         ..Limits::default()
@@ -477,6 +478,20 @@ async fn creation_and_uploads_are_rate_limited() {
         .send(harness.signed("POST", "/v1/inboxes", &harness.create_body(), None))
         .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    let mut other_ip = harness.signed("POST", "/v1/inboxes", &harness.create_body(), None);
+    other_ip
+        .headers_mut()
+        .insert("x-test-ip", "192.0.2.9".parse().unwrap());
+    assert_eq!(harness.send(other_ip).await.0, StatusCode::CREATED);
+    let mut third_ip = harness.signed("POST", "/v1/inboxes", &harness.create_body(), None);
+    third_ip
+        .headers_mut()
+        .insert("x-test-ip", "192.0.2.10".parse().unwrap());
+    assert_eq!(
+        harness.send(third_ip).await.0,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the global cap holds across addresses"
+    );
 
     let post = |n: u32, ip: &'static str| {
         let body = serde_json::to_vec(&envelope(&item_id(n))).unwrap();

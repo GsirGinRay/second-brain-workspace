@@ -356,6 +356,14 @@ async fn create_inbox(
     ) {
         return Err(ApiError::RateLimited);
     }
+    if !state.limiter.allow(
+        "create:all",
+        limits.inbox_creations_per_hour,
+        3600,
+        state.now(),
+    ) {
+        return Err(ApiError::RateLimited);
+    }
     let request: CreateInbox = serde_json::from_slice(&body).map_err(|_| ApiError::BadRequest)?;
     let signing_key = URL_SAFE_NO_PAD
         .decode(&request.signing_public_key)

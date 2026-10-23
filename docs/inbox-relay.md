@@ -175,7 +175,7 @@ a repeated id without writing it again.
 | Item lifetime | 14 days |
 | Inbox without desktop contact | deleted after 180 days |
 | Relay storage | 100 MB total (`507` above it) |
-| Inbox creation | 10 per IP per hour |
+| Inbox creation | 10 per IP and 200 in total per hour |
 | Item uploads | 60 per inbox and 120 per IP per minute |
 | Desktop requests | 120 per inbox per minute |
 | Open streams | 3 per inbox |
