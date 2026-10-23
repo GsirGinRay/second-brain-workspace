@@ -25,6 +25,27 @@ pub enum PutOutcome {
     StorageFull,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Entitlement {
+    pub email: String,
+    pub checked_at: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PendingCode {
+    pub email: String,
+    pub code_hash: Vec<u8>,
+    pub sent_at: i64,
+    pub expires_at: i64,
+    pub attempts: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SnapshotOutcome {
+    Stored,
+    Stale,
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Purged {
     pub items: usize,
@@ -52,6 +73,30 @@ CREATE INDEX IF NOT EXISTS items_created_at ON items(created_at);
 CREATE TABLE IF NOT EXISTS nonces (
     nonce TEXT PRIMARY KEY,
     expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS entitlements (
+    inbox_id TEXT PRIMARY KEY REFERENCES inboxes(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    verified_at INTEGER NOT NULL,
+    checked_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS codes (
+    inbox_id TEXT PRIMARY KEY REFERENCES inboxes(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    code_hash BLOB NOT NULL,
+    sent_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS snapshots (
+    inbox_id TEXT PRIMARY KEY REFERENCES inboxes(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    body TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS grants (
+    email TEXT PRIMARY KEY,
+    note TEXT NOT NULL,
+    created_at INTEGER NOT NULL
 );
 ";
 
@@ -203,6 +248,171 @@ impl Store {
         Ok(inserted == 1)
     }
 
+    pub fn entitlement(&self, inbox_id: &str) -> rusqlite::Result<Option<Entitlement>> {
+        self.lock()
+            .query_row(
+                "SELECT email, checked_at FROM entitlements WHERE inbox_id = ?1",
+                [inbox_id],
+                |row| {
+                    Ok(Entitlement {
+                        email: row.get(0)?,
+                        checked_at: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn entitle(&self, inbox_id: &str, email: &str, now: i64) -> rusqlite::Result<()> {
+        let connection = self.lock();
+        connection.execute(
+            "INSERT INTO entitlements (inbox_id, email, verified_at, checked_at)
+             VALUES (?1, ?2, ?3, ?3)
+             ON CONFLICT(inbox_id) DO UPDATE SET email = ?2, verified_at = ?3, checked_at = ?3",
+            params![inbox_id, email, now],
+        )?;
+        connection.execute("DELETE FROM codes WHERE inbox_id = ?1", [inbox_id])?;
+        Ok(())
+    }
+
+    pub fn mark_checked(&self, inbox_id: &str, now: i64) -> rusqlite::Result<()> {
+        self.lock().execute(
+            "UPDATE entitlements SET checked_at = ?2 WHERE inbox_id = ?1",
+            params![inbox_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// Ends the entitlement and drops the snapshot that depended on it.
+    pub fn revoke(&self, inbox_id: &str) -> rusqlite::Result<()> {
+        let connection = self.lock();
+        connection.execute("DELETE FROM entitlements WHERE inbox_id = ?1", [inbox_id])?;
+        connection.execute("DELETE FROM snapshots WHERE inbox_id = ?1", [inbox_id])?;
+        Ok(())
+    }
+
+    /// Entitlements last confirmed before `before`, oldest first.
+    pub fn entitlements_checked_before(
+        &self,
+        before: i64,
+    ) -> rusqlite::Result<Vec<(String, String)>> {
+        let connection = self.lock();
+        let mut statement = connection.prepare(
+            "SELECT inbox_id, email FROM entitlements WHERE checked_at < ?1 ORDER BY checked_at",
+        )?;
+        let rows = statement.query_map([before], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
+    pub fn put_code(
+        &self,
+        inbox_id: &str,
+        email: &str,
+        code_hash: &[u8],
+        now: i64,
+        expires_at: i64,
+    ) -> rusqlite::Result<()> {
+        self.lock().execute(
+            "INSERT INTO codes (inbox_id, email, code_hash, sent_at, expires_at, attempts)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0)
+             ON CONFLICT(inbox_id) DO UPDATE SET
+                 email = ?2, code_hash = ?3, sent_at = ?4, expires_at = ?5, attempts = 0",
+            params![inbox_id, email, code_hash, now, expires_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn code(&self, inbox_id: &str) -> rusqlite::Result<Option<PendingCode>> {
+        self.lock()
+            .query_row(
+                "SELECT email, code_hash, sent_at, expires_at, attempts FROM codes WHERE inbox_id = ?1",
+                [inbox_id],
+                |row| {
+                    Ok(PendingCode {
+                        email: row.get(0)?,
+                        code_hash: row.get(1)?,
+                        sent_at: row.get(2)?,
+                        expires_at: row.get(3)?,
+                        attempts: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn count_code_attempt(&self, inbox_id: &str) -> rusqlite::Result<()> {
+        self.lock().execute(
+            "UPDATE codes SET attempts = attempts + 1 WHERE inbox_id = ?1",
+            [inbox_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_code(&self, inbox_id: &str) -> rusqlite::Result<()> {
+        self.lock()
+            .execute("DELETE FROM codes WHERE inbox_id = ?1", [inbox_id])?;
+        Ok(())
+    }
+
+    /// Keeps only the newest snapshot; an older or equal version is refused.
+    pub fn put_snapshot(
+        &self,
+        inbox_id: &str,
+        version: i64,
+        body: &str,
+    ) -> rusqlite::Result<SnapshotOutcome> {
+        let changed = self.lock().execute(
+            "INSERT INTO snapshots (inbox_id, version, body) VALUES (?1, ?2, ?3)
+             ON CONFLICT(inbox_id) DO UPDATE SET version = ?2, body = ?3 WHERE version < ?2",
+            params![inbox_id, version, body],
+        )?;
+        Ok(if changed == 1 {
+            SnapshotOutcome::Stored
+        } else {
+            SnapshotOutcome::Stale
+        })
+    }
+
+    pub fn snapshot(&self, inbox_id: &str) -> rusqlite::Result<Option<String>> {
+        self.lock()
+            .query_row(
+                "SELECT body FROM snapshots WHERE inbox_id = ?1",
+                [inbox_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn is_granted(&self, email: &str) -> rusqlite::Result<bool> {
+        self.lock()
+            .query_row("SELECT 1 FROM grants WHERE email = ?1", [email], |_| Ok(()))
+            .optional()
+            .map(|found| found.is_some())
+    }
+
+    pub fn grant(&self, email: &str, note: &str, now: i64) -> rusqlite::Result<()> {
+        self.lock().execute(
+            "INSERT INTO grants (email, note, created_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(email) DO UPDATE SET note = ?2",
+            params![email, note, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn ungrant(&self, email: &str) -> rusqlite::Result<bool> {
+        Ok(self
+            .lock()
+            .execute("DELETE FROM grants WHERE email = ?1", [email])?
+            == 1)
+    }
+
+    pub fn grants(&self) -> rusqlite::Result<Vec<(String, String)>> {
+        let connection = self.lock();
+        let mut statement = connection.prepare("SELECT email, note FROM grants ORDER BY email")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
     pub fn purge(&self, now: i64, limits: &Limits) -> rusqlite::Result<Purged> {
         let connection = self.lock();
         let items = connection.execute(
@@ -214,6 +424,7 @@ impl Store {
             [now - limits.idle_inbox_lifetime_secs],
         )?;
         connection.execute("DELETE FROM nonces WHERE expires_at < ?1", [now])?;
+        connection.execute("DELETE FROM codes WHERE expires_at < ?1", [now])?;
         Ok(Purged { items, inboxes })
     }
 }

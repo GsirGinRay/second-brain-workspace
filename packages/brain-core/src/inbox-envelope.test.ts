@@ -124,3 +124,17 @@ test("ids are validated before they reach the associated data", () => {
   assert.throws(() => inboxAssociatedData("short", fixture.itemId), /inbox id/);
   assert.throws(() => inboxAssociatedData(fixture.inboxId, "11111111-1111-1111-1111-111111111111"), /item id/);
 });
+
+test("a complete action carries the task id and round-trips", async () => {
+  const envelope = await sealInboxItem({
+    recipientPublicKey: fixture.recipient.publicKeyBase64Url,
+    inboxId: fixture.inboxId,
+    itemId: fixture.itemId,
+    payload: { ...payload, text: "繳電話費", action: "complete", taskId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+  });
+  const opened = await openInboxItem(envelope, fixture.inboxId, await recipientKey(), fixture.recipient.publicKeyBase64Url);
+  assert.equal(opened.action, "complete");
+  assert.equal(opened.taskId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  assert.throws(() => encodeInboxPayload({ ...payload, action: "complete" }));
+  assert.throws(() => encodeInboxPayload({ ...payload, taskId: "x" }));
+});

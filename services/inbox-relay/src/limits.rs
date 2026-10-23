@@ -20,6 +20,12 @@ pub struct Limits {
     pub uploads_per_ip_minute: u32,
     pub desktop_requests_per_inbox_minute: u32,
     pub streams_per_inbox: usize,
+    pub snapshot_bytes: usize,
+    pub code_ttl_secs: i64,
+    pub code_resend_secs: i64,
+    pub code_attempts: i64,
+    pub codes_per_inbox_hour: u32,
+    pub entitlement_recheck_secs: i64,
 }
 
 impl Default for Limits {
@@ -37,6 +43,12 @@ impl Default for Limits {
             uploads_per_ip_minute: 120,
             desktop_requests_per_inbox_minute: 120,
             streams_per_inbox: 3,
+            snapshot_bytes: 128 * 1024,
+            code_ttl_secs: 10 * 60,
+            code_resend_secs: 60,
+            code_attempts: 5,
+            codes_per_inbox_hour: 5,
+            entitlement_recheck_secs: DAY,
         }
     }
 }

@@ -1,0 +1,42 @@
+{
+  "description": "Public deterministic snapshot test vector; never use this view key for real data",
+  "algorithm": "HKDF-SHA256(viewKey, salt=inboxId) + AES-256-GCM",
+  "hkdfInfo": "second-brain-snapshot-v1",
+  "viewKeyBase64Url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "inboxId": "AAECAwQFBgcICQoLDA0ODw",
+  "associatedDataUtf8": "snapshot-v1\nAAECAwQFBgcICQoLDA0ODw\n1792756000000",
+  "snapshot": {
+    "v": 1,
+    "generatedAt": "2026-10-23T12:00:00.000Z",
+    "today": "2026-10-23",
+    "tasks": [
+      {
+        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "title": "繳電話費",
+        "date": "2026-10-23",
+        "time": "15:00",
+        "durationMinutes": 30,
+        "priority": "highest",
+        "status": "todo",
+        "project": null
+      },
+      {
+        "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "title": "回覆客戶報價",
+        "date": "2026-10-22",
+        "time": null,
+        "durationMinutes": null,
+        "priority": "normal",
+        "status": "waiting",
+        "project": "業務"
+      }
+    ]
+  },
+  "plaintextUtf8": "{\"v\":1,\"generatedAt\":\"2026-10-23T12:00:00.000Z\",\"today\":\"2026-10-23\",\"tasks\":[{\"id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"title\":\"繳電話費\",\"date\":\"2026-10-23\",\"time\":\"15:00\",\"durationMinutes\":30,\"priority\":\"highest\",\"status\":\"todo\",\"project\":null},{\"id\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"title\":\"回覆客戶報價\",\"date\":\"2026-10-22\",\"time\":null,\"durationMinutes\":null,\"priority\":\"normal\",\"status\":\"waiting\",\"project\":\"業務\"}]}",
+  "envelope": {
+    "v": 1,
+    "version": 1792756000000,
+    "nonce": "ZGVmZ2hpamtsbW5v",
+    "ct": "Ue7DrJCRsuso2dr3E3VnXT9OyJjID4ya5A75hsS2lXfJrvnnbo2JflWy6J0zNIedxU3cNxi2PY3YGVmOO9AcA_TIiVpOCtvtVHcSFaVTjrBQMuE4EiXlBGj8rODBZjOEkms5hICvmvny2RMA7V52fYWs2jERYoWDKANwYjvlzyUPqLTS9I0GAm972SoNd40JxcIPHqH7r0AUkQ4HPvMovwDktgn58PuJw6m2tMKhS2uqHf_YP5aHsx5NTlU6XZLJEngunjPIxNH5lXtrfj6UlnPBjghIknEKHbEQYqLZuBmFyxDLRdoSmOBLLH6wYtM1d-6B-GfqTK4K0sD6Vai1P1MSNi9M8vd5Z_XPvxs3UFR3kQvTNGKVbGrmTgxy3M9AkMRn-Hyf1stZdBnUXTy5aVOXadOZpFiC8AFm3lumWN8lJ0PPeeCpY7MsnMBizyQ42LEUE2DtcY5ZVcXqzTwIC6p5gDVDATdgX9tFn1mlqQQnTwFxdXROegi-xeUialGnnVSJWEfguckdf0Mh_7pJBURfbFmgPWq11QrwGoVVpITqTzql629pd9OifGqVJp2CdQL32U0vgabL7VmJL6bjYzbQZK_RwIy3bSDXsQ"
+  }
+}

@@ -1,9 +1,11 @@
 //! Encrypted phone-to-desktop inbox relay. Protocol: docs/inbox-relay.md.
 
 pub mod canonical;
+mod entitlement;
 pub mod envelope;
 mod hub;
 pub mod limits;
+pub mod membership;
 pub mod store;
 
 use axum::body::Bytes;
@@ -16,7 +18,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, delete, get, post};
+use axum::routing::{any, delete, get, post, put};
 use axum::{Json, Router};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::digest::{SHA256, digest};
@@ -33,6 +35,7 @@ use canonical::{
 };
 use hub::Hub;
 use limits::{Limits, RateLimiter};
+use membership::{Directory, Mailer, NoDirectory, NoMailer};
 use store::{PutOutcome, Store};
 
 pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
@@ -54,6 +57,8 @@ pub struct AppState {
     pub client_ip_header: Option<HeaderName>,
     limiter: RateLimiter,
     hub: Hub,
+    directory: Arc<dyn Directory>,
+    mailer: Arc<dyn Mailer>,
 }
 
 impl AppState {
@@ -70,7 +75,20 @@ impl AppState {
             client_ip_header,
             limiter: RateLimiter::default(),
             hub: Hub::default(),
+            directory: Arc::new(NoDirectory),
+            mailer: Arc::new(NoMailer),
         }
+    }
+
+    /// Enables the paid "today" list: who is a member, and how codes are sent.
+    pub fn with_membership(
+        mut self,
+        directory: Arc<dyn Directory>,
+        mailer: Arc<dyn Mailer>,
+    ) -> Self {
+        self.directory = directory;
+        self.mailer = mailer;
+        self
     }
 
     fn now(&self) -> i64 {
@@ -86,7 +104,7 @@ impl AppState {
     }
 }
 
-fn api_routes() -> Router<Arc<AppState>> {
+fn api_routes(limits: &Limits) -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/health", get(health))
         .route("/v1/inboxes", post(create_inbox))
@@ -95,6 +113,24 @@ fn api_routes() -> Router<Arc<AppState>> {
         .route("/v1/inboxes/{id}/items", post(put_item).get(list_items))
         .route("/v1/inboxes/{id}/items/{item_id}", delete(delete_item))
         .route("/v1/inboxes/{id}/stream", get(stream))
+        .route(
+            "/v1/inboxes/{id}/entitlement",
+            get(entitlement::get_entitlement).delete(entitlement::delete_entitlement),
+        )
+        .route(
+            "/v1/inboxes/{id}/entitlement/code",
+            post(entitlement::request_code),
+        )
+        .route(
+            "/v1/inboxes/{id}/entitlement/verify",
+            post(entitlement::verify_code),
+        )
+        .route(
+            "/v1/inboxes/{id}/snapshot",
+            put(entitlement::put_snapshot)
+                .get(entitlement::get_snapshot)
+                .layer(DefaultBodyLimit::max(limits.snapshot_bytes)),
+        )
         // Unknown API paths stay JSON errors instead of falling to the web app.
         .route("/v1/{*rest}", any(|| async { ApiError::NotFound }))
         .route("/api/{*rest}", any(|| async { ApiError::NotFound }))
@@ -110,7 +146,7 @@ fn finish(routes: Router<Arc<AppState>>, state: Arc<AppState>) -> Router {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    finish(api_routes(), state)
+    finish(api_routes(&state.limits), state)
 }
 
 /// The API plus the phone web app built into `static_dir`. Unknown paths get
@@ -119,7 +155,7 @@ pub fn router_with_static(state: Arc<AppState>, static_dir: &std::path::Path) ->
     let site = tower_http::services::ServeDir::new(static_dir).not_found_service(
         tower_http::services::ServeFile::new(static_dir.join("index.html")),
     );
-    finish(api_routes().fallback_service(site), state)
+    finish(api_routes(&state.limits).fallback_service(site), state)
 }
 
 const CONTENT_SECURITY_POLICY: &str = concat!(
@@ -183,6 +219,8 @@ pub enum ApiError {
     RateLimited,
     StorageFull,
     Internal,
+    /// A specific status with a machine-readable code the clients act on.
+    Code(StatusCode, &'static str),
 }
 
 impl IntoResponse for ApiError {
@@ -196,6 +234,7 @@ impl IntoResponse for ApiError {
             Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             Self::StorageFull => (StatusCode::INSUFFICIENT_STORAGE, "storage_full"),
             Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+            Self::Code(status, code) => (status, code),
         };
         let mut response = (status, Json(json!({ "error": code }))).into_response();
         if status == StatusCode::TOO_MANY_REQUESTS {
@@ -326,6 +365,21 @@ fn authenticate_desktop(
     }
     verify_signed(state, headers, method, uri, body, &inbox.signing_key)?;
     state.store.touch(id, state.now())?;
+    Ok(())
+}
+
+/// Authenticates a phone by the inbox's write-only capture token.
+fn authenticate_phone(state: &AppState, id: &str, headers: &HeaderMap) -> ApiResult<()> {
+    if !envelope::is_inbox_id(id) {
+        return Err(ApiError::NotFound);
+    }
+    let inbox = state.store.inbox(id)?.ok_or(ApiError::NotFound)?;
+    let token = header(headers, AUTHORIZATION.as_str())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or(ApiError::Unauthorized)?;
+    if token_hash(token) != inbox.token_hash {
+        return Err(ApiError::Unauthorized);
+    }
     Ok(())
 }
 

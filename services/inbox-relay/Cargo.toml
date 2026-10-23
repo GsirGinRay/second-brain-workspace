@@ -10,6 +10,7 @@ license = "MIT"
 axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.23.1"
 hex = "0.4.3"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls"] }
 ring = "0.17.14"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }

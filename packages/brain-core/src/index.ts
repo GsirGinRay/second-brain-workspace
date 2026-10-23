@@ -240,6 +240,22 @@ export type {
   SealInboxItemInput,
   SealInboxItemOverrides,
 } from "./inbox-envelope";
+export {
+  SNAPSHOT_BYTES_LIMIT,
+  SNAPSHOT_HKDF_INFO,
+  SNAPSHOT_PRIORITIES,
+  SNAPSHOT_STATUSES,
+  SNAPSHOT_TASK_LIMIT,
+  SNAPSHOT_TITLE_LIMIT,
+  SNAPSHOT_VERSION,
+  isViewKey,
+  openSnapshot,
+  parseSnapshot,
+  parseSnapshotEnvelope,
+  sealSnapshot,
+  snapshotAssociatedData,
+} from "./inbox-snapshot";
+export type { InboxSnapshot, SealSnapshotOverrides, SnapshotEnvelope, SnapshotTask } from "./inbox-snapshot";
 export type {
   BrainDeviceDto,
   BrainDeviceListDto,

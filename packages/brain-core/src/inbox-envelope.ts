@@ -25,9 +25,13 @@ export type InboxSource = (typeof INBOX_SOURCES)[number];
 
 export interface InboxPayload {
   v: 1;
+  /** The task to add, or for `complete` the task's title, kept for logs. */
   text: string;
   createdAt: string;
   source: InboxSource;
+  /** Marks an existing task done instead of adding one (phone "today" list). */
+  action?: "complete";
+  taskId?: string;
 }
 
 export interface InboxEnvelope {
@@ -47,8 +51,13 @@ const payloadSchema = z
     text: z.string(),
     createdAt: z.string().datetime({ offset: true }),
     source: z.enum(INBOX_SOURCES),
+    action: z.literal("complete").optional(),
+    taskId: z.string().min(1).max(100).optional(),
   })
-  .strict();
+  .strict()
+  .refine((payload) => (payload.action === undefined) === (payload.taskId === undefined), {
+    message: "A complete action needs a task id",
+  });
 
 const envelopeSchema = z
   .object({
@@ -99,13 +108,14 @@ export function encodeInboxPayload(payload: InboxPayload): Uint8Array<ArrayBuffe
     text: normalizeText(parsed.text),
     createdAt: parsed.createdAt,
     source: parsed.source,
+    ...(parsed.action ? { action: parsed.action, taskId: parsed.taskId } : {}),
   };
   return utf8Encoder.encode(JSON.stringify(ordered));
 }
 
 export function decodeInboxPayload(bytes: Uint8Array): InboxPayload {
   const parsed = payloadSchema.parse(JSON.parse(utf8Decoder.decode(bytes)));
-  return { ...parsed, v: 1, text: normalizeText(parsed.text) };
+  return { ...parsed, v: 1, text: normalizeText(parsed.text) } as InboxPayload;
 }
 
 export function parseInboxEnvelope(value: unknown): InboxEnvelope {

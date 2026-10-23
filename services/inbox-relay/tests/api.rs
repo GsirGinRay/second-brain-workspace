@@ -6,11 +6,13 @@ use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use inbox_relay::canonical::{self, CanonicalRequest};
 use inbox_relay::limits::Limits;
+use inbox_relay::membership::{BoxFuture, Directory, Mailer, NoDirectory, NoMailer, Unavailable};
 use inbox_relay::store::Store;
 use inbox_relay::{AppState, router};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{Value, json};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 use tower::ServiceExt;
@@ -34,14 +36,21 @@ struct Inbox {
 }
 
 fn harness(limits: Limits) -> Harness {
+    harness_with(limits, Arc::new(NoDirectory), Arc::new(NoMailer))
+}
+
+fn harness_with(limits: Limits, directory: Arc<dyn Directory>, mailer: Arc<dyn Mailer>) -> Harness {
     let now = Arc::new(AtomicI64::new(START));
     let clock_now = Arc::clone(&now);
-    let state = Arc::new(AppState::new(
-        Store::open_in_memory().unwrap(),
-        limits,
-        Arc::new(move || clock_now.load(Ordering::SeqCst)),
-        Some(HeaderName::from_static("x-test-ip")),
-    ));
+    let state = Arc::new(
+        AppState::new(
+            Store::open_in_memory().unwrap(),
+            limits,
+            Arc::new(move || clock_now.load(Ordering::SeqCst)),
+            Some(HeaderName::from_static("x-test-ip")),
+        )
+        .with_membership(directory, mailer),
+    );
     Harness {
         app: router(Arc::clone(&state)),
         state,
@@ -698,4 +707,456 @@ async fn the_web_app_is_served_with_strict_headers() {
     assert_eq!(get("/api/health").await.status(), StatusCode::OK);
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Members by email; `None` behaves like an unreachable Google Sheet.
+struct FakeDirectory(Mutex<Option<Vec<String>>>);
+
+impl Directory for FakeDirectory {
+    fn is_member<'a>(&'a self, email: &'a str) -> BoxFuture<'a, Result<bool, Unavailable>> {
+        let answer = self
+            .0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|members| members.iter().any(|member| member == email))
+            .ok_or(Unavailable);
+        Box::pin(async move { answer })
+    }
+}
+
+#[derive(Default)]
+struct FakeMailer {
+    sent: Mutex<Vec<(String, String)>>,
+    broken: Mutex<bool>,
+}
+
+impl Mailer for FakeMailer {
+    fn send_code<'a>(
+        &'a self,
+        email: &'a str,
+        code: &'a str,
+    ) -> BoxFuture<'a, Result<(), Unavailable>> {
+        let result = if *self.broken.lock().unwrap() {
+            Err(Unavailable)
+        } else {
+            self.sent
+                .lock()
+                .unwrap()
+                .push((email.to_owned(), code.to_owned()));
+            Ok(())
+        };
+        Box::pin(async move { result })
+    }
+}
+
+struct Members {
+    harness: Harness,
+    directory: Arc<FakeDirectory>,
+    mailer: Arc<FakeMailer>,
+}
+
+fn members(list: &[&str]) -> Members {
+    let directory = Arc::new(FakeDirectory(Mutex::new(Some(
+        list.iter().map(|email| (*email).to_owned()).collect(),
+    ))));
+    let mailer = Arc::new(FakeMailer::default());
+    let harness = harness_with(
+        Limits::default(),
+        Arc::clone(&directory) as Arc<dyn Directory>,
+        Arc::clone(&mailer) as Arc<dyn Mailer>,
+    );
+    Members {
+        harness,
+        directory,
+        mailer,
+    }
+}
+
+impl Members {
+    async fn desktop(
+        &self,
+        inbox: &Inbox,
+        method: &str,
+        path: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        let body = if body.is_null() {
+            Vec::new()
+        } else {
+            serde_json::to_vec(&body).unwrap()
+        };
+        let path = format!("/v1/inboxes/{}{path}", inbox.id);
+        self.harness
+            .send(self.harness.signed(method, &path, &body, Some(&inbox.id)))
+            .await
+    }
+
+    async fn phone_snapshot(&self, inbox: &Inbox, token: &str) -> (StatusCode, Value) {
+        let request = Request::get(format!("/v1/inboxes/{}/snapshot", inbox.id))
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-test-ip", "203.0.113.5")
+            .body(Body::empty())
+            .unwrap();
+        self.harness.send(request).await
+    }
+
+    fn last_code(&self) -> String {
+        self.mailer.sent.lock().unwrap().last().unwrap().1.clone()
+    }
+
+    async fn entitle(&self, inbox: &Inbox, email: &str) {
+        let (status, _) = self
+            .desktop(
+                inbox,
+                "POST",
+                "/entitlement/code",
+                json!({ "email": email }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let code = self.last_code();
+        let (status, _) = self
+            .desktop(
+                inbox,
+                "POST",
+                "/entitlement/verify",
+                json!({ "code": code }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+}
+
+fn snapshot_envelope(version: i64, ct_bytes: usize) -> Value {
+    json!({
+        "v": 1,
+        "version": version,
+        "nonce": URL_SAFE_NO_PAD.encode([1u8; 12]),
+        "ct": URL_SAFE_NO_PAD.encode(vec![2u8; ct_bytes]),
+    })
+}
+
+#[tokio::test]
+async fn members_unlock_the_today_list_with_an_emailed_code() {
+    let relay = members(&["member@example.com"]);
+    let inbox = relay.harness.create_inbox().await;
+
+    let (status, body) = relay
+        .desktop(&inbox, "GET", "/entitlement", Value::Null)
+        .await;
+    assert_eq!(
+        (status, body),
+        (StatusCode::OK, json!({ "entitled": false, "email": null }))
+    );
+
+    let (status, body) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/code",
+            json!({ "email": "someone@example.com" }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::FORBIDDEN, json!("not_member"))
+    );
+    assert!(relay.mailer.sent.lock().unwrap().is_empty());
+
+    let (status, _) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/code",
+            json!({ "email": " Member@Example.com " }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (sent_to, code) = relay.mailer.sent.lock().unwrap()[0].clone();
+    assert_eq!(sent_to, "member@example.com");
+    assert_eq!(code.len(), 6);
+
+    let (status, _) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/code",
+            json!({ "email": "member@example.com" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "one code a minute");
+
+    let wrong = if code == "000000" { "111111" } else { "000000" };
+    let (status, body) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/verify",
+            json!({ "code": wrong }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::BAD_REQUEST, json!("wrong_code"))
+    );
+
+    let (status, body) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/verify",
+            json!({ "code": code }),
+        )
+        .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::OK,
+            json!({ "entitled": true, "email": "member@example.com" })
+        )
+    );
+    let (_, body) = relay
+        .desktop(&inbox, "GET", "/entitlement", Value::Null)
+        .await;
+    assert_eq!(body["email"], "member@example.com");
+}
+
+#[tokio::test]
+async fn codes_expire_and_allow_five_attempts() {
+    let relay = members(&["member@example.com"]);
+    let inbox = relay.harness.create_inbox().await;
+    relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/code",
+            json!({ "email": "member@example.com" }),
+        )
+        .await;
+    let code = relay.last_code();
+    let wrong = if code == "000000" { "111111" } else { "000000" };
+    for _ in 0..5 {
+        let (status, _) = relay
+            .desktop(
+                &inbox,
+                "POST",
+                "/entitlement/verify",
+                json!({ "code": wrong }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, body) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/verify",
+            json!({ "code": code }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::TOO_MANY_REQUESTS, json!("too_many_attempts"))
+    );
+
+    relay.harness.advance(61);
+    relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/code",
+            json!({ "email": "member@example.com" }),
+        )
+        .await;
+    let code = relay.last_code();
+    relay.harness.advance(10 * 60 + 1);
+    let (status, body) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/verify",
+            json!({ "code": code }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::GONE, json!("code_expired"))
+    );
+}
+
+#[tokio::test]
+async fn outages_are_reported_and_manual_grants_work() {
+    let relay = members(&[]);
+    let inbox = relay.harness.create_inbox().await;
+    *relay.directory.0.lock().unwrap() = None;
+    let (status, body) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/code",
+            json!({ "email": "paid@example.com" }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!("directory_unavailable")
+        )
+    );
+
+    relay
+        .harness
+        .state
+        .store
+        .grant("paid@example.com", "bank transfer", START)
+        .unwrap();
+    *relay.mailer.broken.lock().unwrap() = true;
+    let (status, body) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/entitlement/code",
+            json!({ "email": "paid@example.com" }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::SERVICE_UNAVAILABLE, json!("mail_unavailable"))
+    );
+
+    *relay.mailer.broken.lock().unwrap() = false;
+    relay.entitle(&inbox, "paid@example.com").await;
+    let (_, body) = relay
+        .desktop(&inbox, "GET", "/entitlement", Value::Null)
+        .await;
+    assert_eq!(body["entitled"], true);
+}
+
+#[tokio::test]
+async fn only_entitled_inboxes_store_and_serve_snapshots() {
+    let relay = members(&["member@example.com"]);
+    let inbox = relay.harness.create_inbox().await;
+
+    let (status, body) = relay
+        .desktop(&inbox, "PUT", "/snapshot", snapshot_envelope(10, 64))
+        .await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::FORBIDDEN, json!("not_entitled"))
+    );
+    let (status, body) = relay.phone_snapshot(&inbox, &inbox.token).await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::FORBIDDEN, json!("not_entitled"))
+    );
+
+    relay.entitle(&inbox, "member@example.com").await;
+    let (status, body) = relay.phone_snapshot(&inbox, &inbox.token).await;
+    assert_eq!(
+        (status, body["error"].clone()),
+        (StatusCode::NOT_FOUND, json!("no_snapshot"))
+    );
+
+    let large = snapshot_envelope(10, 20_000);
+    assert_eq!(
+        relay
+            .desktop(&inbox, "PUT", "/snapshot", large.clone())
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        relay.desktop(&inbox, "PUT", "/snapshot", large).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        relay
+            .desktop(&inbox, "PUT", "/snapshot", snapshot_envelope(9, 64))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    let mut extra = snapshot_envelope(11, 64);
+    extra["extra"] = 1.into();
+    assert_eq!(
+        relay.desktop(&inbox, "PUT", "/snapshot", extra).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        relay
+            .desktop(&inbox, "PUT", "/snapshot", snapshot_envelope(12, 140_000))
+            .await
+            .0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+
+    let (status, body) = relay.phone_snapshot(&inbox, &inbox.token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["version"], 10);
+    assert_eq!(
+        relay.phone_snapshot(&inbox, "wrong-token").await.0,
+        StatusCode::UNAUTHORIZED
+    );
+
+    assert_eq!(
+        relay
+            .desktop(&inbox, "DELETE", "/entitlement", Value::Null)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        relay.phone_snapshot(&inbox, &inbox.token).await.0,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn the_daily_recheck_revokes_former_members_but_not_during_an_outage() {
+    let relay = members(&["member@example.com"]);
+    let inbox = relay.harness.create_inbox().await;
+    relay.entitle(&inbox, "member@example.com").await;
+    relay
+        .desktop(&inbox, "PUT", "/snapshot", snapshot_envelope(1, 64))
+        .await;
+
+    relay.harness.advance(DAY + 1);
+    assert_eq!(
+        relay.harness.state.recheck_entitlements().await.unwrap(),
+        (1, 0)
+    );
+
+    *relay.directory.0.lock().unwrap() = Some(Vec::new());
+    assert_eq!(
+        relay.harness.state.recheck_entitlements().await.unwrap(),
+        (0, 0),
+        "checked today"
+    );
+    relay.harness.advance(DAY + 1);
+    *relay.directory.0.lock().unwrap() = None;
+    assert_eq!(
+        relay.harness.state.recheck_entitlements().await.unwrap(),
+        (0, 0),
+        "outage revokes nobody"
+    );
+    assert_eq!(
+        relay.phone_snapshot(&inbox, &inbox.token).await.0,
+        StatusCode::OK
+    );
+
+    *relay.directory.0.lock().unwrap() = Some(Vec::new());
+    assert_eq!(
+        relay.harness.state.recheck_entitlements().await.unwrap(),
+        (0, 1)
+    );
+    assert_eq!(
+        relay.phone_snapshot(&inbox, &inbox.token).await.0,
+        StatusCode::FORBIDDEN
+    );
+    let (_, body) = relay
+        .desktop(&inbox, "GET", "/entitlement", Value::Null)
+        .await;
+    assert_eq!(body["entitled"], false);
 }
