@@ -1,6 +1,6 @@
 {
-  "name": "第二大腦收件匣",
-  "short_name": "收件匣",
+  "name": "第二大腦",
+  "short_name": "第二大腦",
   "description": "把任務傳到電腦上的第二大腦收件匣",
   "lang": "zh-TW",
   "start_url": "/",
