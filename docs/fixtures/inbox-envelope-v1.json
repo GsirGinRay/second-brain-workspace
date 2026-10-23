@@ -1,0 +1,30 @@
+{
+  "description": "Public deterministic P-256 inbox envelope test vector; never use these keys for real data",
+  "algorithm": "ECDH-P256 + HKDF-SHA256 + AES-256-GCM",
+  "hkdfInfo": "second-brain-inbox-v1",
+  "recipient": {
+    "privateScalarBase64Url": "I57H8ZwLfaxsqolsJDynj9rFurxN3l2s7JvquxgKyi8",
+    "publicKeyBase64Url": "BMK9N3liFox8qaCLV7rFEzX3GUctjpggyH-Yy2fMjo5Rw-AqXWRl91F2uECdus1NSEP_rdCDgQEqaywYMOH9Nv4"
+  },
+  "ephemeral": {
+    "privateScalarBase64Url": "eUQyFpI60hR7JQhIcAA1RXxjfs2YfWlWFlmVAhkW90o",
+    "publicKeyBase64Url": "BMDTacUSRB9Ee9rtX9qsHEBgl8cJpNKoDpohMRWYiqMAXzdytwZSxXkhys6MoJCSHK081dC0I5wMyrOX8T3Xkk0"
+  },
+  "inboxId": "AAECAwQFBgcICQoLDA0ODw",
+  "itemId": "11111111-1111-4111-8111-111111111111",
+  "associatedDataUtf8": "v1\nAAECAwQFBgcICQoLDA0ODw\n11111111-1111-4111-8111-111111111111",
+  "payload": {
+    "v": 1,
+    "text": "明天下午三點 繳電話費",
+    "createdAt": "2026-10-23T09:30:00.000Z",
+    "source": "pwa"
+  },
+  "plaintextUtf8": "{\"v\":1,\"text\":\"明天下午三點 繳電話費\",\"createdAt\":\"2026-10-23T09:30:00.000Z\",\"source\":\"pwa\"}",
+  "envelope": {
+    "v": 1,
+    "id": "11111111-1111-4111-8111-111111111111",
+    "epk": "BMDTacUSRB9Ee9rtX9qsHEBgl8cJpNKoDpohMRWYiqMAXzdytwZSxXkhys6MoJCSHK081dC0I5wMyrOX8T3Xkk0",
+    "nonce": "AAECAwQFBgcICQoL",
+    "ct": "t_3VkjSmVAim83ODUka0RJqqFwCuw8OFDTRjceuXkFanbZGTmKhfqauEj5FbPPDNgM9qcYSGzB626fHwDRPD87Py4g7QsaPVKs7iIobgVznjLU9mlCGn2CzTqLRdFXOcPV1M4pPfGjktTvxzJhJvssk4aRoliw"
+  }
+}

@@ -6,6 +6,7 @@ pub mod canonical;
 pub mod diagnostics;
 pub mod error;
 mod external_url;
+pub mod inbox_envelope;
 pub mod key_store;
 pub mod path_policy;
 pub mod publisher;

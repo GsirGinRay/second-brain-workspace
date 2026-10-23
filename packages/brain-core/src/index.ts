@@ -215,6 +215,31 @@ export {
   normalizeDevicePath,
 } from "./signing";
 export type { DeviceCanonicalRequestInput } from "./signing";
+export {
+  INBOX_ENVELOPE_BYTES_LIMIT,
+  INBOX_ENVELOPE_VERSION,
+  INBOX_HKDF_INFO,
+  INBOX_SOURCES,
+  INBOX_TEXT_BYTES_LIMIT,
+  decodeBase64Url,
+  decodeInboxPayload,
+  encodeBase64Url,
+  encodeInboxPayload,
+  importInboxPrivateKey,
+  inboxAssociatedData,
+  isInboxId,
+  isInboxItemId,
+  openInboxItem,
+  parseInboxEnvelope,
+  sealInboxItem,
+} from "./inbox-envelope";
+export type {
+  InboxEnvelope,
+  InboxPayload,
+  InboxSource,
+  SealInboxItemInput,
+  SealInboxItemOverrides,
+} from "./inbox-envelope";
 export type {
   BrainDeviceDto,
   BrainDeviceListDto,
