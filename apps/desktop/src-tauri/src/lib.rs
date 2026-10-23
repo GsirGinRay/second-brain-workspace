@@ -7,6 +7,7 @@ pub mod diagnostics;
 pub mod error;
 mod external_url;
 pub mod inbox_envelope;
+pub mod inbox_relay;
 pub mod key_store;
 pub mod path_policy;
 pub mod publisher;
@@ -50,6 +51,7 @@ pub struct AppState {
     publisher: PublisherTransport,
     // Every save scans the vault twice; this spares re-reading unchanged files.
     scan_cache: Mutex<ScanCache>,
+    inbox_relay: inbox_relay::InboxRelayManager,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -878,11 +880,13 @@ pub fn run() -> tauri::Result<()> {
                 selected_vault: Mutex::new(selected_vault),
                 close_behavior: Mutex::new(WindowCloseBehavior::Exit),
                 autostart_enabled: Mutex::new(false),
-                data_dir,
+                data_dir: data_dir.clone(),
                 watcher: Mutex::new(watcher),
                 publisher,
                 scan_cache: Mutex::new(ScanCache::new()),
+                inbox_relay: inbox_relay::InboxRelayManager::new(data_dir.clone()),
             });
+            inbox_relay::resume(app.handle());
             quick_capture::register(app.handle());
             Ok(())
         })
@@ -914,7 +918,14 @@ pub fn run() -> tauri::Result<()> {
             save_routine_template,
             app_update::check_app_update,
             app_update::install_app_update,
-            reminders::show_reminder
+            reminders::show_reminder,
+            inbox_relay::inbox_relay_status,
+            inbox_relay::inbox_relay_pair,
+            inbox_relay::inbox_relay_pairing,
+            inbox_relay::inbox_relay_rotate,
+            inbox_relay::inbox_relay_unpair,
+            inbox_relay::inbox_relay_pending,
+            inbox_relay::inbox_relay_ack
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {

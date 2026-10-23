@@ -156,7 +156,7 @@ pub fn open_inbox_item(
 }
 
 #[cfg(test)]
-fn seal_with(
+pub(crate) fn seal_with(
     plaintext: &[u8],
     inbox_id: &str,
     item_id: &str,

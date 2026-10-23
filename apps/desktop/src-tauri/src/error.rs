@@ -37,6 +37,8 @@ pub enum NativeError {
     PublisherTransport,
     #[error("notification could not be shown")]
     Notification,
+    #[error("inbox relay is unavailable")]
+    InboxRelayUnavailable,
 }
 
 impl From<io::Error> for NativeError {

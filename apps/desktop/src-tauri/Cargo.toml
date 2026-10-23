@@ -41,6 +41,10 @@ tauri-plugin-global-shortcut = "2.3.1"
 tauri-plugin-notification = "2.3.0"
 tauri-plugin-single-instance = "2.3.2"
 p256 = { version = "0.13.2", default-features = false, features = ["ecdh", "std"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+tokio = { version = "1.53.1", features = ["macros", "time", "sync"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
@@ -54,6 +58,7 @@ winreg = "0.55.0"
 
 [dev-dependencies]
 tempfile = "3.25.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
 
 [profile.release]
 codegen-units = 1

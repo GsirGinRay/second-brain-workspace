@@ -218,7 +218,7 @@ impl KeyStore {
 }
 
 #[cfg(windows)]
-fn protect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
+pub(crate) fn protect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
     use std::ptr::null;
     use windows_sys::Win32::Foundation::{GetLastError, LocalFree};
     use windows_sys::Win32::Security::Cryptography::{
@@ -253,12 +253,12 @@ fn protect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
 }
 
 #[cfg(not(windows))]
-fn protect_key(_value: &[u8]) -> Result<Vec<u8>, NativeError> {
+pub(crate) fn protect_key(_value: &[u8]) -> Result<Vec<u8>, NativeError> {
     Err(NativeError::KeyStorageUnavailable)
 }
 
 #[cfg(windows)]
-fn unprotect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
+pub(crate) fn unprotect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::{GetLastError, LocalFree};
     use windows_sys::Win32::Security::Cryptography::{
@@ -293,7 +293,7 @@ fn unprotect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
 }
 
 #[cfg(not(windows))]
-fn unprotect_key(_value: &[u8]) -> Result<Vec<u8>, NativeError> {
+pub(crate) fn unprotect_key(_value: &[u8]) -> Result<Vec<u8>, NativeError> {
     Err(NativeError::KeyStorageUnavailable)
 }
 

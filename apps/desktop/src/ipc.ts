@@ -4,6 +4,12 @@ import {
   type DeviceCanonicalRequestInput,
   type RoutineTemplate,
 } from "@second-brain/brain-core";
+import {
+  validateInboxRelayItems,
+  validateInboxRelayPairing,
+  validateInboxRelayStatus,
+  type InboxRelayApi,
+} from "./inbox-relay";
 
 export interface DeviceIdentity {
   deviceId: string;
@@ -140,6 +146,7 @@ export interface NativeAdapter {
   checkAppUpdate?(): Promise<AppUpdateCheck>;
   installAppUpdate?(): Promise<void>;
   showReminder?(title: string, body: string): Promise<void>;
+  inboxRelay?: InboxRelayApi;
 }
 
 function assertRecord(value: unknown): Record<string, unknown> {
@@ -591,6 +598,29 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
     },
     async showReminder(title: string, body: string) {
       await invoke("show_reminder", { title, body });
+    },
+    inboxRelay: {
+      async status() {
+        return validateInboxRelayStatus(await invoke("inbox_relay_status"));
+      },
+      async pair() {
+        return validateInboxRelayPairing(await invoke("inbox_relay_pair"));
+      },
+      async pairing() {
+        return validateInboxRelayPairing(await invoke("inbox_relay_pairing"));
+      },
+      async rotate() {
+        return validateInboxRelayPairing(await invoke("inbox_relay_rotate"));
+      },
+      async unpair() {
+        await invoke("inbox_relay_unpair");
+      },
+      async pending() {
+        return validateInboxRelayItems(await invoke("inbox_relay_pending"));
+      },
+      async ack(ids: string[]) {
+        await invoke("inbox_relay_ack", { ids });
+      },
     },
   };
 }

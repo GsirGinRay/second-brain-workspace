@@ -131,6 +131,23 @@ relay answers `200` for a retry. If an ack is lost the relay sends the item
 again, so the desktop keeps the ids it wrote during the last 30 days and acks
 a repeated id without writing it again.
 
+## Desktop
+
+`apps/desktop/src-tauri/src/inbox_relay.rs` holds the pairing and the stream;
+`apps/desktop/src/inbox-relay-ui.tsx` writes items and shows the settings card.
+
+- The inbox key and capture token live in `inbox-relay-v1.json` in the app
+  data folder, protected with DPAPI. Written ids live in
+  `inbox-relay-written.json`.
+- The webview turns each item into an inbox task the way quick add parses
+  text (date, time, duration, repeat; extra lines become the body), writes it
+  through the normal backup and atomic-write path, and only then acks it.
+  Without an open vault, items wait.
+- Development builds can point at a local relay with
+  `SECOND_BRAIN_INBOX_RELAY_ORIGIN=http://127.0.0.1:8114`. The end-to-end
+  test runs with `INBOX_RELAY_TEST_ORIGIN=http://127.0.0.1:8114 cargo test
+  --lib -- --ignored end_to_end` while `npm run relay:dev` is running.
+
 ## Limits and retention
 
 | Limit | Value |

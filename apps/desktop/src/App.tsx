@@ -183,6 +183,8 @@ import { TaskBadges } from "./task-badges";
 import { RecurrenceSelect, recurrenceLabel } from "./recurrence-picker";
 import { loadReminderSettings, saveReminderSettings, type ReminderSettings } from "./reminders";
 import { ReminderSettingsCard, useReminders } from "./reminders-ui";
+import { InboxRelaySettingsCard, useInboxRelay } from "./inbox-relay-ui";
+import { inboxItemsToTasks } from "./inbox-relay";
 import { AVAILABLE_HOURS_KEY, focusQueue, loadAvailableHours, moveTasksToDate } from "./today-planning";
 import { FocusMode, LoadMeter, WaitingPanel, WrapUpDialog } from "./today-tools";
 import { WeeklyReviewDialog } from "./weekly-review-ui";
@@ -486,6 +488,14 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     [native],
   );
   useReminders({ tasks, settings: reminderSettings, language: preferences.language, notify: notifyReminder });
+  // Phone items land in the inbox only once a vault is open; until then they
+  // wait on the native side (and on the relay) without being acknowledged.
+  useInboxRelay({
+    api: native.inboxRelay,
+    ready: Boolean(diagnostics?.selectedVault),
+    write: (items) => persistLocal([...tasks, ...inboxItemsToTasks(items, taipeiDateKey())]),
+    onReceived: (count) => void notifyReminder?.(t("inboxRelay.title"), t("inboxRelay.received", { count })).catch(() => undefined),
+  });
   const checkAppUpdate = useCallback(async (promptIfAvailable = false, showBusy = false) => {
     if (!native.checkAppUpdate) return;
     if (showBusy) setUpdateBusy(true);
@@ -2050,6 +2060,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             onChange={changeReminderSettings}
             onTest={notifyReminder ? () => void notifyReminder(t("reminders.test.title"), t("reminders.test.body")).catch((cause) => setError(describeError(cause, "NOTIFICATION_FAILED"))) : undefined}
           />
+        )}
+        inboxRelayCard={native.inboxRelay && (
+          <InboxRelaySettingsCard api={native.inboxRelay} t={t} onError={setError} />
         )}
       />
     );
@@ -5927,6 +5940,7 @@ function SyncSettings({
   onCheckUpdate,
   onInstallUpdate,
   reminderCard,
+  inboxRelayCard,
 }: {
   diagnostics: DiagnosticsSnapshot | null;
   serverOrigin: string;
@@ -5951,6 +5965,7 @@ function SyncSettings({
   onCheckUpdate: () => void;
   onInstallUpdate: () => void;
   reminderCard?: ReactNode;
+  inboxRelayCard?: ReactNode;
 }) {
   const { preferences, setPreferences, t } = useUiPreferences();
   const cloudEnabled = diagnostics?.syncEnabled === true;
@@ -5969,6 +5984,7 @@ function SyncSettings({
   return (
     <div className="settings-grid">
       {reminderCard}
+      {inboxRelayCard}
       <section className="settings-card">
         <h2>{t("update.title")}</h2>
         <p>{t("update.hint")}</p>
