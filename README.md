@@ -17,12 +17,19 @@ Markdown files. Use it with Obsidian, VS Code, Typora, Notepad++, or any editor.
 - Markdown folder scanning and file watching
 - Local backup, atomic writes and crash-recovery journal
 - Offline use
+- Optional phone inbox: pair a phone once, then send tasks from it end-to-end encrypted
 - Automatic `.ai/INDEX.md` so an AI can find projects, knowledge, today's and overdue tasks with file paths, and unscheduled ideas
 
 Edits in the app write directly to the Markdown folder you select. There is no
 separate database. To use the same files on a phone, put that folder in OneDrive,
 Dropbox, Google Drive, or Obsidian Sync and open it with a Markdown app. The
 public build does not include built-in cloud sync.
+
+To add tasks from a phone without syncing files, pair it in Settings → Phone
+inbox. The phone web app encrypts each task with a key only your computer has;
+the relay at `inbox.aizbrain.com` keeps the unreadable data until the computer
+writes the task into the inbox, then deletes it. See
+[docs/inbox-relay.md](docs/inbox-relay.md).
 
 ## Development
 
@@ -153,6 +160,12 @@ See [docs/architecture.md](docs/architecture.md) and
 The public application does not upload Markdown. All reading and writing stays
 in the folder you select on this computer. Collection Markdown bodies are
 indexed locally.
+
+The app connects to the network only to check for updates and, after you pair
+a phone, to receive phone inbox items. Those items are end-to-end encrypted;
+the relay never sees task text and keeps nothing after the computer has saved
+it (14 days at most). Turning the phone inbox off deletes the inbox on the
+relay.
 
 Projects use `type: project` and have a finite lifecycle (`planning`, `active`,
 `paused`, `done`, or `archived`). Long-lived prompts and reference notes use

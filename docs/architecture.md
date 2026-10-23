@@ -12,6 +12,11 @@ To use the same files on a phone, put the folder in OneDrive, Dropbox, Google
 Drive, or Obsidian Sync and open it with a Markdown app. The public build does
 not include built-in cloud sync.
 
+The optional phone inbox ([inbox-relay.md](inbox-relay.md)) only adds tasks:
+`apps/mobile-capture` seals them on the phone, `services/inbox-relay` holds the
+ciphertext until the desktop writes the task through the same backup and
+atomic-write path, and nothing runs until a phone is paired.
+
 `brain-core` owns the durable Markdown format and merge rules. `brain-ui` owns
 portable calendar and repository contracts. The desktop app owns native file
 access, backups, watchers and recovery. `.ai/INDEX.md` is regenerated from the

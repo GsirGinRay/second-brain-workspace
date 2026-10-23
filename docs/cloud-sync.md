@@ -11,3 +11,7 @@ and hashes; complete Markdown files and unrelated notes stay on the computer.
 
 A public reference server is not bundled. The protocol boundary remains so a
 self-hosted adapter can be added without changing the Markdown core.
+
+The phone inbox is separate from this sync: it never reads tasks from the
+computer, only delivers new end-to-end encrypted items into the inbox. See
+[inbox-relay.md](inbox-relay.md).
