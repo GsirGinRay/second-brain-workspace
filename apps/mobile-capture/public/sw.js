@@ -1,5 +1,5 @@
 // Offline shell only. Relay API calls always go to the network.
-const CACHE = "capture-shell-v1";
+const CACHE = "capture-shell-v2";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => {
