@@ -22,6 +22,7 @@ export const RELEASE_HIGHLIGHT_KEYS: Readonly<Record<string, readonly string[]>>
   "0.8.1": ["whatsNew.0.8.1.phone", "whatsNew.0.8.1.add"],
   "0.8.2": ["whatsNew.0.8.2.focus", "whatsNew.0.8.2.reminders"],
   "0.8.4": ["whatsNew.0.8.4.select"],
+  "0.8.5": ["whatsNew.0.8.5.cleanup"],
 };
 
 function compareVersions(left: string, right: string): number {
