@@ -1,5 +1,6 @@
 use axum::http::HeaderName;
 use inbox_relay::limits::Limits;
+use inbox_relay::line::{Line, LineMessaging};
 use inbox_relay::membership::{
     Directory, Mailer, NoDirectory, NoMailer, ResendMailer, SheetDirectory, normalize_email,
 };
@@ -89,6 +90,7 @@ fn membership() -> Result<Membership, Box<dyn std::error::Error>> {
 /// - `INBOX_RELAY_STATIC`, the built phone web app (`apps/mobile-capture/dist`)
 /// - `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEETS_MEMBER_SHEET_ID`,
 ///   `INBOX_RELAY_MEMBER_TAB`, `RESEND_API_KEY`, `EMAIL_FROM` for the paid list
+/// - `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_BOT_ID` for LINE to inbox
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -122,15 +124,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let (directory, mailer) = membership()?;
-    let state = Arc::new(
-        AppState::new(
-            Store::open(&db)?,
-            Limits::default(),
-            system_clock(),
-            client_ip_header,
-        )
-        .with_membership(directory, mailer),
-    );
+    let mut state = AppState::new(
+        Store::open(&db)?,
+        Limits::default(),
+        system_clock(),
+        client_ip_header,
+    )
+    .with_membership(directory, mailer);
+    if let (Some(secret), Some(token), Some(bot_id)) = (
+        env("LINE_CHANNEL_SECRET"),
+        env("LINE_CHANNEL_ACCESS_TOKEN"),
+        env("LINE_BOT_ID"),
+    ) {
+        state = state.with_line(Line::new(
+            &secret,
+            &bot_id,
+            Arc::new(LineMessaging::new(&token)?),
+        ));
+        println!("LINE to inbox is on");
+    }
+    let state = Arc::new(state);
     let rechecking = Arc::clone(&state);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(RECHECK_INTERVAL);

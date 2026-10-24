@@ -19,6 +19,8 @@ npm run mobile:dev   # phone web app on 127.0.0.1:5175, proxies the API to 8114
 | `INBOX_RELAY_DB` | `data/inbox-relay.sqlite` | SQLite file |
 | `INBOX_RELAY_STATIC` | unset | Folder with the built phone web app (`npm run mobile:build` → `apps/mobile-capture/dist`) |
 | `INBOX_RELAY_CLIENT_IP_HEADER` | unset | Client IP header set by a trusted proxy, e.g. `cf-connecting-ip`. Leave unset when clients connect directly, or they can spoof it. |
+| `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEETS_MEMBER_SHEET_ID`, `INBOX_RELAY_MEMBER_TAB`, `RESEND_API_KEY`, `EMAIL_FROM` | unset | Paid features: member Sheet and verification email |
+| `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_BOT_ID` | unset | LINE to inbox (Messaging API channel; webhook `/line/webhook`) |
 
 ## Deploy
 

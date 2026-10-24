@@ -6,6 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use inbox_relay::canonical::{self, CanonicalRequest};
 use inbox_relay::limits::Limits;
+use inbox_relay::line::{Line, LineApi};
 use inbox_relay::membership::{BoxFuture, Directory, Mailer, NoDirectory, NoMailer, Unavailable};
 use inbox_relay::store::Store;
 use inbox_relay::{AppState, router};
@@ -40,17 +41,28 @@ fn harness(limits: Limits) -> Harness {
 }
 
 fn harness_with(limits: Limits, directory: Arc<dyn Directory>, mailer: Arc<dyn Mailer>) -> Harness {
+    build_harness(limits, directory, mailer, None)
+}
+
+fn build_harness(
+    limits: Limits,
+    directory: Arc<dyn Directory>,
+    mailer: Arc<dyn Mailer>,
+    line: Option<Line>,
+) -> Harness {
     let now = Arc::new(AtomicI64::new(START));
     let clock_now = Arc::clone(&now);
-    let state = Arc::new(
-        AppState::new(
-            Store::open_in_memory().unwrap(),
-            limits,
-            Arc::new(move || clock_now.load(Ordering::SeqCst)),
-            Some(HeaderName::from_static("x-test-ip")),
-        )
-        .with_membership(directory, mailer),
-    );
+    let mut state = AppState::new(
+        Store::open_in_memory().unwrap(),
+        limits,
+        Arc::new(move || clock_now.load(Ordering::SeqCst)),
+        Some(HeaderName::from_static("x-test-ip")),
+    )
+    .with_membership(directory, mailer);
+    if let Some(line) = line {
+        state = state.with_line(line);
+    }
+    let state = Arc::new(state);
     Harness {
         app: router(Arc::clone(&state)),
         state,
@@ -757,14 +769,19 @@ struct Members {
 }
 
 fn members(list: &[&str]) -> Members {
+    members_with_line(list, None)
+}
+
+fn members_with_line(list: &[&str], line: Option<Line>) -> Members {
     let directory = Arc::new(FakeDirectory(Mutex::new(Some(
         list.iter().map(|email| (*email).to_owned()).collect(),
     ))));
     let mailer = Arc::new(FakeMailer::default());
-    let harness = harness_with(
+    let harness = build_harness(
         Limits::default(),
         Arc::clone(&directory) as Arc<dyn Directory>,
         Arc::clone(&mailer) as Arc<dyn Mailer>,
+        line,
     );
     Members {
         harness,
@@ -1159,4 +1176,407 @@ async fn the_daily_recheck_revokes_former_members_but_not_during_an_outage() {
         .desktop(&inbox, "GET", "/entitlement", Value::Null)
         .await;
     assert_eq!(body["entitled"], false);
+}
+
+const LINE_SECRET: &str = "line-test-channel-secret";
+
+#[derive(Default)]
+struct FakeLine {
+    replies: Mutex<Vec<(String, String)>>,
+}
+
+impl LineApi for FakeLine {
+    fn reply<'a>(
+        &'a self,
+        reply_token: &'a str,
+        text: &'a str,
+    ) -> BoxFuture<'a, Result<(), Unavailable>> {
+        self.replies
+            .lock()
+            .unwrap()
+            .push((reply_token.to_owned(), text.to_owned()));
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct LineRelay {
+    relay: Members,
+    line: Arc<FakeLine>,
+    events: AtomicU64,
+}
+
+fn line_relay() -> LineRelay {
+    let line = Arc::new(FakeLine::default());
+    let relay = members_with_line(
+        &["member@example.com"],
+        Some(Line::new(
+            LINE_SECRET,
+            "@testbot",
+            Arc::clone(&line) as Arc<dyn LineApi>,
+        )),
+    );
+    LineRelay {
+        relay,
+        line,
+        events: AtomicU64::new(1),
+    }
+}
+
+fn line_signature(body: &[u8]) -> String {
+    use base64::engine::general_purpose::STANDARD;
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, LINE_SECRET.as_bytes());
+    STANDARD.encode(ring::hmac::sign(&key, body).as_ref())
+}
+
+fn fixture_recipient() -> (String, p256::SecretKey) {
+    let fixture: Value = serde_json::from_str(ENVELOPE_FIXTURE).unwrap();
+    let scalar = URL_SAFE_NO_PAD
+        .decode(
+            fixture["recipient"]["privateScalarBase64Url"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+    (
+        fixture["recipient"]["publicKeyBase64Url"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        p256::SecretKey::from_slice(&scalar).unwrap(),
+    )
+}
+
+/// Opens an envelope the way the desktop does (inbox_envelope.rs).
+fn open_envelope(envelope: &Value, inbox_id: &str, secret: &p256::SecretKey) -> String {
+    use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+    use ring::hkdf::{HKDF_SHA256, Salt};
+    let decode = |key: &str| {
+        URL_SAFE_NO_PAD
+            .decode(envelope[key].as_str().unwrap())
+            .unwrap()
+    };
+    let epk = decode("epk");
+    let peer = p256::PublicKey::from_sec1_bytes(&epk).unwrap();
+    let shared = p256::ecdh::diffie_hellman(secret.to_nonzero_scalar(), peer.as_affine());
+    let recipient = secret.public_key().to_encoded_point(false);
+    let salt = [epk.as_slice(), recipient.as_bytes()].concat();
+    let prk = Salt::new(HKDF_SHA256, &salt).extract(shared.raw_secret_bytes());
+    let okm = prk
+        .expand(&[b"second-brain-inbox-v1"], &AES_256_GCM)
+        .unwrap();
+    let key = LessSafeKey::new(UnboundKey::from(okm));
+    let nonce: [u8; 12] = decode("nonce").try_into().unwrap();
+    let aad = format!("v1\n{inbox_id}\n{}", envelope["id"].as_str().unwrap());
+    let mut buffer = decode("ct");
+    let plaintext = key
+        .open_in_place(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(aad.as_bytes()),
+            &mut buffer,
+        )
+        .unwrap();
+    String::from_utf8(plaintext.to_vec()).unwrap()
+}
+
+impl LineRelay {
+    fn harness(&self) -> &Harness {
+        &self.relay.harness
+    }
+
+    async fn webhook_raw(&self, body: &[u8], signature: &str) -> StatusCode {
+        let request = Request::post("/line/webhook")
+            .header("content-type", "application/json")
+            .header("x-line-signature", signature)
+            .body(Body::from(body.to_vec()))
+            .unwrap();
+        self.harness().send(request).await.0
+    }
+
+    /// Sends one event from `user` and returns the reply, if any.
+    async fn event(&self, user: &str, event: Value) -> Option<String> {
+        let n = self.events.fetch_add(1, Ordering::SeqCst);
+        let mut event = event;
+        event["replyToken"] = format!("reply-{n}").into();
+        event["source"] = json!({ "type": "user", "userId": user });
+        event["mode"] = "active".into();
+        event["timestamp"] = (self.harness().now() * 1000).into();
+        if event.get("webhookEventId").is_none() {
+            event["webhookEventId"] = format!("EVENT{n}").into();
+        }
+        let body =
+            serde_json::to_vec(&json!({ "destination": "Ubot", "events": [event] })).unwrap();
+        assert_eq!(
+            self.webhook_raw(&body, &line_signature(&body)).await,
+            StatusCode::OK
+        );
+        let replies = self.line.replies.lock().unwrap();
+        replies
+            .iter()
+            .find(|(token, _)| *token == format!("reply-{n}"))
+            .map(|(_, text)| text.clone())
+    }
+
+    async fn say(&self, user: &str, text: &str) -> String {
+        self.event(
+            user,
+            json!({ "type": "message", "message": { "type": "text", "id": "1", "text": text } }),
+        )
+        .await
+        .expect("a reply")
+    }
+
+    async fn link_code(&self, inbox: &Inbox) -> Value {
+        let (public_key, _) = fixture_recipient();
+        let (status, body) = self
+            .relay
+            .desktop(inbox, "POST", "/line", json!({ "publicKey": public_key }))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    }
+}
+
+#[tokio::test]
+async fn line_is_off_without_an_official_account() {
+    let relay = members(&["member@example.com"]);
+    let inbox = relay.harness.create_inbox().await;
+    relay.entitle(&inbox, "member@example.com").await;
+    let (status, body) = relay.desktop(&inbox, "GET", "/line", Value::Null).await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::OK,
+            json!({ "available": false, "linked": false })
+        )
+    );
+    let (public_key, _) = fixture_recipient();
+    let (status, body) = relay
+        .desktop(&inbox, "POST", "/line", json!({ "publicKey": public_key }))
+        .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("line_unavailable"))
+    );
+    let request = Request::post("/line/webhook")
+        .header("x-line-signature", line_signature(b"{}"))
+        .body(Body::from("{}"))
+        .unwrap();
+    assert_eq!(relay.harness.send(request).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn members_link_line_and_their_messages_arrive_sealed() {
+    let line = line_relay();
+    let relay = &line.relay;
+    let inbox = relay.harness.create_inbox().await;
+    let (_, secret) = fixture_recipient();
+
+    let (status, body) = relay.desktop(&inbox, "GET", "/line", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["available"], true);
+    assert_eq!(body["linked"], false);
+    assert_eq!(body["addFriendUrl"], "https://line.me/R/ti/p/%40testbot");
+
+    let (public_key, _) = fixture_recipient();
+    let (status, body) = relay
+        .desktop(&inbox, "POST", "/line", json!({ "publicKey": public_key }))
+        .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::FORBIDDEN, Some("not_entitled"))
+    );
+    relay.entitle(&inbox, "member@example.com").await;
+    let (status, _) = relay
+        .desktop(
+            &inbox,
+            "POST",
+            "/line",
+            json!({ "publicKey": URL_SAFE_NO_PAD.encode([4u8; 65]) }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "not a point on the curve");
+
+    assert!(line.say("U1", "明天 繳電話費").await.contains("還沒有連結"));
+    let link = line.link_code(&inbox).await;
+    let code = link["code"].as_str().unwrap().to_owned();
+    assert_eq!(code.len(), 9);
+    assert!(
+        link["linkUrl"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://line.me/R/oaMessage/%40testbot/?%E9%80%A3%E7%B5%90%20")
+    );
+    assert!(
+        line.say("U1", &format!("連結 {code}"))
+            .await
+            .contains("已連結")
+    );
+    assert!(
+        line.say("U1", &format!("連結 {code}"))
+            .await
+            .contains("不對或已經過期"),
+        "codes work once"
+    );
+    let (_, body) = relay.desktop(&inbox, "GET", "/line", Value::Null).await;
+    assert_eq!(body["linked"], true);
+
+    let reply = line
+        .event(
+            "U1",
+            json!({
+                "type": "message",
+                "webhookEventId": "01FZ74A0TDDPYRVKNK77XKC3ZR",
+                "message": { "type": "text", "id": "2", "text": "  明天下午三點 繳電話費\r\n帶帳單 " }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reply, "已送到收件匣：明天下午三點 繳電話費…");
+    let items = relay.harness.list(&inbox).await;
+    assert_eq!(items.len(), 1);
+    let plaintext = open_envelope(&items[0], &inbox.id, &secret);
+    let created_at = {
+        let payload: Value = serde_json::from_str(&plaintext).unwrap();
+        payload["createdAt"].as_str().unwrap().to_owned()
+    };
+    assert_eq!(
+        plaintext,
+        format!(
+            r#"{{"v":1,"text":"明天下午三點 繳電話費\n帶帳單","createdAt":"{created_at}","source":"line"}}"#
+        )
+    );
+    assert_eq!(created_at, "2026-09-21T14:13:20.000Z");
+
+    // LINE redelivers an event it thinks failed: still one item.
+    line.event(
+        "U1",
+        json!({
+            "type": "message",
+            "webhookEventId": "01FZ74A0TDDPYRVKNK77XKC3ZR",
+            "message": { "type": "text", "id": "2", "text": "明天下午三點 繳電話費" }
+        }),
+    )
+    .await;
+    assert_eq!(relay.harness.list(&inbox).await.len(), 1);
+
+    let sticker = line
+        .event(
+            "U1",
+            json!({ "type": "message", "message": { "type": "sticker", "id": "3" } }),
+        )
+        .await
+        .unwrap();
+    assert!(sticker.contains("只能把文字"));
+    assert!(line.say("U2", "別人的訊息").await.contains("還沒有連結"));
+
+    // Group chats and standby events are ignored.
+    let body = serde_json::to_vec(&json!({ "events": [{
+        "type": "message", "replyToken": "group", "mode": "active",
+        "source": { "type": "group", "groupId": "G1", "userId": "U1" },
+        "message": { "type": "text", "id": "4", "text": "群組訊息" }
+    }] }))
+    .unwrap();
+    assert_eq!(
+        line.webhook_raw(&body, &line_signature(&body)).await,
+        StatusCode::OK
+    );
+    assert_eq!(relay.harness.list(&inbox).await.len(), 1);
+
+    let (status, _) = relay
+        .desktop(&inbox, "DELETE", "/entitlement", Value::Null)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(line.say("U1", "付費過期後").await.contains("付費會員"));
+    assert_eq!(relay.harness.list(&inbox).await.len(), 1);
+    relay.entitle(&inbox, "member@example.com").await;
+
+    assert!(line.say("U1", "解除連結").await.contains("已解除連結"));
+    assert!(line.say("U1", "還會送嗎").await.contains("還沒有連結"));
+    let (_, body) = relay.desktop(&inbox, "GET", "/line", Value::Null).await;
+    assert_eq!(body["linked"], false);
+
+    // Relink, then unfollowing (blocking the account) unlinks too.
+    let code = line.link_code(&inbox).await["code"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        line.say("U1", &code.replace('-', "").to_lowercase())
+            .await
+            .contains("已連結")
+    );
+    assert!(
+        line.event("U1", json!({ "type": "unfollow" }))
+            .await
+            .is_none()
+    );
+    assert!(line.say("U1", "封鎖後").await.contains("還沒有連結"));
+
+    // The desktop can drop the link; deleting the inbox drops it as well.
+    let code = line.link_code(&inbox).await["code"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(line.say("U1", &code).await.contains("已連結"));
+    let (status, _) = relay.desktop(&inbox, "DELETE", "/line", Value::Null).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(line.say("U1", "還在嗎").await.contains("還沒有連結"));
+}
+
+#[tokio::test]
+async fn line_webhooks_need_the_channel_signature() {
+    let line = line_relay();
+    let body = br#"{"events":[]}"#;
+    assert_eq!(
+        line.webhook_raw(body, &line_signature(body)).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        line.webhook_raw(body, "bm90IGEgc2lnbmF0dXJl").await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(line.webhook_raw(body, "").await, StatusCode::UNAUTHORIZED);
+    let tampered = br#"{"events":[{}]}"#;
+    assert_eq!(
+        line.webhook_raw(tampered, &line_signature(body)).await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn line_codes_expire_and_guessing_is_limited() {
+    let line = line_relay();
+    let relay = &line.relay;
+    let inbox = relay.harness.create_inbox().await;
+    relay.entitle(&inbox, "member@example.com").await;
+
+    let code = line.link_code(&inbox).await["code"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    relay.harness.advance(16 * 60);
+    assert!(line.say("U1", &code).await.contains("不對或已經過期"));
+
+    let code = line.link_code(&inbox).await["code"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for _ in 0..10 {
+        assert!(
+            line.say("U9", "連結 2222-2222")
+                .await
+                .contains("不對或已經過期")
+        );
+    }
+    assert!(line.say("U9", &code).await.contains("太多次"));
+    assert!(
+        line.say("U1", &code).await.contains("已連結"),
+        "other people are not affected"
+    );
+
+    relay.harness.advance(3600);
+    relay.harness.state.purge().unwrap();
+    let (_, body) = relay.desktop(&inbox, "GET", "/line", Value::Null).await;
+    assert_eq!(body["linked"], true, "purging old codes keeps links");
 }

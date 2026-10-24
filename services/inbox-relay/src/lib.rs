@@ -5,6 +5,7 @@ mod entitlement;
 pub mod envelope;
 mod hub;
 pub mod limits;
+pub mod line;
 pub mod membership;
 pub mod store;
 
@@ -59,6 +60,7 @@ pub struct AppState {
     hub: Hub,
     directory: Arc<dyn Directory>,
     mailer: Arc<dyn Mailer>,
+    line: Option<line::Line>,
 }
 
 impl AppState {
@@ -77,7 +79,14 @@ impl AppState {
             hub: Hub::default(),
             directory: Arc::new(NoDirectory),
             mailer: Arc::new(NoMailer),
+            line: None,
         }
+    }
+
+    /// Enables LINE to inbox through this official account.
+    pub fn with_line(mut self, line: line::Line) -> Self {
+        self.line = Some(line);
+        self
     }
 
     /// Enables the paid "today" list: who is a member, and how codes are sent.
@@ -130,6 +139,16 @@ fn api_routes(limits: &Limits) -> Router<Arc<AppState>> {
             put(entitlement::put_snapshot)
                 .get(entitlement::get_snapshot)
                 .layer(DefaultBodyLimit::max(limits.snapshot_bytes)),
+        )
+        .route(
+            "/v1/inboxes/{id}/line",
+            get(line::get_link)
+                .post(line::create_link)
+                .delete(line::delete_link),
+        )
+        .route(
+            "/line/webhook",
+            post(line::webhook).layer(DefaultBodyLimit::max(line::WEBHOOK_BYTES)),
         )
         // Unknown API paths stay JSON errors instead of falling to the web app.
         .route("/v1/{*rest}", any(|| async { ApiError::NotFound }))

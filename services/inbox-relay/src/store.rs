@@ -46,6 +46,11 @@ pub enum SnapshotOutcome {
     Stale,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct LineLink {
+    pub linked: bool,
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Purged {
     pub items: usize,
@@ -92,6 +97,14 @@ CREATE TABLE IF NOT EXISTS snapshots (
     inbox_id TEXT PRIMARY KEY REFERENCES inboxes(id) ON DELETE CASCADE,
     version INTEGER NOT NULL,
     body TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS line_links (
+    inbox_id TEXT PRIMARY KEY REFERENCES inboxes(id) ON DELETE CASCADE,
+    public_key BLOB NOT NULL,
+    user_hash BLOB UNIQUE,
+    code_hash BLOB UNIQUE,
+    code_expires_at INTEGER,
+    linked_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS grants (
     email TEXT PRIMARY KEY,
@@ -413,6 +426,97 @@ impl Store {
         rows.collect()
     }
 
+    /// Saves the key LINE messages are sealed with and a new link code,
+    /// keeping any LINE account already linked.
+    pub fn line_prepare(
+        &self,
+        inbox_id: &str,
+        public_key: &[u8],
+        code_hash: &[u8],
+        expires_at: i64,
+    ) -> rusqlite::Result<()> {
+        self.lock().execute(
+            "INSERT INTO line_links (inbox_id, public_key, code_hash, code_expires_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(inbox_id) DO UPDATE SET
+                 public_key = ?2, code_hash = ?3, code_expires_at = ?4",
+            params![inbox_id, public_key, code_hash, expires_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn line_link(&self, inbox_id: &str) -> rusqlite::Result<Option<LineLink>> {
+        self.lock()
+            .query_row(
+                "SELECT user_hash IS NOT NULL FROM line_links WHERE inbox_id = ?1",
+                [inbox_id],
+                |row| {
+                    Ok(LineLink {
+                        linked: row.get(0)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    /// Links the LINE user to the inbox whose unexpired code this is. A LINE
+    /// account feeds one inbox, so an earlier link moves.
+    pub fn line_redeem(
+        &self,
+        code_hash: &[u8],
+        user_hash: &[u8],
+        now: i64,
+    ) -> rusqlite::Result<bool> {
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        let inbox_id: Option<String> = transaction
+            .query_row(
+                "SELECT inbox_id FROM line_links WHERE code_hash = ?1 AND code_expires_at >= ?2",
+                params![code_hash, now],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(inbox_id) = inbox_id else {
+            return Ok(false);
+        };
+        transaction.execute(
+            "UPDATE line_links SET user_hash = NULL WHERE user_hash = ?1",
+            [user_hash],
+        )?;
+        transaction.execute(
+            "UPDATE line_links SET user_hash = ?2, code_hash = NULL, code_expires_at = NULL,
+                 linked_at = ?3 WHERE inbox_id = ?1",
+            params![inbox_id, user_hash, now],
+        )?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    /// The inbox and public key a LINE user's messages go to.
+    pub fn line_target(&self, user_hash: &[u8]) -> rusqlite::Result<Option<(String, Vec<u8>)>> {
+        self.lock()
+            .query_row(
+                "SELECT inbox_id, public_key FROM line_links WHERE user_hash = ?1",
+                [user_hash],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    pub fn line_unlink_user(&self, user_hash: &[u8]) -> rusqlite::Result<()> {
+        self.lock().execute(
+            "UPDATE line_links SET user_hash = NULL, linked_at = NULL WHERE user_hash = ?1",
+            [user_hash],
+        )?;
+        Ok(())
+    }
+
+    pub fn line_delete(&self, inbox_id: &str) -> rusqlite::Result<()> {
+        self.lock()
+            .execute("DELETE FROM line_links WHERE inbox_id = ?1", [inbox_id])?;
+        Ok(())
+    }
+
     pub fn purge(&self, now: i64, limits: &Limits) -> rusqlite::Result<Purged> {
         let connection = self.lock();
         let items = connection.execute(
@@ -425,6 +529,15 @@ impl Store {
         )?;
         connection.execute("DELETE FROM nonces WHERE expires_at < ?1", [now])?;
         connection.execute("DELETE FROM codes WHERE expires_at < ?1", [now])?;
+        connection.execute(
+            "UPDATE line_links SET code_hash = NULL, code_expires_at = NULL
+             WHERE code_expires_at < ?1",
+            [now],
+        )?;
+        connection.execute(
+            "DELETE FROM line_links WHERE user_hash IS NULL AND code_hash IS NULL",
+            [],
+        )?;
         Ok(Purged { items, inboxes })
     }
 }
