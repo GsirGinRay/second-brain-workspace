@@ -16,8 +16,7 @@ apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/target/
 backups/
 recovery/
-apps/desktop/private/*.json
-!apps/desktop/private/*.example.json
+apps/desktop/private/
 
 # 本地私人筆記 / 暫存備份 (含真實 vault 內容)
 .tmp-backup-inbox.md

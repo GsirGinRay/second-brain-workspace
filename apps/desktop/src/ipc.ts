@@ -1,7 +1,5 @@
 import {
-  canonicalizeDeviceRequest,
   RoutineTemplateSchema,
-  type DeviceCanonicalRequestInput,
   type RoutineTemplate,
 } from "@second-brain/brain-core";
 import {
@@ -12,42 +10,14 @@ import {
   type InboxRelayApi,
 } from "./inbox-relay";
 
-export interface DeviceIdentity {
-  deviceId: string;
-  publicKeyBase64Url: string;
-  fingerprint: string;
-  backend: string;
-}
-
-export interface SignResponse {
-  signatureBase64Url: string;
-}
-
 export interface DiagnosticsSnapshot {
   selectedVault: string | null;
   watcherStatus: string;
   keyFingerprint: string;
   keyBackend: string;
   recoveryStatus: string;
-  syncEnabled: boolean;
-  publisherOrigin: string | null;
   closeBehavior: "hide_to_tray" | "exit";
   autostartEnabled: boolean;
-}
-
-export interface PublisherHttpRequest {
-  origin: string;
-  method: "GET" | "POST" | "DELETE";
-  path: string;
-  body: string | null;
-  headers: Record<string, string>;
-  signed: boolean;
-}
-
-export interface PublisherHttpResponse {
-  status: number;
-  headers: Record<string, string>;
-  body: string;
 }
 
 export interface ScannedMarkdownFile {
@@ -102,13 +72,6 @@ export interface VaultAttachmentContents {
   bytesBase64: string;
 }
 
-export interface PendingCommitRecord {
-  planId: string;
-  idempotencyKey: string;
-  choices: Array<{ entity: "task" | "project"; id: string; field: string; choice: "local" | "server" }>;
-  journalPaths: string[];
-}
-
 export type NativeInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 export interface AppUpdateCheck {
@@ -120,11 +83,6 @@ export interface AppUpdateCheck {
 }
 
 export interface NativeAdapter {
-  getDeviceIdentity(): Promise<DeviceIdentity>;
-  completeDevicePairing(deviceId: string): Promise<void>;
-  signCanonicalRequest(request: DeviceCanonicalRequestInput): Promise<SignResponse>;
-  publisherHttpRequest(request: PublisherHttpRequest): Promise<PublisherHttpResponse>;
-  openPublisherPairing(origin: string, pairingId: string): Promise<void>;
   getDiagnostics(): Promise<DiagnosticsSnapshot>;
   pickVaultFolder(): Promise<string | null>;
   selectVault(path: string): Promise<{ vaultId: string; root: string }>;
@@ -137,11 +95,6 @@ export interface NativeAdapter {
   readVaultAttachment?(relativePath: string): Promise<VaultAttachmentContents>;
   openVaultAttachment?(relativePath: string): Promise<void>;
   applyMarkdownChanges(changes: MarkdownChangeRequest[]): Promise<MarkdownApplyResult>;
-  confirmServerCommit(journalPath: string): Promise<void>;
-  savePendingCommit(pending: PendingCommitRecord): Promise<void>;
-  loadPendingCommit(): Promise<PendingCommitRecord | null>;
-  clearPendingCommit(): Promise<void>;
-  pendingJournals(): Promise<string[]>;
   loadRoutineTemplate?(): Promise<RoutineTemplate | null>;
   saveRoutineTemplate?(template: RoutineTemplate): Promise<void>;
   checkAppUpdate?(): Promise<AppUpdateCheck>;
@@ -224,86 +177,6 @@ function assertAttachmentRelativePath(value: unknown): string {
   return path;
 }
 
-function assertUuid(value: unknown, name: string): string {
-  const result = assertString(value, name, 36);
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result)) {
-    throw new Error(`native response field ${name} is invalid`);
-  }
-  return result;
-}
-
-function validatePendingCommit(value: unknown): PendingCommitRecord {
-  const record = assertRecord(value);
-  assertExactKeys(record, ["planId", "idempotencyKey", "choices", "journalPaths"]);
-  if (
-    !Array.isArray(record.choices)
-    || record.choices.length > 1_000
-    || !Array.isArray(record.journalPaths)
-    || record.journalPaths.length > 100
-  ) {
-    throw new Error("native pending commit is invalid");
-  }
-  const choices = record.choices.map((item) => {
-    const choice = assertRecord(item);
-    assertExactKeys(choice, ["entity", "id", "field", "choice"]);
-    if (
-      (choice.entity !== "task" && choice.entity !== "project")
-      || (choice.choice !== "local" && choice.choice !== "server")
-    ) {
-      throw new Error("native pending commit is invalid");
-    }
-    const entity: "task" | "project" = choice.entity;
-    const selection: "local" | "server" = choice.choice;
-    return {
-      entity,
-      id: assertUuid(choice.id, "choice.id"),
-      field: assertString(choice.field, "choice.field", 64),
-      choice: selection,
-    };
-  });
-  const journalPaths = record.journalPaths.map((item) => {
-    const path = assertString(item, "journalPath", 4_096);
-    if (!path.endsWith(".journal.json")) throw new Error("native pending commit is invalid");
-    return path;
-  });
-  return {
-    planId: assertUuid(record.planId, "planId"),
-    idempotencyKey: assertUuid(record.idempotencyKey, "idempotencyKey"),
-    choices,
-    journalPaths,
-  };
-}
-
-export function validateDeviceIdentity(value: unknown): DeviceIdentity {
-  const record = assertRecord(value);
-  assertExactKeys(record, ["deviceId", "publicKeyBase64Url", "fingerprint", "backend"]);
-  const publicKeyBase64Url = assertString(record.publicKeyBase64Url, "publicKeyBase64Url", 128);
-  const fingerprint = assertString(record.fingerprint, "fingerprint", 128);
-  if (
-    publicKeyBase64Url.length !== 43
-    || !/^[A-Za-z0-9_-]+$/.test(publicKeyBase64Url)
-    || !/^sha256:[a-f0-9]{64}$/i.test(fingerprint)
-  ) {
-    throw new Error("native public identity is invalid");
-  }
-  return {
-    deviceId: assertString(record.deviceId, "deviceId", 128),
-    publicKeyBase64Url,
-    fingerprint,
-    backend: assertString(record.backend, "backend", 64),
-  };
-}
-
-export function validateSignResponse(value: unknown): SignResponse {
-  const record = assertRecord(value);
-  assertExactKeys(record, ["signatureBase64Url"]);
-  const signatureBase64Url = assertString(record.signatureBase64Url, "signatureBase64Url", 128);
-  if (signatureBase64Url.length !== 86 || !/^[A-Za-z0-9_-]+$/.test(signatureBase64Url)) {
-    throw new Error("native signature is invalid");
-  }
-  return { signatureBase64Url };
-}
-
 function validateDiagnostics(value: unknown): DiagnosticsSnapshot {
   const record = assertRecord(value);
   assertExactKeys(record, [
@@ -312,8 +185,6 @@ function validateDiagnostics(value: unknown): DiagnosticsSnapshot {
     "keyFingerprint",
     "keyBackend",
     "recoveryStatus",
-    "syncEnabled",
-    "publisherOrigin",
     "closeBehavior",
     "autostartEnabled",
   ]);
@@ -321,64 +192,14 @@ function validateDiagnostics(value: unknown): DiagnosticsSnapshot {
   if (selectedVault !== null && typeof selectedVault !== "string") {
     throw new Error("native diagnostics vault is invalid");
   }
-  const publisherOrigin = record.publisherOrigin;
-  if (publisherOrigin !== null && typeof publisherOrigin !== "string") {
-    throw new Error("native diagnostics publisher origin is invalid");
-  }
   return {
     selectedVault,
     watcherStatus: assertString(record.watcherStatus, "watcherStatus"),
     keyFingerprint: assertString(record.keyFingerprint, "keyFingerprint"),
     keyBackend: assertString(record.keyBackend, "keyBackend"),
     recoveryStatus: assertString(record.recoveryStatus, "recoveryStatus"),
-    syncEnabled: record.syncEnabled === true,
-    publisherOrigin,
     closeBehavior: record.closeBehavior === "hide_to_tray" ? "hide_to_tray" : "exit",
     autostartEnabled: record.autostartEnabled === true,
-  };
-}
-
-function validatePublisherRequest(request: PublisherHttpRequest): PublisherHttpRequest {
-  const origin = new URL(request.origin);
-  if (origin.origin !== request.origin || origin.username || origin.password) {
-    throw new Error("publisher origin is invalid");
-  }
-  if (!/^(GET|POST|DELETE)$/.test(request.method)) throw new Error("publisher method is invalid");
-  if (!request.path.startsWith("/api/brain/device/") || request.path.includes("?") || request.path.length > 512) {
-    throw new Error("publisher path is invalid");
-  }
-  if (request.body !== null && request.body.length > 4_000_000) throw new Error("publisher body is too large");
-  const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(request.headers)) {
-    const normalized = name.toLowerCase();
-    if (!['if-none-match', 'idempotency-key'].includes(normalized) || /[\r\n]/.test(value)) {
-      throw new Error("publisher header is invalid");
-    }
-    headers[normalized] = value;
-  }
-  return { ...request, headers };
-}
-
-function validatePublisherResponse(value: unknown): PublisherHttpResponse {
-  const record = assertRecord(value);
-  assertExactKeys(record, ["status", "headers", "body"]);
-  if (typeof record.status !== "number" || !Number.isInteger(record.status) || record.status < 100 || record.status > 599) {
-    throw new Error("native publisher status is invalid");
-  }
-  const rawHeaders = assertRecord(record.headers);
-  const headers: Record<string, string> = {};
-  for (const [name, headerValue] of Object.entries(rawHeaders)) {
-    if (typeof headerValue !== "string" || name.length > 128 || headerValue.length > 8_192) {
-      throw new Error("native publisher headers are invalid");
-    }
-    headers[name.toLowerCase()] = headerValue;
-  }
-  return {
-    status: record.status,
-    headers,
-    body: typeof record.body === "string" && record.body.length <= 8_000_000
-      ? record.body
-      : (() => { throw new Error("native publisher body is invalid"); })(),
   };
 }
 
@@ -409,32 +230,6 @@ async function defaultInvoke(command: string, args?: Record<string, unknown>): P
 
 export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): NativeAdapter {
   return {
-    async getDeviceIdentity() {
-      return validateDeviceIdentity(await invoke("device_identity"));
-    },
-    async completeDevicePairing(deviceId) {
-      await invoke("complete_device_pairing", { deviceId: assertUuid(deviceId, "device id") });
-    },
-    async signCanonicalRequest(request) {
-      canonicalizeDeviceRequest(request);
-      const response = await invoke("sign_canonical_request", { request });
-      return validateSignResponse(response);
-    },
-    async publisherHttpRequest(request) {
-      return validatePublisherResponse(await invoke("publisher_http_request", {
-        request: validatePublisherRequest(request),
-      }));
-    },
-    async openPublisherPairing(origin, pairingId) {
-      const normalizedOrigin = new URL(origin);
-      if (normalizedOrigin.origin !== origin || normalizedOrigin.username || normalizedOrigin.password) {
-        throw new Error("publisher origin is invalid");
-      }
-      await invoke("open_publisher_pairing", {
-        origin,
-        pairingId: assertUuid(pairingId, "pairing id"),
-      });
-    },
     async getDiagnostics() {
       return validateDiagnostics(await invoke("diagnostics"));
     },
@@ -566,28 +361,6 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
         journalPath: assertString(value.journalPath, "journalPath", 4096),
         backupPath: assertString(value.backupPath, "backupPath", 4096),
       };
-    },
-    async confirmServerCommit(journalPath) {
-      if (!journalPath.endsWith(".journal.json")) throw new Error("journal path is invalid");
-      await invoke("confirm_server_commit", { journalPath });
-    },
-    async savePendingCommit(pending) {
-      await invoke("save_pending_commit", { pending });
-    },
-    async loadPendingCommit() {
-      const raw = await invoke("load_pending_commit");
-      if (raw === null) return null;
-      return validatePendingCommit(raw);
-    },
-    async clearPendingCommit() {
-      await invoke("clear_pending_commit");
-    },
-    async pendingJournals() {
-      const value = await invoke("pending_journals");
-      if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.endsWith(".journal.json"))) {
-        throw new Error("native pending journals are invalid");
-      }
-      return value as string[];
     },
     async checkAppUpdate() {
       return validateAppUpdateCheck(await invoke("check_app_update"));

@@ -14,22 +14,6 @@ const tauriConfig = () =>
       "utf8",
     ),
   ) as { productName?: string; version?: string; identifier?: string; app?: { windows?: Array<{ dragDropEnabled?: boolean }> }; bundle?: { windows?: { allowDowngrades?: boolean; nsis?: { installMode?: string } } } };
-const publisherTauriExample = () =>
-  JSON.parse(
-    readFileSync(
-      resolve(
-        import.meta.dirname,
-        "../private/publisher-profile.tauri.example.json",
-      ),
-      "utf8",
-    ),
-  ) as { app?: { windows?: Array<{ dragDropEnabled?: boolean }> } };
-const publisherInstallerScript = () =>
-  readFileSync(
-    resolve(import.meta.dirname, "../../../scripts/build-publisher-installer.mjs"),
-    "utf8",
-  );
-
 test("desktop checks signed releases for in-app updates", () => {
   const source = app();
   assert.match(source, /checkAppUpdate/);
@@ -44,7 +28,6 @@ test("desktop checks signed releases for in-app updates", () => {
   const release = readFileSync(resolve(import.meta.dirname, "../../../scripts/release-desktop.mjs"), "utf8");
   assert.match(release, /createUpdaterArtifacts: true/, "the release script signs updater artifacts");
   assert.match(release, /latest\.json/);
-  assert.match(publisherInstallerScript(), /endpoints: \[\]/, "Publisher previews never follow the public update channel");
   const updater = config.plugins?.updater;
   assert.ok(updater?.pubkey && updater.pubkey.length > 40, "a minisign public key verifies every update");
   assert.ok(updater?.endpoints?.length, "an update manifest endpoint is configured");
@@ -64,19 +47,18 @@ test("desktop includes today, calendar, board, projects and settings views", () 
 test("desktop supports quick add, editing, task actions and readable icons", () => {
   const source = app();
   for (const icon of [
-    "Trash2", "CheckCircle2", "RefreshCw", "Plus", "Pencil", "Search",
-    "Star", "Menu", "Eye", "Save", "RotateCcw",
+    "Trash2", "CheckCircle2", "Plus", "Pencil", "Search",
+    "Star", "Menu", "Eye", "RotateCcw",
   ]) assert.match(source, new RegExp(`<${icon}\\b`));
   assert.match(source, /<TaskDetailDialog/);
   assert.match(source, /<ProjectDetailDialog/);
-  assert.match(source, /deleteTaskPermanently/);
+  assert.match(source, /permanentlyDeleteTask/);
   assert.match(source, /markMostImportant/);
 });
 
 test("desktop has no Google Calendar integration surface", () => {
   const source = app();
   assert.doesNotMatch(source, /Google Calendar|calendarSyncEnabled|CalendarIntegration/);
-  assert.doesNotMatch(readFileSync(resolve(import.meta.dirname, "device-client.ts"), "utf8"), /getCalendarIntegrationStatus/);
 });
 
 test("quick add opens with N outside editable controls", () => {
@@ -100,13 +82,12 @@ test("board and calendar expose direct date editing and task-level drag feedback
   assert.match(styles, /\.week-task-list article\.dragging/);
 });
 
-test("public settings hide cloud sync, write to the local folder, and complete board tasks with a checkbox", () => {
+test("settings have no cloud sync, write to the local folder, and complete board tasks with a checkbox", () => {
   const source = app();
   const styles = css();
-  assert.match(source, /const cloudEnabled = diagnostics\?\.syncEnabled === true/);
+  assert.doesNotMatch(source, /syncEnabled|runSync|DeviceClient/);
   assert.match(source, /settings\.localHelp/);
   assert.doesNotMatch(source, /settings\.phoneHelp/);
-  assert.match(source, /diagnostics\?\.syncEnabled && \(/);
   assert.match(source, /board-card[\s\S]{0,5000}<TaskCompleteButton/);
   assert.match(styles, /\.task-complete[^}]*border-radius:4px/);
   assert.doesNotMatch(source, /className="board-card-complete"/);
@@ -122,17 +103,6 @@ test("Windows task drag uses pointer events because HTML5 drag is unreliable in 
   assert.match(source, /finishBoardPointer/);
   assert.doesNotMatch(source, /dataTransfer\.setData/);
   assert.doesNotMatch(source, /dataTransfer\.getData/);
-});
-
-test("private Publisher builds cannot override the Windows HTML drag setting", () => {
-  assert.equal(
-    publisherTauriExample().app?.windows?.[0]?.dragDropEnabled,
-    false,
-  );
-  assert.match(
-    publisherInstallerScript(),
-    /dragDropEnabled\s*!==\s*false/,
-  );
 });
 
 test("calendar drag feedback dims the source day, raises the task, and marks the drop target", () => {
@@ -189,8 +159,6 @@ test("task actions are compact accessible icons and permanent delete is never ar
   assert.match(source, /className="calendar-quick-check"/);
   assert.match(source, /<TaskCompleteButton/);
   assert.match(source, /className="agenda-drag-handle"[\s\S]{0,400}setPointerCapture/);
-  assert.match(source, /remoteEnabled:\s*devicePaired/);
-  assert.match(source, /if \(devicePaired\) \{[\s\S]{0,160}runSync\(\{ background: true \}\)/);
 });
 
 test("tasks use one Notion-like live Markdown detail canvas", () => {
@@ -429,10 +397,8 @@ test("global language and light-dark theme controls are persisted and accessible
 test("language switching keeps the top actions in a fixed icon toolbar", () => {
   const source = app();
   const styles = css();
-  assert.match(source, /className="icon-button top-icon-action sync-icon-action"/);
-  assert.doesNotMatch(source, /<div className="sync-state">\s*<span>/);
+  assert.match(source, /className="icon-button top-icon-action"/);
   assert.match(styles, /\.top-actions\s*\{[^}]*flex-wrap:\s*nowrap/);
-  assert.match(styles, /\.sync-state \.sync-icon-action\s*\{[^}]*width:\s*38px/);
 });
 
 test("dark mode keeps project and collection controls readable", () => {
@@ -496,8 +462,7 @@ test("Windows installer keeps a stable upgrade identity", () => {
 
 test("project actions use accessible icon-only controls while state labels remain visible", () => {
   const source = app();
-  assert.match(source, /className="project-actions project-icon-actions"/);
-  for (const icon of ["Save", "CheckCircle2", "Archive", "Trash2"]) {
+  for (const icon of ["CheckCircle2", "Archive", "Trash2"]) {
     assert.match(source, new RegExp(`<${icon}\\b`));
   }
   assert.match(source, /armLabel=\{t\("project\.action\.delete"\)\}/);
@@ -516,7 +481,7 @@ test("vault-changed refreshes local-only mode without a server", () => {
   assert.match(source, /listen\("vault-changed"/);
   assert.match(
     source,
-    /if \(engine\) void runSync\(\{ background: true \}\);\s*else void reloadLocal\(false\)/s,
+    /listen\("vault-changed"[\s\S]{0,200}void reloadLocal\(false\)/,
   );
   assert.match(source, /lastScanRef/);
   assert.match(source, /unchanged && !updateStatus/);

@@ -71,8 +71,6 @@ function createVaultAdapter(root: string): NativeAdapter {
         keyFingerprint: "sha256:" + "0".repeat(64),
         keyBackend: "memory",
         recoveryStatus: "ok",
-        syncEnabled: false,
-        publisherOrigin: null,
         closeBehavior: "exit",
         autostartEnabled: false,
       };
@@ -110,20 +108,6 @@ function createVaultAdapter(root: string): NativeAdapter {
       }
       return { journalPath: "journal.journal.json", backupPath: "backup.zip" };
     },
-    async confirmServerCommit() { /* no-op */ },
-    async savePendingCommit() { /* no-op */ },
-    async loadPendingCommit() { return null; },
-    async clearPendingCommit() { /* no-op */ },
-    async pendingJournals() { return []; },
-    async getDeviceIdentity() {
-      return { deviceId: "device-1", publicKeyBase64Url: "A".repeat(43), fingerprint: "sha256:" + "0".repeat(64), backend: "memory" };
-    },
-    async completeDevicePairing() { /* no-op */ },
-    async signCanonicalRequest() { return { signatureBase64Url: "S".repeat(86) }; },
-    async publisherHttpRequest() {
-      return { status: 404, headers: {}, body: "{}" };
-    },
-    async openPublisherPairing() { /* no-op */ },
     async pickVaultFolder() { return null; },
     async selectVault() { return { vaultId: "vault-1", root }; },
     async setAutostart() { /* no-op */ },

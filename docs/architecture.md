@@ -35,6 +35,3 @@ A verified ZIP backup is created before the move. Reassigning a task's project
 moves the whole task block (the line and its indented notes) onto
 `專案/<name>.md` or back to `收件匣/待辦.md`. Changing date or status still
 edits in place.
-
-A private Publisher build can still embed one exact HTTPS origin. That adapter
-is not part of the public product and is not required to use the desktop app.

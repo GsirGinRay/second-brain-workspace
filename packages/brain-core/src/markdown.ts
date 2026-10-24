@@ -1,6 +1,5 @@
 import type {
   ParsedCollectionFrontmatter,
-  BrainProjectSnapshot,
   BrainTaskSnapshot,
   ParsedMarkdownTask,
   ParsedProjectFrontmatter,
@@ -320,7 +319,7 @@ function analyzeTaskLine(rawLine: string): TaskLineAnalysis | null {
   ];
 
   const priorityEntries = Object.entries(TOKEN_TO_PRIORITY);
-  for (const [token, priority] of priorityEntries) {
+  for (const [token] of priorityEntries) {
     const expression = new RegExp(
       "(?:^|\\s)(" + token + ")(?=\\s|$)",
       "gu",
@@ -654,24 +653,6 @@ export function withVisibleScheduleTokens(
   if (!analysis) return rawLine;
   const edits = scheduleTokenEdits(rawLine, analysis, startTime, durationMinutes);
   return edits.length ? applyEdits(rawLine, edits) : rawLine;
-}
-
-function markerFieldEdit(
-  rawLine: string,
-  marker: MarkerSpan,
-  key: string,
-  value: string | null,
-): Edit | null {
-  const json = rawLine.slice(marker.jsonStart, marker.jsonEnd);
-  const expression = new RegExp(
-    '("' +
-      key +
-      '"\\s*:\\s*)(("(?:\\\\.|[^"\\\\])*")|null)',
-  );
-  const match = expression.exec(json);
-  if (!match) return null;
-  const start = marker.jsonStart + match.index + match[1].length;
-  return { start, end: start + match[2].length, replacement: JSON.stringify(value) };
 }
 
 function patchMarker(

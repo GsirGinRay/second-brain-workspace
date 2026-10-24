@@ -22,5 +22,5 @@ npm run desktop:installer
 The NSIS installer is generated under
 `apps/desktop/src-tauri/target/release/bundle/nsis/`.
 
-Remote cloud access is disabled in the default open-source build. Localhost is
-allowed for protocol development and tests. See `docs/cloud-sync.md`.
+The app has no cloud sync. It only goes online to check for updates and, once a
+phone is paired, to reach the phone inbox (`docs/inbox-relay.md`).

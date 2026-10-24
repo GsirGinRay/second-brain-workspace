@@ -18,8 +18,6 @@ pub struct DiagnosticsSnapshot {
     pub key_fingerprint: String,
     pub key_backend: String,
     pub recovery_status: String,
-    pub sync_enabled: bool,
-    pub publisher_origin: Option<String>,
     pub close_behavior: WindowCloseBehavior,
     pub autostart_enabled: bool,
 }
@@ -32,8 +30,6 @@ impl DiagnosticsSnapshot {
             key_fingerprint: identity.fingerprint.clone(),
             key_backend: identity.backend.clone(),
             recovery_status: "none".to_owned(),
-            sync_enabled: false,
-            publisher_origin: None,
             close_behavior: WindowCloseBehavior::Exit,
             autostart_enabled: false,
         }
@@ -87,8 +83,6 @@ mod tests {
             "keyFingerprint",
             "keyBackend",
             "recoveryStatus",
-            "syncEnabled",
-            "publisherOrigin",
             "closeBehavior",
             "autostartEnabled",
         ] {

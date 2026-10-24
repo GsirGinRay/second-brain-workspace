@@ -587,7 +587,7 @@ fn successful_batch_keeps_recovery_journal_until_server_confirmation() {
 
     assert_eq!(fs::read(&task).unwrap(), b"new");
     assert_eq!(writer.pending_journals().unwrap(), vec![journal.clone()]);
-    writer.confirm_server_commit(&journal).unwrap();
+    assert_eq!(writer.remove_finished_journals().unwrap(), 1);
     assert!(writer.pending_journals().unwrap().is_empty());
 }
 
@@ -630,22 +630,17 @@ fn batch_supports_a_safe_create_and_delete_with_verified_backup() {
 }
 
 #[test]
-fn server_confirmation_rejects_parent_traversal_and_non_journal_files() {
+fn removing_finished_journals_keeps_unreadable_ones_and_files_outside() {
     let dir = tempdir().unwrap();
     let journal_dir = dir.path().join("journals");
     let writer = AtomicWriter::new(journal_dir.clone()).unwrap();
     let outside = dir.path().join("outside.journal.json");
     fs::write(&outside, b"do not remove").unwrap();
-    let traversal = journal_dir.join("..").join("outside.journal.json");
+    let unreadable = journal_dir.join("broken.journal.json");
+    fs::write(&unreadable, b"not json").unwrap();
 
-    assert!(matches!(
-        writer.confirm_server_commit(&traversal),
-        Err(NativeError::UnsafePath)
-    ));
-    assert!(matches!(
-        writer.confirm_server_commit(&journal_dir.join("not-a-journal.txt")),
-        Err(NativeError::UnsafePath)
-    ));
+    assert_eq!(writer.remove_finished_journals().unwrap(), 0);
+    assert!(unreadable.exists(), "a journal recovery may need is kept");
     assert!(outside.exists());
 }
 

@@ -11,7 +11,6 @@ pub mod inbox_relay;
 pub mod inbox_snapshot;
 pub mod key_store;
 pub mod path_policy;
-pub mod publisher;
 mod quick_capture;
 mod reminders;
 pub mod scheduler;
@@ -20,12 +19,10 @@ pub mod watcher;
 
 use crate::atomic_write::{AtomicWriter, FileChange};
 use crate::backup::BackupManager;
-use crate::canonical::DeviceCanonicalRequest;
 use crate::diagnostics::{set_autostart, DiagnosticsSnapshot, WindowCloseBehavior};
 use crate::error::NativeError;
-use crate::key_store::{KeyStore, PublicIdentity};
+use crate::key_store::KeyStore;
 use crate::path_policy::{scan_markdown_cached, validate_vault_root, ScanCache, ScanLimits, ScanResult};
-use crate::publisher::{PublisherHttpRequest, PublisherHttpResponse, PublisherTransport};
 use crate::state::LocalState;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -49,7 +46,6 @@ pub struct AppState {
     autostart_enabled: Mutex<bool>,
     data_dir: PathBuf,
     watcher: Mutex<Option<RecommendedWatcher>>,
-    publisher: PublisherTransport,
     // Every save scans the vault twice; this spares re-reading unchanged files.
     scan_cache: Mutex<ScanCache>,
     inbox_relay: inbox_relay::InboxRelayManager,
@@ -165,83 +161,7 @@ pub struct MarkdownApplyResult {
     pub backup_path: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PendingCommit {
-    pub plan_id: String,
-    pub idempotency_key: String,
-    pub choices: serde_json::Value,
-    pub journal_paths: Vec<String>,
-}
 
-#[tauri::command]
-fn device_identity(state: State<'_, AppState>) -> Result<PublicIdentity, NativeError> {
-    Ok(state
-        .key_store
-        .lock()
-        .map_err(|_| NativeError::KeyStorageUnavailable)?
-        .public_identity())
-}
-
-#[tauri::command(rename_all = "camelCase")]
-fn complete_device_pairing(
-    device_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), NativeError> {
-    state
-        .key_store
-        .lock()
-        .map_err(|_| NativeError::KeyStorageUnavailable)?
-        .set_device_id(&device_id)
-}
-
-#[tauri::command]
-fn sign_canonical_request(
-    request: DeviceCanonicalRequest,
-    state: State<'_, AppState>,
-) -> Result<serde_json::Value, NativeError> {
-    let signature_base64_url = state
-        .key_store
-        .lock()
-        .map_err(|_| NativeError::KeyStorageUnavailable)?
-        .sign(&request)?;
-    Ok(serde_json::json!({ "signatureBase64Url": signature_base64_url }))
-}
-
-#[tauri::command]
-async fn publisher_http_request(
-    request: PublisherHttpRequest,
-    state: State<'_, AppState>,
-) -> Result<PublisherHttpResponse, NativeError> {
-    let (identity, signature, canonical) = if request.signed {
-        let canonical = state.publisher.canonical_request(&request)?;
-        let store = state
-            .key_store
-            .lock()
-            .map_err(|_| NativeError::KeyStorageUnavailable)?;
-        (
-            Some(store.public_identity()),
-            Some(store.sign(&canonical)?),
-            Some(canonical),
-        )
-    } else {
-        (None, None, None)
-    };
-    state
-        .publisher
-        .execute(request, identity, signature, canonical)
-        .await
-}
-
-#[tauri::command(rename_all = "camelCase")]
-fn open_publisher_pairing(
-    origin: String,
-    pairing_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), NativeError> {
-    let url = state.publisher.pairing_url(&origin, &pairing_id)?;
-    open::that_detached(url.as_str()).map_err(|_| NativeError::Io)
-}
 
 #[tauri::command]
 fn pick_vault_folder() -> Result<Option<String>, NativeError> {
@@ -622,6 +542,9 @@ fn apply_markdown_changes_checked(
     backup.verify_backup(&archive)?;
     let writer = AtomicWriter::new(state.data_dir.join("journals").join(&vault_id))?;
     let journal = writer.write_batch_with_backup(&file_changes, &backup, &archive, &root, None)?;
+    // The write is complete, so its journal (and any left by older versions,
+    // which kept them for a sync server) is no longer needed for recovery.
+    let _ = writer.remove_finished_journals();
     prune_backups_best_effort(state, &vault_id, &backup, &archive, &writer);
     Ok(MarkdownApplyResult {
         journal_path: journal.to_string_lossy().to_string(),
@@ -667,79 +590,6 @@ fn prune_backups_best_effort(
 }
 
 #[tauri::command]
-fn confirm_server_commit(
-    journal_path: String,
-    state: State<'_, AppState>,
-) -> Result<(), NativeError> {
-    if journal_path.is_empty() || journal_path.len() > 4_096 {
-        return Err(NativeError::InvalidRequest);
-    }
-    let root = selected_root(&state)?;
-    let writer = AtomicWriter::new(
-        state
-            .data_dir
-            .join("journals")
-            .join(vault_id_for_root(&root)),
-    )?;
-    writer.confirm_server_commit(Path::new(&journal_path))
-}
-
-#[tauri::command]
-fn save_pending_commit(
-    pending: PendingCommit,
-    state: State<'_, AppState>,
-) -> Result<(), NativeError> {
-    if pending.plan_id.len() != 36
-        || pending.idempotency_key.len() != 36
-        || pending.journal_paths.len() > MAX_NATIVE_BATCH_FILES
-        || !pending.choices.is_array()
-    {
-        return Err(NativeError::InvalidRequest);
-    }
-    let payload = serde_json::to_string(&pending).map_err(|_| NativeError::InvalidRequest)?;
-    if payload.len() > 256_000 {
-        return Err(NativeError::LimitExceeded);
-    }
-    state.local_state.enqueue_outbox(
-        "pending-sync-commit",
-        "sync_commit",
-        &pending.plan_id,
-        "commit",
-        &payload,
-    )
-}
-
-#[tauri::command]
-fn load_pending_commit(state: State<'_, AppState>) -> Result<Option<PendingCommit>, NativeError> {
-    state
-        .local_state
-        .outbox_payload("pending-sync-commit")?
-        .map(|payload| serde_json::from_str(&payload).map_err(|_| NativeError::Database))
-        .transpose()
-}
-
-#[tauri::command]
-fn clear_pending_commit(state: State<'_, AppState>) -> Result<(), NativeError> {
-    state.local_state.delete_outbox("pending-sync-commit")
-}
-
-#[tauri::command]
-fn pending_journals(state: State<'_, AppState>) -> Result<Vec<String>, NativeError> {
-    let root = selected_root(&state)?;
-    let writer = AtomicWriter::new(
-        state
-            .data_dir
-            .join("journals")
-            .join(vault_id_for_root(&root)),
-    )?;
-    Ok(writer
-        .pending_journals()?
-        .into_iter()
-        .map(|path| path.to_string_lossy().to_string())
-        .collect())
-}
-
-#[tauri::command]
 fn diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsSnapshot, NativeError> {
     let identity = state
         .key_store
@@ -747,8 +597,6 @@ fn diagnostics(state: State<'_, AppState>) -> Result<DiagnosticsSnapshot, Native
         .map_err(|_| NativeError::KeyStorageUnavailable)?
         .public_identity();
     let mut snapshot = DiagnosticsSnapshot::disabled(&identity);
-    snapshot.publisher_origin = state.publisher.private_origin();
-    snapshot.sync_enabled = snapshot.publisher_origin.is_some();
     snapshot.watcher_status = if state.watcher.lock().map_err(|_| NativeError::Io)?.is_some() {
         "watching".to_owned()
     } else {
@@ -873,8 +721,6 @@ pub fn run() -> tauri::Result<()> {
             let watcher = selected_vault
                 .as_ref()
                 .and_then(|root| start_watcher(app.handle(), root).ok());
-            let publisher = PublisherTransport::from_compiled_profile()
-                .map_err(|_| std::io::Error::other("invalid Publisher build profile"))?;
             app.manage(AppState {
                 key_store: Mutex::new(key_store),
                 local_state,
@@ -883,7 +729,6 @@ pub fn run() -> tauri::Result<()> {
                 autostart_enabled: Mutex::new(false),
                 data_dir: data_dir.clone(),
                 watcher: Mutex::new(watcher),
-                publisher,
                 scan_cache: Mutex::new(ScanCache::new()),
                 inbox_relay: inbox_relay::InboxRelayManager::new(data_dir.clone()),
             });
@@ -892,11 +737,6 @@ pub fn run() -> tauri::Result<()> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            device_identity,
-            complete_device_pairing,
-            sign_canonical_request,
-            publisher_http_request,
-            open_publisher_pairing,
             external_url::open_external_url,
             pick_vault_folder,
             select_vault,
@@ -907,11 +747,6 @@ pub fn run() -> tauri::Result<()> {
             read_vault_attachment,
             open_vault_attachment,
             apply_markdown_changes,
-            confirm_server_commit,
-            save_pending_commit,
-            load_pending_commit,
-            clear_pending_commit,
-            pending_journals,
             diagnostics,
             set_autostart_command,
             set_close_behavior,

@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   ArrowRight,
   BarChart3,
-  BookPlus,
   CalendarDays,
   CheckCircle2,
   Clock,
@@ -24,9 +23,7 @@ import {
   Target,
   Pencil,
   Plus,
-  RefreshCw,
   RotateCcw,
-  Save,
   Search,
   Settings2,
   Star,
@@ -41,7 +38,6 @@ import {
   applyRoutineTemplate,
   createDefaultRoutineTemplate,
   enforceTemplateSingleP1,
-  getTodayTasks,
   splitTodayTasks,
   completeProject,
   projectColor,
@@ -56,7 +52,6 @@ import {
   extractPromptVariables,
   fillPromptVariables,
   attachmentFolderForKnowledge,
-  attachmentFolderForProject,
   attachmentFolderForTask,
   collectionMatchesCategoryFilter,
   knowledgeFilterCategories,
@@ -73,7 +68,6 @@ import {
   type BrainTaskSnapshot,
   type RoutineTemplate,
   type RoutineTemplateItem,
-  type TaskStatus,
   type TemplatePackId,
 } from "@second-brain/brain-core";
 import {
@@ -88,45 +82,34 @@ import {
   type WorkspaceSearchResult,
 } from "@second-brain/brain-ui";
 import {
-  DeviceClient,
-  DEFAULT_SERVER_ORIGIN,
-  PublisherHttpError,
-  type ConflictChoice,
-} from "./device-client";
-import {
   createNativeAdapter,
   type AppUpdateCheck,
   type DiagnosticsSnapshot,
   type NativeAdapter,
 } from "./ipc";
-import { SyncEngine, type SyncResult } from "./sync-engine";
+import { VaultLoader } from "./vault-loader";
 import { GlobalShiftMarquee, GLOBAL_SELECTION_DELETE_EVENT, consumeGlobalMarqueeClick, getGlobalSelectedIds, getSelectedIdsOfKind } from "./global-shift-marquee";
-import { deleteTaskLocalFirst } from "./task-deletion";
 import {
   applyTaskPriority,
   archiveTask,
   boardLane,
   completedForDate,
   filterCompletedTasks,
-  isCompleteShortcut,
   isEditableElement,
   isQuickAddShortcut,
   markMostImportant,
   moveTaskToLane,
-  nextWeekPriorities,
   priorityDisplay,
   scheduleTask,
   scheduleTaskBatch,
   toggleMostImportant,
   type BoardLane,
 } from "./task-actions";
-import { InlineTitle } from "./inline-title";
 import { CategoryInput } from "./category-input";
-import { ImportanceControl, PriorityControl, PriorityBadge } from "./priority-control";
+import { ImportanceControl, PriorityControl } from "./priority-control";
 import {
   applyDesiredSnapshot,
   buildCollectionCreateChange,
-  buildCollectionDeleteChange,
   buildProjectCreateChange,
   withRelatedProjectWikilink,
   buildProjectDeleteChanges,
@@ -211,12 +194,6 @@ function describeError(cause: unknown, fallback: string): string {
   }
   return fallback;
 }
-const STATUS_KEYS: Record<TaskStatus, string> = {
-  todo: "task.status.todo",
-  doing: "task.status.doing",
-  waiting: "task.status.waiting",
-  done: "task.status.done",
-};
 const VIEW_KEYS: Record<View, string> = {
   today: "view.today",
   calendar: "view.calendar",
@@ -256,7 +233,6 @@ function ViewIcon({ view }: { view: View }) {
   return <Settings2 className={className} />;
 }
 const taipeiDateKey = () => dateKeyForTaipei(new Date());
-const PENDING_PROJECT_DELETIONS_KEY = "second-brain.pendingProjectDeletions";
 const UPDATE_DISMISSED_KEY = "second-brain.dismissedUpdateVersion";
 const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000;
 function loadUiPreferences(): UiPreferences {
@@ -265,17 +241,6 @@ function loadUiPreferences(): UiPreferences {
   } catch {
     return DEFAULT_UI_PREFERENCES;
   }
-}
-function pendingProjectDeletions(): string[] {
-  try {
-    const value = JSON.parse(localStorage.getItem(PENDING_PROJECT_DELETIONS_KEY) ?? "[]");
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && /^[0-9a-f-]{36}$/i.test(item)) : [];
-  } catch {
-    return [];
-  }
-}
-function setPendingProjectDeletions(ids: string[]): void {
-  localStorage.setItem(PENDING_PROJECT_DELETIONS_KEY, JSON.stringify([...new Set(ids)]));
 }
 const getCalendarTaskEntries = (tasks: BrainTaskSnapshot[], today: string) =>
   buildCalendarTaskEntries(
@@ -330,10 +295,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(
     null,
   );
-  const [serverOrigin, setServerOrigin] = useState(
-    () =>
-      localStorage.getItem("second-brain.serverOrigin") ?? DEFAULT_SERVER_ORIGIN,
-  );
   const [vaultInput, setVaultInput] = useState("");
   const [tasks, setTasks] = useState<BrainTaskSnapshot[]>(initialDraft.tasks);
   const [projects, setProjects] = useState<BrainProjectSnapshot[]>(initialDraft.projects);
@@ -369,29 +330,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const [status, setStatus] = useState("正在啟動…");
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
-  const [lastSync, setLastSync] = useState<string | null>(null);
-  const [conflict, setConflict] = useState<Extract<
-    SyncResult,
-    { kind: "conflict" }
-  > | null>(null);
-  const [choices, setChoices] = useState<Record<string, "local" | "server">>(
-    {},
-  );
-  const [pairing, setPairing] = useState<{
-    pairingId: string;
-    pollingSecret: string;
-    userCode: string;
-    expiresAt: string;
-  } | null>(null);
-  const [devicePaired, setDevicePaired] = useState(false);
-  const [writeApproved, setWriteApproved] = useState(
-    () => localStorage.getItem("second-brain.agentWriteApproved") === "true",
-  );
-  const [preview, setPreview] = useState<Extract<
-    SyncResult,
-    { kind: "preview" }
-  > | null>(null);
-  const [previewDismissed, setPreviewDismissed] = useState(false);
   const [architectureOpen, setArchitectureOpen] = useState(false);
   const [selectedPacks, setSelectedPacks] = useState<TemplatePackId[]>([
     ...DEFAULT_ARCHITECTURE_PACK_IDS,
@@ -459,7 +397,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     void persistLocal(tasks, projects, next);
     setImportPromptsOpen(false);
   };
-  const syncRunningRef = useRef(false);
   // Serialize every local write. A multi-task drag followed quickly by
   // another drag (or any other onSave) would otherwise dispatch two writes
   // against the same stale `files` snapshot, where the second one trips
@@ -564,7 +501,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     if (appUpdate?.latestVersion) localStorage.setItem(UPDATE_DISMISSED_KEY, appUpdate.latestVersion);
     setUpdatePromptOpen(false);
   }, [appUpdate?.latestVersion]);
-  const cloudEtagRef = useRef<string | null>(null);
   const routineTemplateRef = useRef(routineTemplate);
   const allowCloseRef = useRef(false);
   const lastScanRef = useRef<Map<string, string> | null>(null);
@@ -600,15 +536,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     delete document.documentElement.dataset.density;
   }, [preferences]);
 
-  const client = useMemo(
-    () => (serverOrigin ? new DeviceClient(serverOrigin, native) : null),
-    [native, serverOrigin],
-  );
-  const engine = useMemo(
-    () => (client ? new SyncEngine(native, client) : null),
-    [client, native],
-  );
-
   useEffect(() => {
     void native.loadRoutineTemplate?.().then((value) => {
       if (value) {
@@ -627,46 +554,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     setRoutineTemplate(next);
     void native.saveRoutineTemplate?.(next);
   }, [native]);
-
-  useEffect(() => {
-    if (!client || !devicePaired) return;
-    const timer = window.setTimeout(() => {
-      void client.getRoutineTemplate().then(async (remote) => {
-        const local = routineTemplateRef.current;
-        if (local.updatedAt > remote.updatedAt) {
-          const saved = await client.saveRoutineTemplate({ ...local, version: remote.version });
-          routineTemplateRef.current = saved;
-          setRoutineTemplate(saved);
-          await native.saveRoutineTemplate?.(saved);
-          return;
-        }
-        if (remote.version !== local.version || remote.updatedAt !== local.updatedAt) {
-          const single = enforceTemplateSingleP1(remote);
-          routineTemplateRef.current = single;
-          setRoutineTemplate(single);
-          await native.saveRoutineTemplate?.(single);
-        }
-      }).catch((cause) => {
-        if (cause instanceof PublisherHttpError && cause.code === "ROUTINE_TEMPLATES_DISABLED") return;
-        const message = describeError(cause, "ROUTINE_TEMPLATE_SYNC_FAILED");
-        setError(`每日啟動模板同步失敗：${message}`);
-      });
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [client, devicePaired, native, routineTemplate]);
-
-  useEffect(() => {
-    if (!client || !devicePaired) return;
-    const pending = pendingProjectDeletions();
-    if (pending.length === 0) return;
-    void Promise.allSettled(pending.map(async (id) => {
-      await client.deleteProjectPermanently(id);
-      return id;
-    })).then((results) => {
-      const completed = new Set(results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
-      setPendingProjectDeletions(pending.filter((id) => !completed.has(id)));
-    });
-  }, [client, devicePaired]);
 
   useEffect(() => {
     const openGlobalAction = (event: KeyboardEvent) => {
@@ -932,9 +819,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       const generation = writeGenerationRef.current;
       const nextDiagnostics = await native.getDiagnostics();
       setDiagnostics(nextDiagnostics);
-      if (nextDiagnostics.publisherOrigin) {
-        setServerOrigin(nextDiagnostics.publisherOrigin);
-      }
       if (!nextDiagnostics.selectedVault) {
         lastScanRef.current = null;
         const draft = loadDraftWorkspace();
@@ -945,22 +829,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         return;
       }
       if (hasDraftContent(loadDraftWorkspace())) await flushDraftsToSelectedVault();
-      const loader =
-        engine ??
-        new SyncEngine(native, {
-          async getState() {
-            throw new Error("SERVER_NOT_CONFIGURED");
-          },
-          async createPlan() {
-            throw new Error("SERVER_NOT_CONFIGURED");
-          },
-          async commitPlan() {
-            throw new Error("SERVER_NOT_CONFIGURED");
-          },
-          async getPlanStatus() {
-            throw new Error("SERVER_NOT_CONFIGURED");
-          },
-        });
+      const loader = new VaultLoader(native);
       let local = await loader.loadLocal();
       // Capture warnings from the first pass: healing (below) rewrites the
       // broken markers, so a re-scan reports clean and the anomaly would
@@ -1032,7 +901,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         );
       return local;
     },
-    [engine, native, refreshAiIndex, loadTemplates],
+    [native, refreshAiIndex, loadTemplates],
   );
   reloadLocalRef.current = reloadLocal;
 
@@ -1051,79 +920,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setError(`App 啟動診斷失敗：${message}`);
     });
   }, [reloadLocal]);
-
-  const runSync = useCallback(
-    async ({
-      forceWrite = false,
-      background = false,
-    }: { forceWrite?: boolean; background?: boolean } = {}) => {
-      if (!engine || syncRunningRef.current || !diagnostics?.selectedVault)
-        return;
-      syncRunningRef.current = true;
-      if (!background) {
-        setWorking(true);
-        setError("");
-        setStatus("正在安全同步…");
-      }
-      try {
-        const result = await engine.sync({
-          previewOnly: !(writeApproved || forceWrite),
-        });
-        if (result.kind === "preview") {
-          if (!background && !previewDismissed) setPreview(result);
-          if (!background)
-            setStatus("Shadow 預覽完成；尚未寫入 Markdown 或提交雲端");
-        } else if (result.kind === "conflict") {
-          setConflict(result);
-          setChoices({});
-          setStatus(
-            `同步已暫停：${result.plan.conflicts.length} 筆衝突需要選擇`,
-          );
-        } else {
-          setLastSync(new Date().toISOString());
-          if (!background) setStatus("已同步到第二大腦雲端");
-          await reloadLocal(!background);
-        }
-        const currentState = await client?.getState(null);
-        if (currentState) setDevicePaired(true);
-        if (currentState?.kind === "modified")
-          cloudEtagRef.current = currentState.etag;
-      } catch (cause) {
-        const message = describeError(cause, "SYNC_FAILED");
-        if (!background) {
-          if (/401|DEVICE_|AUTH/i.test(message)) {
-            setDevicePaired(false);
-            setStatus("此裝置尚未配對，請到同步設定開始配對");
-          } else setError(`同步失敗：${message}`);
-        }
-      } finally {
-        syncRunningRef.current = false;
-        if (!background) setWorking(false);
-      }
-    },
-    [
-      client,
-      diagnostics?.selectedVault,
-      engine,
-      previewDismissed,
-      reloadLocal,
-      writeApproved,
-    ],
-  );
-
-  const pollCloudRevision = useCallback(async () => {
-    if (!client || syncRunningRef.current || !diagnostics?.selectedVault)
-      return;
-    try {
-      const result = await client.getState(cloudEtagRef.current);
-      setDevicePaired(true);
-      if (result.kind === "not-modified") return;
-      cloudEtagRef.current = result.etag;
-      await runSync({ background: true });
-    } catch {
-      // Background polling is deliberately quiet; manual sync still shows actionable errors.
-    }
-  }, [client, diagnostics?.selectedVault, runSync]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1211,37 +1007,17 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       .then(({ listen }) =>
         listen("vault-changed", () => {
           window.clearTimeout(debounce);
-          debounce = window.setTimeout(() => {
-            if (engine) void runSync({ background: true });
-            else void reloadLocal(false);
-          }, 3_000);
+          debounce = window.setTimeout(() => void reloadLocal(false), 3_000);
         }),
       )
       .then((value) => {
         unlisten = value;
       });
-    const cloudPoll = window.setInterval(
-      () => void pollCloudRevision(),
-      30_000,
-    );
-    const reconcile = window.setInterval(
-      () => void runSync({ background: true }),
-      5 * 60_000,
-    );
-    const onOnline = () => void pollCloudRevision();
-    const onFocus = () => void pollCloudRevision();
-    window.addEventListener("online", onOnline);
-    window.addEventListener("focus", onFocus);
-    void pollCloudRevision();
     return () => {
       unlisten?.();
       window.clearTimeout(debounce);
-      window.clearInterval(cloudPoll);
-      window.clearInterval(reconcile);
-      window.removeEventListener("online", onOnline);
-      window.removeEventListener("focus", onFocus);
     };
-  }, [engine, pollCloudRevision, reloadLocal, runSync]);
+  }, [reloadLocal]);
 
   // Every mutation that reaches Markdown funnels through persistLocal, so recording
   // the pre-change workspace here gives one undo history that covers schedule drags,
@@ -1334,16 +1110,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     setError("");
     try {
       await native.applyMarkdownChanges(changes);
-      setStatus(devicePaired ? "已儲存在本機 · 等待同步" : "已寫入本機 Markdown 資料夾");
+      setStatus("已寫入本機 Markdown 資料夾");
       await reloadLocal(true, true, true);
-      if (devicePaired) {
-        window.setTimeout(() => void runSync({ background: true }), 50);
-      }
       return true;
     } catch (cause) {
       const message = describeError(cause, "WRITE_FAILED");
-      // A concurrent writer (background sync, the web adapter, or another
-      // editor) can move a file between our scan and the write. Re-scan once
+      // A concurrent writer (the web adapter or another editor) can move a file between our scan and the write. Re-scan once
       // and re-apply the diff so the user's calendar edit still lands instead
       // of being silently dropped.
       if (/changed before write|HASH_PRECONDITION/i.test(message)) {
@@ -1361,11 +1133,8 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             }, { tasks: fresh.tasks, projects: fresh.projects, collections: fresh.collections ?? [] });
             if (retryChanges.length > 0) {
               await native.applyMarkdownChanges(retryChanges);
-              setStatus(devicePaired ? "已儲存在本機 · 等待同步" : "已寫入本機 Markdown 資料夾");
+              setStatus("已寫入本機 Markdown 資料夾");
               await reloadLocal(true, true, true);
-              if (devicePaired) {
-                window.setTimeout(() => void runSync({ background: true }), 50);
-              }
               return true;
             }
           }
@@ -1689,15 +1458,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         collections: current.collections,
         fileHashes: {},
       }, projectId));
-      if (devicePaired && client) {
-        try {
-          await client.deleteProjectPermanently(project.id);
-          setPendingProjectDeletions(pendingProjectDeletions().filter((id) => id !== project.id));
-        } catch (cause) {
-          setPendingProjectDeletions([...pendingProjectDeletions(), project.id]);
-          setError(`本機專案已刪除；遠端刪除待重試：${describeError(cause, "DELETE_FAILED")}`);
-        }
-      }
       setStatus("專案已刪除，關聯任務已保留並解除連結");
     } catch (cause) {
       setError(`刪除專案失敗：${describeError(cause, "DELETE_PROJECT_FAILED")}`);
@@ -1733,9 +1493,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           }
           return changes;
         });
-        if (devicePaired) {
-          window.setTimeout(() => void runSync({ background: true }), 50);
-        }
       } else {
         const ok = await persistLocal(tasks, projects, collections.filter((item) => item.id !== collection.id));
         if (!ok) return false;
@@ -1756,38 +1513,15 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     // Ctrl+Z still restores the task locally.
     setWorking(true);
     setError("");
-    const outcome = await deleteTaskLocalFirst({
-      deleteLocal: () => persistLocal(tasks.filter((item) => task.id ? item.id !== task.id : item !== task)),
-      deleteRemote: client && task.id ? () => client.deleteTaskPermanently(task.id!) : undefined,
-      remoteEnabled: devicePaired,
-    });
-    if (!outcome.localDeleted) {
-      setWorking(false);
-      return;
-    }
-    if (outcome.remoteDeleted === false) {
-      setError(
-        outcome.needsPairing
-          ? "本機任務已刪除；Publisher 裝置授權已失效，請到「同步與設定」重新配對，遠端變更會在之後同步。"
-          : `本機任務已刪除；Publisher 尚未刪除：${outcome.remoteError ?? "DELETE_FAILED"}`,
-      );
-      if (outcome.needsPairing) setDevicePaired(false);
-      setStatus("本機 Markdown 已安全刪除 · 遠端待同步");
-    } else {
-      setStatus(outcome.remoteDeleted ? "任務已從雲端與本機 Markdown 永久刪除" : "任務已從本機 Markdown 永久刪除");
-    }
+    const deleted = await persistLocal(tasks.filter((item) => task.id ? item.id !== task.id : item !== task));
+    if (deleted) setStatus("任務已從本機 Markdown 永久刪除");
     setWorking(false);
   }
 
   async function flushDraftsToSelectedVault(): Promise<void> {
     const draft = loadDraftWorkspace();
     if (!hasDraftContent(draft)) return;
-    const loader = engine ?? new SyncEngine(native, {
-      async getState() { throw new Error("SERVER_NOT_CONFIGURED"); },
-      async createPlan() { throw new Error("SERVER_NOT_CONFIGURED"); },
-      async commitPlan() { throw new Error("SERVER_NOT_CONFIGURED"); },
-      async getPlanStatus() { throw new Error("SERVER_NOT_CONFIGURED"); },
-    });
+    const loader = new VaultLoader(native);
     const local = await loader.loadLocal();
     const usedPaths = local.files.map((file) => file.relativePath);
     const creates = [];
@@ -1850,120 +1584,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       setWorking(false);
     }
   }
-
-  async function configureServer() {
-    try {
-      const normalized = new DeviceClient(diagnostics?.publisherOrigin ?? serverOrigin, native).origin;
-      localStorage.setItem("second-brain.serverOrigin", normalized);
-      setServerOrigin(normalized);
-      setStatus("雲端同步服務已設定");
-    } catch {
-      setError("正式伺服器必須使用 HTTPS。");
-    }
-  }
-
-  async function startPairing() {
-    if (!client) return;
-    setWorking(true);
-    setError("");
-    try {
-      const result = await client.startPairing("第二大腦工作台");
-      setPairing(result);
-      setStatus("請在第二大腦網頁核准配對碼");
-      await client.openPairingPage(result.pairingId);
-    } catch (cause) {
-      setError(
-        `無法開始配對：${describeError(cause, "PAIR_FAILED")}`,
-      );
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  function openPairingWebsite() {
-    if (!client || !pairing) return;
-    void client.openPairingPage(pairing.pairingId).catch((cause) => {
-      setError(`無法開啟 Publisher 配對頁：${describeError(cause, "OPEN_PAIRING_FAILED")}`);
-    });
-  }
-
-  useEffect(() => {
-    if (!pairing || !client) return;
-    const timer = window.setInterval(
-      () =>
-        void client
-          .pairingStatus(pairing.pairingId, pairing.pollingSecret)
-          .then(async (result) => {
-            if (result.status === "paired") {
-              window.clearInterval(timer);
-              if (!result.deviceId)
-                throw new Error("PAIRING_DEVICE_ID_MISSING");
-              await native.completeDevicePairing(result.deviceId);
-              setDevicePaired(true);
-              setPairing(null);
-              setStatus("裝置已配對，開始第一次同步");
-              void runSync();
-            }
-          })
-          .catch((cause) =>
-            setError(
-              `無法完成配對：${describeError(cause, "PAIRING_FAILED")}`,
-            ),
-          ),
-      2_000,
-    );
-    return () => window.clearInterval(timer);
-  }, [client, native, pairing, runSync]);
-
-  async function resolveConflicts() {
-    if (!conflict || !engine) return;
-    const selections: ConflictChoice[] = [];
-    for (const item of conflict.plan.conflicts)
-      for (const field of item.fields) {
-        const choice = choices[`${item.entity}:${item.id}:${field}`];
-        if (!choice) {
-          setError("請先選完每一個衝突欄位。");
-          return;
-        }
-        selections.push({ entity: item.entity, id: item.id, field, choice });
-      }
-    setWorking(true);
-    try {
-      await engine.resolveConflict(conflict, selections);
-      setConflict(null);
-      setChoices({});
-      setLastSync(new Date().toISOString());
-      await reloadLocal();
-      setStatus("衝突已解決並同步");
-    } catch (cause) {
-      setError(
-        `衝突提交失敗：${describeError(cause, "COMMIT_FAILED")}`,
-      );
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  const requestManualSync = () => {
-    if (!devicePaired) {
-      setView("sync");
-      setError("請先完成步驟 3 的安全配對，再執行同步。");
-      return;
-    }
-    setPreviewDismissed(false);
-    void runSync();
-  };
-  const approveFirstWrite = async () => {
-    localStorage.setItem("second-brain.agentWriteApproved", "true");
-    setWriteApproved(true);
-    setPreview(null);
-    await runSync({ forceWrite: true });
-  };
-  const returnToShadowMode = () => {
-    localStorage.removeItem("second-brain.agentWriteApproved");
-    setWriteApproved(false);
-    setStatus("已切換 Shadow 模式；同步只產生預覽，不寫入 Markdown");
-  };
 
   const content =
     view === "today" ? (
@@ -2053,21 +1673,11 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     ) : (
       <SyncSettings
         diagnostics={diagnostics}
-        serverOrigin={serverOrigin}
-        setServerOrigin={setServerOrigin}
         vaultInput={vaultInput}
         setVaultInput={setVaultInput}
-        pairing={pairing}
-        devicePaired={devicePaired}
         working={working}
-        writeApproved={writeApproved}
         onBrowseVault={browseVault}
         onSelectVault={() => selectVault()}
-        onConfigureServer={configureServer}
-        onStartPairing={startPairing}
-        onOpenPairingWebsite={openPairingWebsite}
-        onSync={requestManualSync}
-        onShadow={returnToShadowMode}
         onOpenArchitecture={() => setArchitectureOpen(true)}
         onPreviewLayout={() => void prepareLayoutMigration()}
         appUpdate={appUpdate}
@@ -2199,33 +1809,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             >
               {preferences.theme === "light" ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
             </button>
-            {diagnostics?.syncEnabled && (
-            <div className="sync-state">
-              <span className="visually-hidden">
-                {lastSync
-                  ? `${preferences.language === "zh-TW" ? "已同步" : "Synced"} ${new Date(lastSync).toLocaleTimeString(preferences.language, { hour: "2-digit", minute: "2-digit" })}`
-                  : devicePaired
-                    ? (preferences.language === "zh-TW" ? "已配對，等待完成首次同步" : "Paired; first sync pending")
-                    : (preferences.language === "zh-TW" ? "尚未配對桌面 App" : "Desktop app not paired")}
-              </span>
-              <button
-                className="icon-button top-icon-action sync-icon-action"
-                disabled={working || !engine}
-                aria-label={devicePaired ? (writeApproved ? t("sync.full") : t("sync.first")) : t("sync.pairFirst")}
-                title={devicePaired ? (writeApproved ? t("sync.full") : t("sync.first")) : t("sync.pairFirst")}
-                onClick={requestManualSync}
-              >
-                <RefreshCw className={working ? "spin" : ""} aria-hidden="true" />
-                {working
-                  ? (preferences.language === "zh-TW" ? "處理中…" : "Working…")
-                  : !devicePaired
-                    ? t("sync.pairFirst")
-                    : writeApproved
-                      ? t("sync.full")
-                      : t("sync.first")}
-              </button>
-            </div>
-            )}
           </div>
         </header>
         {error && (
@@ -2604,102 +2187,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
           </section>
         </div>
       )}
-      {conflict && (
-        <div className="modal-backdrop">
-          <section className="modal" role="dialog" aria-modal="true">
-            <h2>需要解決同步衝突</h2>
-            <p>兩邊修改了相同欄位；在選完以前不會覆蓋任何一邊。</p>
-            {conflict.plan.conflicts.map((item) => (
-              <div className="conflict" key={`${item.entity}:${item.id}`}>
-                <strong>
-                  {item.entity === "task" ? "任務" : "專案"} ·{" "}
-                  {item.id.slice(0, 8)}
-                </strong>
-                {item.fields.map((field) => (
-                  <div className="conflict-row" key={field}>
-                    <span>{field}</span>
-                    <button
-                      className={
-                        choices[`${item.entity}:${item.id}:${field}`] ===
-                        "local"
-                          ? "chosen"
-                          : ""
-                      }
-                      onClick={() =>
-                        setChoices((value) => ({
-                          ...value,
-                          [`${item.entity}:${item.id}:${field}`]: "local",
-                        }))
-                      }
-                    >
-                      保留本機
-                    </button>
-                    <button
-                      className={
-                        choices[`${item.entity}:${item.id}:${field}`] ===
-                        "server"
-                          ? "chosen"
-                          : ""
-                      }
-                      onClick={() =>
-                        setChoices((value) => ({
-                          ...value,
-                          [`${item.entity}:${item.id}:${field}`]: "server",
-                        }))
-                      }
-                    >
-                      採用雲端
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ))}
-            <button
-              className="primary wide"
-              disabled={working}
-              onClick={() => void resolveConflicts()}
-            >
-              套用選擇並同步
-            </button>
-          </section>
-        </div>
-      )}
-      {preview && (
-        <div className="modal-backdrop">
-          <section className="modal" role="dialog" aria-modal="true">
-            <h2>第一次寫入前確認</h2>
-            <div className="first-sync-warning">
-              <strong>這一步尚未把資料送到網頁</strong>
-              <span>確認下方結果後，按下同步按鈕才會建立備份、加入隱藏識別碼並提交雲端。</span>
-            </div>
-            <p>
-              Shadow 預覽找到 {preview.taskCount} 項任務、{preview.projectCount}{" "}
-              個專案、{preview.conflictCount} 個衝突，並有{" "}
-              {preview.bootstrapFileCount}{" "}
-              個檔案需要加入隱藏識別碼。確認後每次實際寫檔都會先建立並驗證備份
-              ZIP。
-            </p>
-            <div className="form-row">
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  setPreview(null);
-                  setPreviewDismissed(true);
-                }}
-              >
-                繼續 Shadow 模式
-              </button>
-              <button
-                className="primary"
-                disabled={working || preview.conflictCount > 0}
-                onClick={() => void approveFirstWrite()}
-              >
-                確認備份並同步到網頁
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
     </div>
     </AttachmentProvider>
     </UiPreferencesContext.Provider>
@@ -2709,119 +2196,6 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     setShowCompleted(value);
     localStorage.setItem("second-brain.showCompletedTasks", String(value));
   }
-}
-
-function TaskEditor({
-  task,
-  projects,
-  onSave,
-}: {
-  task: BrainTaskSnapshot;
-  projects: BrainProjectSnapshot[];
-  onSave: (task: BrainTaskSnapshot) => void;
-}) {
-  const { t, preferences } = useUiPreferences();
-  const [value, setValue] = useState(task);
-  const chooseProject = (id: string) => {
-    const project = projects.find((item) => item.id === id);
-    setValue({
-      ...value,
-      projectId: project?.id ?? null,
-      projectName: project?.name ?? null,
-    });
-  };
-  return (
-    <div className="task-editor">
-      <input
-        aria-label={t("task.field.title")}
-        value={value.title}
-        onChange={(event) => setValue({ ...value, title: event.target.value })}
-      />
-      <MarkdownBlockEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} attachmentFolder={attachmentFolderForTask(value.projectName)} maxAttachments={1} />
-      <div className="form-row">
-        <select
-          aria-label={t("task.field.status")}
-          value={value.status}
-          onChange={(event) =>
-            setValue({
-              ...value,
-              status: event.target.value as TaskStatus,
-              completedAt:
-                event.target.value === "done" ? taipeiDateKey() : null,
-            })
-          }
-        >
-          {Object.entries(STATUS_KEYS).map(([key, labelKey]) => (
-            <option key={key} value={key}>
-              {t(labelKey)}
-            </option>
-          ))}
-        </select>
-        <input
-          aria-label={t("task.field.date")}
-          type="date"
-          value={value.taskDate ?? ""}
-          onChange={(event) =>
-            setValue({ ...value, taskDate: event.target.value || null })
-          }
-        />
-        <input
-          aria-label={t("task.field.startTime")}
-          type="time"
-          value={value.startTime ?? ""}
-          onChange={(event) => setValue({
-            ...value,
-            startTime: event.target.value || null,
-            durationMinutes: event.target.value ? (value.durationMinutes ?? 30) : null,
-            timeZone: "Asia/Taipei",
-          })}
-        />
-        <select
-          aria-label={t("task.field.duration")}
-          disabled={!value.startTime}
-          value={value.durationMinutes ?? 30}
-          onChange={(event) => setValue({ ...value, durationMinutes: Number(event.target.value) })}
-        >
-          {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分鐘</option>)}
-        </select>
-        <select
-          aria-label={t("task.field.priority")}
-          value={value.priority}
-          onChange={(event) =>
-            setValue({
-              ...value,
-              priority: event.target.value as BrainTaskSnapshot["priority"],
-            })
-          }
-        >
-          <option value="highest">P1 · 最重要</option>
-          <option value="high">P2 · 高</option>
-          <option value="medium">P3 · 中</option>
-          <option value="normal">P4 · 一般</option>
-          <option value="low">P5 · 低</option>
-        </select>
-        <select
-          aria-label={t("task.field.project")}
-          value={value.projectId ?? ""}
-          onChange={(event) => chooseProject(event.target.value)}
-        >
-          <option value="">{t("app.unassigned")}</option>
-          {projects.map((project) => (
-            <option key={project.id ?? project.name} value={project.id ?? ""}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-        <button
-          className="primary action-with-icon"
-          disabled={!value.title.trim()}
-          onClick={() => onSave({ ...value, title: value.title.trim() })}
-        >
-          <Save aria-hidden="true" />{t("app.save")}
-        </button>
-      </div>
-    </div>
-  );
 }
 
 function CompletedVisibilityButton({
@@ -3104,238 +2478,6 @@ function TaskDateInput({
         }}
       />
     </div>
-  );
-}
-
-function AgendaInlineTitle({ task, onSave }: { task: BrainTaskSnapshot; onSave: (title: string) => void }) {
-  const { t } = useUiPreferences();
-  return (
-    <InlineTitle
-      value={taskLabel(task)}
-      onSave={onSave}
-      prefix={task.status === "done" ? "✓ " : ""}
-      className="agenda-inline-title"
-      inputClassName="agenda-inline-title-input"
-      ariaLabel={t("task.field.title")}
-      hint={t("task.hint.editTitle")}
-    />
-  );
-}
-
-function LegacyToday({
-  tasks,
-  projects,
-  showCompleted,
-  onSave,
-  onDelete,
-  onQuickAdd,
-}: {
-  tasks: BrainTaskSnapshot[];
-  projects: BrainProjectSnapshot[];
-  showCompleted: boolean;
-  onSave: (tasks: BrainTaskSnapshot[]) => void;
-  onDelete: (task: BrainTaskSnapshot) => void;
-  onQuickAdd: () => void;
-}) {
-  const today = taipeiDateKey();
-  const visible = getTodayTasks(tasks, projects, today);
-  const completed = completedForDate(tasks, today);
-  const nextPriorities = nextWeekPriorities(tasks, today);
-  const focusProject = projects.find((project) => project.focusToday);
-  const openCount = tasks.filter((task) => task.status !== "done").length;
-  const todayPriority =
-    visible.find((task) => task.priority === "highest") ?? visible[0] ?? null;
-  const [editing, setEditing] = useState<string | null>(null);
-  const toggleDone = (task: BrainTaskSnapshot) =>
-    onSave(
-      tasks.map((item) =>
-        item.id === task.id
-          ? {
-              ...item,
-              status: item.status === "done" ? "todo" : "done",
-              completedAt: item.status === "done" ? null : today,
-            }
-          : item,
-      ),
-    );
-  return (
-    <section>
-      <div className="hero-card">
-        <div>
-          <span className="eyebrow">{today}</span>
-          <h2>今天，只推進最重要的事</h2>
-          <p>
-            紅色任務是今日唯一最重要任務。點選任務後按 Space 或 Enter
-            可快速完成。
-          </p>
-        </div>
-        <div className="metric">
-          <strong>{visible.length}</strong>
-          <span>今日任務</span>
-        </div>
-      </div>
-      <div className="planning-overview">
-        <article className="overview-card primary-focus">
-          <span>今天最優先</span>
-          <strong>{todayPriority?.title ?? "尚未選定"}</strong>
-          <small>
-            {todayPriority
-              ? `${priorityDisplay(todayPriority.priority).code} · ${todayPriority.projectName ?? "無專案"}`
-              : "從今日任務選一件最重要的事"}
-          </small>
-        </article>
-        <article className="overview-card">
-          <span>未來 7 天重點</span>
-          <strong>{nextPriorities.length} 項</strong>
-          <small>
-            {nextPriorities
-              .slice(0, 2)
-              .map((task) => task.title)
-              .join("、") || "目前沒有 P1／P2 重點"}
-          </small>
-        </article>
-        <article className="overview-card">
-          <span>焦點專案進度</span>
-          <strong>
-            {focusProject ? `${focusProject.progress ?? 0}%` : "未設定"}
-          </strong>
-          <small>{focusProject?.name ?? "到專案頁設定今日焦點"}</small>
-        </article>
-        <article className="overview-card">
-          <span>全部未完成</span>
-          <strong>{openCount} 項</strong>
-          <small>
-            {tasks.filter((task) => boardLane(task) === "idea").length}{" "}
-            項仍在想法匣
-          </small>
-        </article>
-      </div>
-      <button className="add-task-panel" onClick={onQuickAdd}>
-        <span><Plus aria-hidden="true" /></span>
-        <div>
-          <strong>新增一個任務</strong>
-          <small>快速輸入想法、選擇專案與日期</small>
-        </div>
-        <kbd>N</kbd>
-      </button>
-      <div className="task-list">
-        {visible.length === 0 ? (
-          <Empty text="今天沒有需要處理的任務。按 N 快速新增。" />
-        ) : (
-          visible.map((task) => {
-            const important =
-              task.priority === "highest" && task.taskDate === today;
-            return (
-              <article
-                className={`task-card ${important ? "most-important" : ""}`}
-                key={task.id ?? task.title}
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (
-                    isCompleteShortcut({
-                      key: event.key,
-                      editable: isEditableElement(event.target),
-                    })
-                  ) {
-                    event.preventDefault();
-                    toggleDone(task);
-                  }
-                }}
-              >
-                <TaskCompleteButton
-                  size="lg"
-                  done={task.status === "done"}
-                  label={`${taskLabel(task)}標記完成`}
-                  onClick={() => toggleDone(task)}
-                />
-                <div className="task-body">
-                  <div className="task-title-row">
-                    <PriorityBadge priority={task.priority} />
-                    <strong>{taskLabel(task)}</strong>
-                    {important && (
-                      <span className="important-badge">今日最重要</span>
-                    )}
-                  </div>
-                  <small>
-                    {task.projectName ?? "無專案"} ·{" "}
-                    {task.taskDate ? `⏳ ${task.taskDate}` : "想法匣"}
-                  </small>
-                  {editing === task.id && (
-                    <TaskEditor
-                      task={task}
-                      projects={projects}
-                      onSave={(next) => {
-                        setEditing(null);
-                        const changed = tasks.map((item) =>
-                          item.id === task.id ? next : item,
-                        );
-                        void onSave(
-                          next.priority === "highest" && next.id
-                            ? markMostImportant(
-                                changed,
-                                next.id,
-                                next.taskDate ?? today,
-                              )
-                            : changed,
-                        );
-                      }}
-                    />
-                  )}
-                </div>
-                <TaskActionBar
-                  task={task}
-                  important={important}
-                  onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, today))}
-                  onComplete={() => toggleDone(task)}
-                  onEdit={() => setEditing(editing === task.id ? null : task.id)}
-                  onDelete={onDelete}
-                />
-              </article>
-            );
-          })
-        )}
-      </div>
-      {showCompleted && completed.length > 0 && (
-        <section className="completed-section">
-          <header>
-            <h3>今日已完成</h3>
-            <span>{completed.length} 項</span>
-          </header>
-          <div className="task-list">
-            {completed.map((task) => (
-              <article
-                className="task-card completed-task"
-                key={task.id ?? task.title}
-              >
-                <TaskCompleteButton
-                  size="lg"
-                  done
-                  label={`${taskLabel(task)}重新開啟`}
-                  onClick={() => toggleDone(task)}
-                />
-                <div className="task-body">
-                  <div className="task-title-row">
-                    <PriorityBadge priority={task.priority} />
-                    <strong>{taskLabel(task)}</strong>
-                  </div>
-                  <small>
-                    {task.projectName ?? "無專案"} · 完成於 {task.completedAt}
-                  </small>
-                </div>
-                <TaskActionBar
-                  task={task}
-                  important={task.priority === "highest"}
-                  onImportant={() => task.id && onSave(markMostImportant(tasks, task.id, task.taskDate ?? today))}
-                  onComplete={() => toggleDone(task)}
-                  onEdit={() => setEditing(editing === task.id ? null : task.id)}
-                  onDelete={onDelete}
-                />
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-    </section>
   );
 }
 
@@ -4459,18 +3601,6 @@ export function Calendar({
     const selectedIds = new Set(ids);
     void onSave(tasks.map((task) => task.id && selectedIds.has(task.id) ? scheduleTask(task, date, startTime) : task));
   };
-  const unschedule = (id: string | null) => {
-    if (!id) return;
-    const target = tasks.find((task) => task.id === id);
-    flashNotice(target ? `「${target.title}」已移回想法匣` : "任務已移回想法匣");
-    void onSave(
-      tasks.map((task) =>
-        task.id === id
-          ? { ...task, status: "todo", taskDate: null, completedAt: null, startTime: null, durationMinutes: null }
-          : task,
-      ),
-    );
-  };
   const unscheduleSelection = (ids: readonly string[]) => {
     const selectedIds = new Set(ids);
     void onSave(tasks.map((task) => task.id && selectedIds.has(task.id)
@@ -5266,169 +4396,6 @@ export function Calendar({
   );
 }
 
-function ProjectEditor({
-  project,
-  openTasks,
-  doingTasks,
-  existingAreas = [],
-  onSave,
-  onFocus,
-  onComplete,
-  onReopen,
-  onArchive,
-  onOpen,
-  onDelete,
-}: {
-  project: BrainProjectSnapshot;
-  openTasks: number;
-  doingTasks: number;
-  existingAreas?: string[];
-  onSave: (value: BrainProjectSnapshot) => void;
-  onFocus: (enabled: boolean) => void;
-  onComplete: () => void;
-  onReopen: () => void;
-  onArchive: () => void;
-  onOpen: () => void;
-  onDelete: () => void;
-}) {
-  const { t, preferences } = useUiPreferences();
-  const [value, setValue] = useState(project);
-  useEffect(() => setValue(project), [project]);
-  return (
-    <article
-      className="project-card"
-      tabIndex={0}
-      onClick={(event) => {
-        if (!(event.target as HTMLElement).closest("button,input,select,textarea,label,a")) onOpen();
-      }}
-      onKeyDown={(event) => {
-        if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) onOpen();
-      }}
-    >
-      <div className="project-head">
-        <div>
-          <span className="eyebrow">{value.area ?? t("app.uncategorized")}</span>
-          <h3>{value.name}</h3>
-          <ImportanceControl
-            value={value.priority}
-            locale={preferences.language}
-            onChange={(priority) => {
-              const next = { ...value, priority };
-              setValue(next);
-              onSave(next);
-            }}
-          />
-        </div>
-        <label className="focus">
-          <input
-            type="checkbox"
-            checked={value.focusToday}
-            onChange={(event) => onFocus(event.target.checked)}
-          />
-          {t("project.focusToday")}
-        </label>
-      </div>
-      <div className="progress">
-        <i style={{ width: `${value.progress ?? 0}%` }} />
-      </div>
-      <div className="project-meta">
-        <span>{value.progress ?? 0}%</span>
-        <span>{t("task.count.open", { count: openTasks })}</span>
-        <span>{t("task.count.doing", { count: doingTasks })}</span>
-        <span>{value.startDate || value.endDate ? `${value.startDate ?? t("project.date.undecided")} — ${value.endDate ?? t("project.date.undecided")}` : t("project.period.none")}</span>
-      </div>
-      <div className="project-editor-grid">
-        <label>
-          {t("project.field.status")}
-          <select
-            value={value.status}
-            onChange={(event) =>
-              setValue({ ...value, status: event.target.value })
-            }
-          >
-            <option value="planning">{t("project.status.planning")}</option>
-            <option value="active">{t("project.status.active")}</option>
-            <option value="paused">{t("project.status.paused")}</option>
-            {value.status === "done" && <option value="done">{t("project.status.done")}</option>}
-            {value.status === "archived" && <option value="archived">{t("project.status.archived")}</option>}
-          </select>
-        </label>
-        <label>
-          {t("project.field.category")}
-          <CategoryInput
-            value={value.area ?? ""}
-            existingCategories={existingAreas}
-            listId={`project-area-list-${project.id ?? "new"}`}
-            ariaLabel={t("project.field.category")}
-            onChange={(area) =>
-              setValue({ ...value, area: area || null })
-            }
-          />
-        </label>
-        <label>
-          {t("project.field.importance")}
-          <select
-            value={value.priority ?? ""}
-            onChange={(event) =>
-              setValue({
-                ...value,
-                  priority: event.target.value === "" ? null : Number(event.target.value),
-                })
-              }
-          >
-            <option value="">{t("project.importance.unset")}</option>
-            <option value="1">{t("project.importance.high")}</option>
-            <option value="2">{t("project.importance.medium")}</option>
-            <option value="3">{t("project.importance.low")}</option>
-          </select>
-        </label>
-        <label>
-          {t("project.field.startDate")}
-          <input
-            type="date"
-            value={value.startDate ?? ""}
-            onChange={(event) =>
-              setValue({ ...value, startDate: event.target.value || null })
-            }
-          />
-        </label>
-        <label>
-          {t("project.field.endDate")}
-          <input
-            type="date"
-            value={value.endDate ?? ""}
-            onChange={(event) =>
-              setValue({ ...value, endDate: event.target.value || null })
-            }
-          />
-        </label>
-        <label className="project-progress">
-          {t("project.field.progress", { value: value.progress ?? 0 })}
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={value.progress ?? 0}
-            onChange={(event) =>
-              setValue({ ...value, progress: Number(event.target.value) })
-            }
-          />
-        </label>
-        <div className="project-actions project-icon-actions">
-          <button className="primary icon-action" aria-label={t("project.action.save")} title={t("project.action.save")} onClick={() => onSave(value)}><Save aria-hidden="true" /></button>
-          {value.status === "done" || value.status === "archived" ? (
-            <button className="secondary-button icon-action" aria-label={t("project.action.reopen")} title={t("project.action.reopen")} onClick={onReopen}><RotateCcw aria-hidden="true" /></button>
-          ) : (
-            <button className="secondary-button icon-action" aria-label={t("project.action.complete")} title={t("project.action.complete")} onClick={onComplete}><CheckCircle2 aria-hidden="true" /></button>
-          )}
-          {value.status !== "archived" && <button className="archive-button icon-action" aria-label={t("project.action.archive")} title={t("project.action.archive")} onClick={onArchive}><Archive aria-hidden="true" /></button>}
-          <DangerConfirmButton className="danger icon-action" armLabel={t("project.action.delete")} confirmLabel={t("confirm.deleteAgain")} onConfirm={onDelete} />
-        </div>
-      </div>
-      <MarkdownBlockEditor value={value.body ?? ""} onChange={(body) => setValue({ ...value, body })} locale={preferences.language} attachmentFolder={attachmentFolderForProject(value.name)} />
-    </article>
-  );
-}
 type ProjectViewMode = "table" | "cards" | "status";
 const PROJECT_VIEW_KEY = "second-brain.projectView";
 function readProjectViewMode(): ProjectViewMode {
@@ -5940,21 +4907,11 @@ function CreateEntityModal({
 
 function SyncSettings({
   diagnostics,
-  serverOrigin,
-  setServerOrigin,
   vaultInput,
   setVaultInput,
-  pairing,
-  devicePaired,
   working,
-  writeApproved,
   onBrowseVault,
   onSelectVault,
-  onConfigureServer,
-  onStartPairing,
-  onOpenPairingWebsite,
-  onSync,
-  onShadow,
   onOpenArchitecture,
   onPreviewLayout,
   appUpdate,
@@ -5965,21 +4922,11 @@ function SyncSettings({
   inboxRelayCard,
 }: {
   diagnostics: DiagnosticsSnapshot | null;
-  serverOrigin: string;
-  setServerOrigin: (v: string) => void;
   vaultInput: string;
   setVaultInput: (v: string) => void;
-  pairing: { pairingId: string; userCode: string; expiresAt: string } | null;
-  devicePaired: boolean;
   working: boolean;
-  writeApproved: boolean;
   onBrowseVault: () => void;
   onSelectVault: () => void;
-  onConfigureServer: () => void;
-  onStartPairing: () => void;
-  onOpenPairingWebsite: () => void;
-  onSync: () => void;
-  onShadow: () => void;
   onOpenArchitecture: () => void;
   onPreviewLayout: () => void;
   appUpdate: AppUpdateCheck | null;
@@ -5990,7 +4937,6 @@ function SyncSettings({
   inboxRelayCard?: ReactNode;
 }) {
   const { preferences, setPreferences, t } = useUiPreferences();
-  const cloudEnabled = diagnostics?.syncEnabled === true;
   const languages = [
     { id: "zh-TW" as const, label: t("settings.language.zh") },
     { id: "en" as const, label: t("settings.language.en") },
@@ -6128,72 +5074,11 @@ function SyncSettings({
           </div>
         </details>
       </section>
-      {cloudEnabled && <section className="settings-card">
-        <span className="step">2</span>
-        <h2>{t("sync.cloud")}</h2>
-        <p>{t("sync.cloudHelp")}</p>
-        <div className="input-action">
-          <input
-            value={serverOrigin}
-            onChange={(event) => setServerOrigin(event.target.value)}
-            readOnly={diagnostics?.syncEnabled === true}
-            placeholder="選用：localhost 開發伺服器"
-          />
-          <button className="primary" disabled={diagnostics?.syncEnabled === true} onClick={onConfigureServer}>
-            {t("sync.save")}
-          </button>
-        </div>
-        <div className="paired-ok">
-          <strong>Publisher 同步已啟用</strong>
-          <small>私人 build 已鎖定允許的 Publisher origin</small>
-        </div>
-      </section>}
-      {cloudEnabled && <section className="settings-card">
-        <span className="step">3</span>
-        <h2>{t("sync.pairing")}</h2>
-        <p>{t("sync.pairingHelp")}</p>
-        {devicePaired ? (
-          <div className="paired-ok">
-            <strong>✓ {t("sync.paired")}</strong>
-            <small>{t("sync.pairedHelp")}</small>
-          </div>
-        ) : pairing ? (
-          <div className="pair-code">
-            <small>{t("sync.enterCode")}</small>
-            <strong>{pairing.userCode}</strong>
-            <span>
-              {new Date(pairing.expiresAt).toLocaleTimeString(preferences.language)}
-            </span>
-            <button className="primary wide" onClick={onOpenPairingWebsite}>
-              {t("sync.openPairing")}
-            </button>
-          </div>
-        ) : (
-          <button
-            className="primary wide"
-            disabled={working || !serverOrigin}
-            onClick={onStartPairing}
-          >
-            {t("sync.startPairing")}
-          </button>
-        )}
-      </section>}
       <section className="settings-card">
-        <span className="step">{cloudEnabled ? "4" : "2"}</span>
+        <span className="step">2</span>
         <h2>{t("sync.recovery")}</h2>
-        <p>{cloudEnabled ? t("sync.recoveryHelp") : t("settings.recoveryLocalHelp")}</p>
-        {cloudEnabled && !writeApproved && devicePaired && (
-          <div className="first-sync-hint">
-            <strong>{t("sync.firstConfirm")}</strong>
-            <span>{t("sync.firstConfirmHelp")}</span>
-          </div>
-        )}
+        <p>{t("settings.recoveryLocalHelp")}</p>
         <div className="diagnostic-list">
-          {cloudEnabled && (
-          <span>
-            模式 <b>{writeApproved ? "Write Alpha" : "Shadow 預覽"}</b>
-          </span>
-          )}
           <span>
             Watcher <b>{diagnostics?.watcherStatus ?? "stopped"}</b>
           </span>
@@ -6201,26 +5086,6 @@ function SyncSettings({
             Recovery <b>{diagnostics?.recoveryStatus ?? "none"}</b>
           </span>
         </div>
-        {cloudEnabled && (
-          <>
-            <button
-              className="primary wide"
-              disabled={working || !devicePaired}
-              onClick={onSync}
-            >
-              {!devicePaired
-                ? t("sync.pairFirst")
-                : writeApproved
-                  ? t("sync.full")
-                  : t("sync.first")}
-            </button>
-            {writeApproved && (
-              <button className="secondary-button wide" onClick={onShadow}>
-                {t("sync.shadow")}
-              </button>
-            )}
-          </>
-        )}
       </section>
     </div>
   );

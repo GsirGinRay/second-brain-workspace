@@ -2,11 +2,10 @@ import "./ipc.test";
 import "./security-config.test";
 import "./signing-golden.test";
 import "./vault.test";
-import "./device-client.test";
-import "./sync-engine.test";
+
+import "./vault-loader.test";
 import "./ui-contract.test";
 import "./task-actions.test";
-import "./task-deletion.test";
 import "./markdown-editor.test";
 import "./draft-workspace.test";
 import "./architecture.test";

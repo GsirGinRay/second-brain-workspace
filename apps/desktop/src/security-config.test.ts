@@ -21,15 +21,13 @@ test("Tauri capability grants the window close commands the close flow relies on
   assert.match(capability, /core:window:allow-destroy/);
 });
 
-test("Publisher sync is implemented only through explicit native commands", () => {
+test("Markdown writes go through explicit native commands and nothing syncs to a server", () => {
   const source = readFileSync(
     resolve(import.meta.dirname, "../src-tauri/src/lib.rs"),
     "utf8",
   );
-  assert.match(source, /publisher_http_request/);
-  assert.match(source, /open_publisher_pairing/);
   assert.match(source, /apply_markdown_changes/);
-  assert.match(source, /save_pending_commit/);
+  assert.doesNotMatch(source, /publisher_http_request|open_publisher_pairing|save_pending_commit/);
 });
 
 test("WebView CSP never grants arbitrary HTTPS connectivity", () => {

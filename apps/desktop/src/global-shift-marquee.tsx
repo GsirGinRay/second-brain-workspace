@@ -32,11 +32,6 @@ const unsetSelected = (id: string) => {
   selectedIds.delete(id);
   selectedKinds.delete(id);
 };
-const resetSelection = () => {
-  selectedIds.clear();
-  selectedKinds.clear();
-};
-
 /** Timestamp until which the click following a plain box-drag is swallowed. */
 let marqueeClickSuppressedUntil = 0;
 

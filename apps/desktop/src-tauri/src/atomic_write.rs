@@ -289,9 +289,8 @@ impl AtomicWriter {
 
     /// Backup archives that crash recovery may still need: those referenced by
     /// journals that are not yet `local_applied` (an interrupted or
-    /// commit-unknown write). `local_applied` journals only wait for server
-    /// confirmation and never read their backup again; local-only vaults keep
-    /// them indefinitely, so protecting them would disable retention entirely.
+    /// commit-unknown write). `local_applied` journals belong to finished
+    /// writes and never read their backup again.
     /// An unreadable journal is an error so callers skip pruning.
     pub fn backups_needed_for_recovery(&self) -> Result<Vec<PathBuf>, NativeError> {
         let mut paths = Vec::new();
@@ -309,17 +308,21 @@ impl AtomicWriter {
         Ok(paths)
     }
 
-    pub fn confirm_server_commit(&self, journal_path: &Path) -> Result<(), NativeError> {
-        let is_direct_child = journal_path.parent() == Some(self.journal_dir.as_path());
-        let is_journal = journal_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.ends_with(".journal.json"));
-        if !is_direct_child || !is_journal {
-            return Err(NativeError::UnsafePath);
+    /// Deletes the journals of finished (`local_applied`) writes and returns
+    /// how many were removed. Interrupted or commit-unknown journals stay for
+    /// recovery, and so does any journal that cannot be read.
+    pub fn remove_finished_journals(&self) -> Result<usize, NativeError> {
+        let mut removed = 0;
+        for journal in self.pending_journals()? {
+            let finished = fs::read(&journal)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<JournalRecord>(&bytes).ok())
+                .is_some_and(|record| record.state == "local_applied");
+            if finished && fs::remove_file(&journal).is_ok() {
+                removed += 1;
+            }
         }
-        fs::remove_file(journal_path)?;
-        Ok(())
+        Ok(removed)
     }
 
     fn persist_journal(&self, path: &Path, record: &JournalRecord) -> Result<(), NativeError> {
