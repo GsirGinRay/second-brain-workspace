@@ -131,6 +131,20 @@ test("a duration without a start time stays in the title", () => {
   }
 });
 
+test("a duration typed with a date but no start time becomes the time estimate", () => {
+  const view = mount({ initialTitle: "明天 整理券商對帳單 2小時" });
+  try {
+    pressEnter(titleInput(view.container));
+    const task = view.saved.at(-1)?.at(-1);
+    assert.equal(task?.title, "整理券商對帳單");
+    assert.equal(task?.taskDate, tomorrow);
+    assert.equal(task?.startTime, null);
+    assert.equal(task?.durationMinutes, 120);
+  } finally {
+    view.cleanup();
+  }
+});
+
 test("late evening without a date means tonight's midnight", () => {
   const view = mount({ initialTitle: "晚上12點打電話" });
   try {

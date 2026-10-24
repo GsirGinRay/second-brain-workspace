@@ -93,8 +93,9 @@ export function QuickAddModal({
       : ["date", "time", "duration", "recurrence"];
     const today = taipeiDateKey();
     const parsed = parseNaturalDate(title, today, { kinds });
-    // A duration only lands with a start time; otherwise keep its words.
-    if (parsed?.durationMinutes && !parsed.time && !startTime) {
+    // A duration lands with a start time, or as a time estimate when a date is
+    // also typed ("明天 整理對帳單 2小時"); alone ("讀書1小時") it keeps its words.
+    if (parsed?.durationMinutes && !parsed.time && !startTime && !parsed.date) {
       return parseNaturalDate(title, today, { kinds: kinds.filter((kind) => kind !== "duration") });
     }
     return parsed;
