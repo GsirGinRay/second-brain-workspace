@@ -303,7 +303,7 @@ fn importing_an_attachment_copies_under_attachments_and_suffixes_collisions() {
     assert!(import_attachment_bytes(&root, "開源發布", "payload.exe", &png).is_err());
     assert!(import_attachment_bytes(&root, "../escape", "photo.png", &png).is_err());
     let outside = dir.path().join("outside.png");
-    fs::write(&outside, &png).unwrap();
+    fs::write(&outside, png).unwrap();
     assert!(validate_attachment_relative_path(&outside).is_err());
     assert!(read_attachment_image(&root, Path::new("附件/開源發布/photo.png")).is_ok());
     assert!(read_attachment_image(&root, Path::new("附件/開源發布/brief.pdf")).is_err());

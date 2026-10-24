@@ -537,7 +537,7 @@ fn apply_markdown_changes_checked(
     if changes.is_empty() || changes.len() > MAX_NATIVE_BATCH_FILES {
         return Err(NativeError::LimitExceeded);
     }
-    let root = selected_root(&state)?;
+    let root = selected_root(state)?;
     let vault_id = vault_id_for_root(&root);
     let mut total = 0_u64;
     let mut relative_paths = Vec::with_capacity(changes.len());
@@ -622,7 +622,7 @@ fn apply_markdown_changes_checked(
     backup.verify_backup(&archive)?;
     let writer = AtomicWriter::new(state.data_dir.join("journals").join(&vault_id))?;
     let journal = writer.write_batch_with_backup(&file_changes, &backup, &archive, &root, None)?;
-    prune_backups_best_effort(&state, &vault_id, &backup, &archive, &writer);
+    prune_backups_best_effort(state, &vault_id, &backup, &archive, &writer);
     Ok(MarkdownApplyResult {
         journal_path: journal.to_string_lossy().to_string(),
         backup_path: archive.to_string_lossy().to_string(),
