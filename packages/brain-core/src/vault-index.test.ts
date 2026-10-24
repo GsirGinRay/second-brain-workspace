@@ -516,3 +516,43 @@ test("INSTRUCTIONS short task format is visible Markdown the parser can read", (
   assert.equal(parsed.durationMinutes, 30);
   assert.equal(parsed.taskDate, "2026-08-15");
 });
+
+test("renderVaultIndex names today's most important task above the today table", () => {
+  const inferred = input();
+  inferred.tasks = [
+    { ...baseTask, id: "a1111111-1111-4111-8111-111111111111", title: "回信", priority: "normal", startTime: "08:00" },
+    { ...baseTask, priority: "highest", title: "整理法說會重點" },
+  ];
+  const today = section(renderVaultIndex(inferred), "## Today's tasks", "## Overdue tasks");
+  assert.match(today, /今日最重要（P1）：整理法說會重點/);
+  assert.ok(today.indexOf("今日最重要") < today.indexOf("| 標題"), "P1 line comes before the table");
+});
+
+test("renderVaultIndex says when today's most important task is done or not chosen", () => {
+  const done = input();
+  done.tasks = [{ ...baseTask, priority: "highest", status: "done", completedAt: "2026-08-15" }];
+  assert.match(renderVaultIndex(done), /今日最重要（P1）：寫第一份報告（已完成）/);
+  const none = input();
+  none.tasks = [{ ...baseTask, priority: "high" }];
+  assert.match(renderVaultIndex(none), /今日最重要（P1）：尚未選定/);
+});
+
+test("renderVaultIndex shows each task's priority code in the today and overdue tables", () => {
+  const inferred = input();
+  inferred.tasks = [
+    { ...baseTask, priority: "high" },
+    { ...baseTask, id: "b1111111-1111-4111-8111-111111111111", title: "對帳單", priority: "low", taskDate: "2026-08-14", startTime: null, durationMinutes: null },
+  ];
+  const out = renderVaultIndex(inferred);
+  assert.match(section(out, "## Today's tasks", "## Overdue tasks"), /\| 寫第一份報告 \| P2 \|/);
+  assert.match(section(out, "## Overdue tasks", "## Important knowledge"), /\| 對帳單 \| P5 \|/);
+});
+
+test("INSTRUCTIONS explains the priority tokens and today's single P1", () => {
+  const instructions = scaffoldTemplateFiles(["ai"])[".ai/INSTRUCTIONS.md"];
+  assert.ok(instructions);
+  assert.match(instructions, /🔺/);
+  assert.match(instructions, /今日最重要/);
+  assert.match(instructions, /⏫/);
+  assert.match(instructions, /🔽/);
+});

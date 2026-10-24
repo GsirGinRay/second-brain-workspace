@@ -140,13 +140,46 @@ function formatVisibleSchedule(task: BrainTaskSnapshot): string {
   return parts.join(" ");
 }
 
+const PRIORITY_CODE: Record<string, string> = {
+  highest: "P1",
+  high: "P2",
+  medium: "P3",
+  normal: "P4",
+  low: "P5",
+};
+
 function scheduledTaskRows(tasks: BrainTaskSnapshot[]): (string | null)[][] {
   return tasks.map((item) => [
     item.title,
+    PRIORITY_CODE[item.priority] ?? "P4",
     formatVisibleSchedule(item),
     item.projectName,
     item.sourcePath,
   ]);
+}
+
+/**
+ * One explicit line naming today's P1 so an AI can answer "what matters most
+ * today" from the map alone, without opening the inbox. A day owns one P1.
+ */
+function mostImportantLine(
+  tasks: readonly BrainTaskSnapshot[],
+  today: string,
+): string {
+  const p1 = tasks
+    .filter(
+      (task) =>
+        task.priority === "highest" &&
+        task.taskDate === today &&
+        isIndexablePath(task.sourcePath),
+    )
+    .sort(compareIndexTasks);
+  const task = p1.find(isOpenTask) ?? p1[0];
+  if (!task) return "今日最重要（P1）：尚未選定";
+  const title = inlineCell(task.title);
+  return isOpenTask(task)
+    ? `今日最重要（P1）：${title}`
+    : `今日最重要（P1）：${title}（已完成）`;
 }
 
 function ideaRows(tasks: BrainTaskSnapshot[]): (string | null)[][] {
@@ -217,7 +250,7 @@ export function renderVaultIndex(input: VaultIndexInput): string {
   const ideas = unscheduledIndexTasks(input.tasks);
   const shownIdeas = ideas.slice(0, VAULT_INDEX_UNSCHEDULED_LIMIT);
   const hidden = ideas.length - shownIdeas.length;
-  const scheduledHeaders = ["標題", "時間", "專案", "路徑"];
+  const scheduledHeaders = ["標題", "優先度", "時間", "專案", "路徑"];
   const ideaHeaders = ["標題", "路徑"];
   const journalPath = resolveTodayJournalPath(
     today,
@@ -248,6 +281,8 @@ export function renderVaultIndex(input: VaultIndexInput): string {
     projectTable,
     "",
     `## Today's tasks 今日任務（${today}）`,
+    "",
+    mostImportantLine(input.tasks, today),
     "",
     renderTaskTable(
       scheduledHeaders,

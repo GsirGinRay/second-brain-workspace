@@ -83,6 +83,11 @@ const INSTRUCTIONS = `# Second Brain — INSTRUCTIONS（正本 / Canonical）
 重複任務在日期前加 \`🔁 every …\`（Obsidian Tasks 寫法），例如
 \`🔁 every day\`、\`🔁 every week on Monday\`、\`🔁 every month on the 5th\`。
 完成時 App 會自動建立下一次，不要自己複製下一行。
+
+## 優先度（Priority）
+
+- \`🔺\` P1 今日最重要：同一天只有一項。被問到「今天最重要的任務」時，以 INDEX 的「今日最重要（P1）」為準。
+- \`⏫\` P2 高、\`🔼\` P3 中、沒有符號是 P4 一般、\`🔽\` P5 低。
 `;
 
 const CLAUDE_ENTRY = `# See .ai/INSTRUCTIONS.md
