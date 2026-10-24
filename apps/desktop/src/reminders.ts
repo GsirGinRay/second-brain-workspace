@@ -14,8 +14,8 @@ export interface DueReminder {
   body: string;
 }
 
-export const REMINDER_SETTINGS_KEY = "second-brain.reminders";
-export const FIRED_REMINDERS_KEY = "second-brain.firedReminders";
+const REMINDER_SETTINGS_KEY = "second-brain.reminders";
+const FIRED_REMINDERS_KEY = "second-brain.firedReminders";
 export const LEAD_MINUTE_OPTIONS = [0, 5, 10, 15, 30, 60] as const;
 export const DEFAULT_REMINDER_SETTINGS: ReminderSettings = { enabled: true, leadMinutes: 10, digestTime: "09:00" };
 

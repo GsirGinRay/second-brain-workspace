@@ -32,7 +32,7 @@ function notifyEntitlementChanged() {
   window.dispatchEvent(new Event(ENTITLEMENT_EVENT));
 }
 
-export function readShareNotes(): boolean {
+function readShareNotes(): boolean {
   try {
     return window.localStorage.getItem(NOTES_KEY) !== "off";
   } catch {

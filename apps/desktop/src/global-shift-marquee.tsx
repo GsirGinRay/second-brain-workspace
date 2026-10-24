@@ -292,7 +292,7 @@ export interface GlobalSelectionDeleteDetail {
   ids: string[];
   kind: string;
 }
-export function dispatchGlobalSelectionDelete(detail: GlobalSelectionDeleteDetail): void {
+function dispatchGlobalSelectionDelete(detail: GlobalSelectionDeleteDetail): void {
   window.dispatchEvent(new CustomEvent(MARQUEE_DELETE_EVENT, { detail }));
 }
 export const GLOBAL_SELECTION_DELETE_EVENT = MARQUEE_DELETE_EVENT;

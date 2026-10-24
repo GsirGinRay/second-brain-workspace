@@ -14,7 +14,7 @@ type Language = "zh-TW" | "en";
 
 const CHECK_INTERVAL_MS = 30_000;
 /** Failed notifications in a row before the user is told. */
-export const REMINDER_FAILURE_LIMIT = 3;
+const REMINDER_FAILURE_LIMIT = 3;
 
 /**
  * Checks every half minute for reminders that are due and hands them to the

@@ -66,7 +66,7 @@ export function createAttachmentApi(native: NativeAdapter): VaultAttachmentApi |
   };
 }
 
-export function attachmentErrorMessage(locale: "zh-TW" | "en", code: string): string {
+function attachmentErrorMessage(locale: "zh-TW" | "en", code: string): string {
   const zh = locale === "zh-TW";
   if (code === "ATTACHMENT_TOO_LARGE") return zh ? "檔案太大。" : "That file is too large.";
   if (code === "ATTACHMENT_TASK_LIMIT") {

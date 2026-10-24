@@ -108,7 +108,7 @@ function newBlockId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `markdown-block-${Date.now()}-${Math.random()}`;
 }
 
-export function splitMarkdownBlocks(value: string): string[] {
+function splitMarkdownBlocks(value: string): string[] {
   if (!value.trim()) return [];
   const blocks: string[] = [];
   let current: string[] = [];
@@ -422,7 +422,7 @@ export interface ParsedListPrefix {
 }
 
 /** Splits a line into indentation, list marker (with trailing space) and content. */
-export function parseListPrefix(line: string): ParsedListPrefix | null {
+function parseListPrefix(line: string): ParsedListPrefix | null {
   const match = line.match(LIST_PREFIX);
   if (!match) return null;
   return { indent: match[1] ?? "", marker: match[2] ?? "", content: match[3] ?? "" };

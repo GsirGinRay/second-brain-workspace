@@ -2,9 +2,9 @@ import type { BrainTaskSnapshot } from "@second-brain/brain-core";
 
 export const AVAILABLE_HOURS_KEY = "second-brain.availableHours";
 export const AVAILABLE_HOUR_OPTIONS = [4, 5, 6, 7, 8, 9, 10, 12] as const;
-export const DEFAULT_AVAILABLE_HOURS = 8;
+const DEFAULT_AVAILABLE_HOURS = 8;
 // Tasks without an estimate still take time; count them as a short block.
-export const UNESTIMATED_TASK_MINUTES = 30;
+const UNESTIMATED_TASK_MINUTES = 30;
 
 export interface DayLoad {
   plannedMinutes: number;

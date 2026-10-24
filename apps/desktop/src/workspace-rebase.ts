@@ -29,7 +29,7 @@ function sameList<T extends object>(left: readonly T[], right: readonly T[]): bo
  * Field-level rebase of one entity: fields the caller changed since `before`
  * win, every other field keeps its `latest` value.
  */
-export function rebaseFields<T extends object>(before: T, wanted: T, latest: T): T {
+function rebaseFields<T extends object>(before: T, wanted: T, latest: T): T {
   const result = { ...latest };
   for (const key of Object.keys(wanted) as (keyof T)[]) {
     if (!sameValue(wanted[key], before[key])) result[key] = wanted[key];

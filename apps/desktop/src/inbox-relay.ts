@@ -174,7 +174,7 @@ export function validateInboxRelayEntitlement(value: unknown): InboxRelayEntitle
 }
 
 /** Days after today that the phone list can show; the phone picks 3 or 7. */
-export const SNAPSHOT_UPCOMING_DAYS = 7;
+const SNAPSHOT_UPCOMING_DAYS = 7;
 /** Plaintext budget, well under the relay's 128 KB for the sealed envelope. */
 const SNAPSHOT_PLAINTEXT_BYTES = 90_000;
 const PRIORITY_ORDER: Record<BrainTaskSnapshot["priority"], number> = { highest: 0, high: 1, medium: 2, normal: 3, low: 4 };

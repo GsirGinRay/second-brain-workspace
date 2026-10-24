@@ -1,9 +1,9 @@
 export const MINUTES_PER_DAY = 24 * 60;
 export const PX_PER_HOUR = 56;
-export const SNAP_MINUTES = 15;
+const SNAP_MINUTES = 15;
 export const MIN_BLOCK_HEIGHT = 22;
-export const MIN_DURATION_MINUTES = 15;
-export const MAX_DURATION_MINUTES = 8 * 60;
+const MIN_DURATION_MINUTES = 15;
+const MAX_DURATION_MINUTES = 8 * 60;
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 

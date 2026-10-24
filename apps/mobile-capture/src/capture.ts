@@ -229,7 +229,7 @@ export function classifyStatus(status: number): UploadResult {
 
 export type Fetcher = (url: string, init: RequestInit) => Promise<{ status: number }>;
 
-export async function upload(origin: string, pairing: Pairing, entry: OutboxEntry, fetcher: Fetcher): Promise<UploadResult> {
+async function upload(origin: string, pairing: Pairing, entry: OutboxEntry, fetcher: Fetcher): Promise<UploadResult> {
   try {
     const response = await fetcher(`${origin}/v1/inboxes/${pairing.inboxId}/items`, {
       method: "POST",
@@ -415,7 +415,7 @@ export interface ViewOptions {
   project: string | null;
 }
 
-export const DEFAULT_VIEW: ViewOptions = { days: 3, project: null };
+const DEFAULT_VIEW: ViewOptions = { days: 3, project: null };
 
 export function loadView(store: KeyValueStore): ViewOptions {
   try {

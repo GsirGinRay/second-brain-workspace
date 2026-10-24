@@ -15,7 +15,7 @@ export interface DraftWorkspace {
   collections: BrainCollectionSnapshot[];
 }
 
-export const emptyDraftWorkspace = (): DraftWorkspace => ({ tasks: [], projects: [], collections: [] });
+const emptyDraftWorkspace = (): DraftWorkspace => ({ tasks: [], projects: [], collections: [] });
 
 export function hasDraftContent(value: DraftWorkspace): boolean {
   return value.tasks.length + value.projects.length + value.collections.length > 0;

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@second-brain/brain-core": "file:../../packages/brain-core",
+    "@second-brain/brain-ui": "file:../../packages/brain-ui",
     "@tauri-apps/api": "^2.10.1",
     "lucide-react": "^0.460.0",
     "react": "^19.0.0",
