@@ -22,6 +22,7 @@ globals.MouseEvent = window.MouseEvent;
 const { FocusMode, WaitingPanel, WrapUpDialog } = await import("./today-tools");
 const { RecurrenceSelect } = await import("./recurrence-picker");
 const { WeeklyReviewDialog } = await import("./weekly-review-ui");
+const { useReminders } = await import("./reminders-ui");
 
 const t = (key: string, values?: Record<string, string | number>) => translate("zh-TW", key, values);
 const TODAY = "2026-10-20";
@@ -61,11 +62,13 @@ function click(element: Element | null | undefined) {
   flushSync(() => (element as HTMLElement).click());
 }
 
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 function buttonByText(container: HTMLElement, text: string) {
   return [...container.querySelectorAll("button")].find((button) => button.textContent?.includes(text));
 }
 
-test("focus mode walks the queue: done completes and advances, skip only advances", () => {
+test("focus mode walks the queue: done completes and advances, skip only advances", async () => {
   const completed: string[] = [];
   let queue = [task("a"), task("b"), task("c")];
   const view = () => (
@@ -82,17 +85,80 @@ test("focus mode walks the queue: done completes and advances, skip only advance
   try {
     assert.match(container.querySelector(".focus-card h2")!.textContent!, /任務a/);
     click(buttonByText(container, "完成，下一件"));
+    await tick();
     render(view());
     assert.deepEqual(completed, ["a"]);
     assert.match(container.querySelector(".focus-card h2")!.textContent!, /任務b/);
     click(buttonByText(container, "先跳過"));
     assert.match(container.querySelector(".focus-card h2")!.textContent!, /任務c/);
     click(buttonByText(container, "完成，下一件"));
+    await tick();
     render(view());
     assert.match(container.textContent!, /全部完成了/);
     assert.deepEqual(completed, ["a", "c"]);
   } finally {
     cleanup();
+  }
+});
+
+test("focus mode keeps the task when its save fails", async () => {
+  let saved = false;
+  const view = () => (
+    <FocusMode
+      queue={[task("a"), task("b")]}
+      language="zh-TW"
+      t={t}
+      onComplete={() => Promise.resolve(saved)}
+      onOpenTask={() => undefined}
+      onClose={() => undefined}
+    />
+  );
+  const { container, render, cleanup } = mount(view());
+  try {
+    click(buttonByText(container, "完成，下一件"));
+    await tick();
+    render(view());
+    assert.match(container.querySelector(".focus-card h2")!.textContent!, /任務a/);
+    assert.match(container.querySelector(".focus-error")!.textContent!, /沒有存檔成功/);
+    saved = true;
+    click(buttonByText(container, "完成，下一件"));
+    await tick();
+    render(view());
+    assert.match(container.querySelector(".focus-card h2")!.textContent!, /任務b/);
+    assert.equal(container.querySelector(".focus-error"), null);
+  } finally {
+    cleanup();
+  }
+});
+
+test("reminders report failing after several notifications fail in a row", async () => {
+  // Three tasks starting in 5 minutes (Taipei time) are all due with a 10-minute lead.
+  const soon = new Date(Date.now() + 8 * 3_600_000 + 5 * 60_000).toISOString();
+  const due = ["r1", "r2", "r3"].map((id) => task(id, { taskDate: soon.slice(0, 10), startTime: soon.slice(11, 16) }));
+  localStorage.clear();
+  let shouldFail = true;
+  const notify = () => shouldFail ? Promise.reject(new Error("blocked")) : Promise.resolve();
+  function Probe({ tasks }: { tasks: BrainTaskSnapshot[] }) {
+    const failing = useReminders({ tasks, settings: { enabled: true, leadMinutes: 10, digestTime: null }, language: "zh-TW", notify });
+    return <output>{failing ? "failing" : "ok"}</output>;
+  }
+  const { container, render, cleanup } = mount(<Probe tasks={due.slice(0, 2)} />);
+  try {
+    await tick();
+    render(<Probe tasks={due.slice(0, 2)} />);
+    assert.equal(container.textContent, "ok");
+  } finally {
+    cleanup();
+  }
+  const second = mount(<Probe tasks={due} />);
+  try {
+    await tick();
+    second.render(<Probe tasks={due} />);
+    assert.equal(second.container.textContent, "failing");
+  } finally {
+    second.cleanup();
+    shouldFail = false;
+    localStorage.clear();
   }
 });
 

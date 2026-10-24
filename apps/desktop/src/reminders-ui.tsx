@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BellRing } from "lucide-react";
 import type { BrainTaskSnapshot } from "@second-brain/brain-core";
 import {
@@ -13,10 +13,14 @@ type Translate = (key: string, values?: Record<string, string | number>) => stri
 type Language = "zh-TW" | "en";
 
 const CHECK_INTERVAL_MS = 30_000;
+/** Failed notifications in a row before the user is told. */
+export const REMINDER_FAILURE_LIMIT = 3;
 
 /**
  * Checks every half minute for reminders that are due and hands them to the
  * native notifier. Shown keys are remembered so a restart does not repeat them.
+ * Returns true once several notifications in a row have failed, until one
+ * gets through.
  */
 export function useReminders({ tasks, settings, language, notify }: {
   tasks: readonly BrainTaskSnapshot[];
@@ -26,10 +30,12 @@ export function useReminders({ tasks, settings, language, notify }: {
 }) {
   const latest = useRef({ tasks, settings, language });
   latest.current = { tasks, settings, language };
+  const [failing, setFailing] = useState(false);
   useEffect(() => {
     if (!notify) return;
     // Keys being shown right now, so a slow notifier is not asked twice.
     const pending = new Set<string>();
+    let failures = 0;
     const check = () => {
       const fired = new Set(loadFiredReminders(localStorage));
       const due = dueReminders(latest.current.tasks, new Date(), latest.current.settings, fired, latest.current.language)
@@ -38,8 +44,15 @@ export function useReminders({ tasks, settings, language, notify }: {
         pending.add(reminder.key);
         // Only a shown notification counts; a failed one is retried next check.
         void notify(reminder.title, reminder.body)
-          .then(() => saveFiredReminders(localStorage, [...loadFiredReminders(localStorage), reminder.key]))
-          .catch(() => undefined)
+          .then(() => {
+            saveFiredReminders(localStorage, [...loadFiredReminders(localStorage), reminder.key]);
+            failures = 0;
+            setFailing(false);
+          })
+          .catch(() => {
+            failures += 1;
+            if (failures >= REMINDER_FAILURE_LIMIT) setFailing(true);
+          })
           .finally(() => pending.delete(reminder.key));
       }
     };
@@ -47,10 +60,12 @@ export function useReminders({ tasks, settings, language, notify }: {
     const timer = window.setInterval(check, CHECK_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [notify]);
+  return failing;
 }
 
-export function ReminderSettingsCard({ settings, t, onChange, onTest }: {
+export function ReminderSettingsCard({ settings, failing = false, t, onChange, onTest }: {
   settings: ReminderSettings;
+  failing?: boolean;
   t: Translate;
   onChange: (settings: ReminderSettings) => void;
   onTest?: () => void;
@@ -99,6 +114,7 @@ export function ReminderSettingsCard({ settings, t, onChange, onTest }: {
         </label>
       </div>
       <small className="reminder-settings-note">{t("reminders.runningHint")}</small>
+      {failing && settings.enabled && <p className="reminder-settings-error" role="alert">{t("reminders.failing")}</p>}
       {onTest && (
         <div className="input-action">
           <button type="button" className="secondary-button" disabled={!settings.enabled} onClick={onTest}>{t("reminders.test")}</button>

@@ -487,7 +487,10 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     () => native.showReminder ? (title: string, body: string) => native.showReminder!(title, body) : undefined,
     [native],
   );
-  useReminders({ tasks, settings: reminderSettings, language: preferences.language, notify: notifyReminder });
+  const remindersFailing = useReminders({ tasks, settings: reminderSettings, language: preferences.language, notify: notifyReminder });
+  useEffect(() => {
+    if (remindersFailing) setError(t("reminders.failing"));
+  }, [remindersFailing]);
   // Phone items land in the inbox only once a vault is open; until then they
   // wait on the native side (and on the relay) without being acknowledged.
   useInboxRelay({
@@ -2074,6 +2077,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         reminderCard={(
           <ReminderSettingsCard
             settings={reminderSettings}
+            failing={remindersFailing}
             t={t}
             onChange={changeReminderSettings}
             onTest={notifyReminder ? () => void notifyReminder(t("reminders.test.title"), t("reminders.test.body")).catch((cause) => setError(describeError(cause, "NOTIFICATION_FAILED"))) : undefined}
@@ -2892,7 +2896,7 @@ function TaskActionBar({
 export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onOpenTask, onQuickAdd, onCreateProject, routineTemplate, onRoutineTemplateChange }: {
   tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; showCompleted: boolean;
   onShowCompletedChange: (value: boolean) => void;
-  onSave: (tasks: BrainTaskSnapshot[]) => void; onDelete: (task: BrainTaskSnapshot) => void; onOpenTask: (taskId: string) => void; onQuickAdd: () => void;
+  onSave: (tasks: BrainTaskSnapshot[]) => void | Promise<boolean>; onDelete: (task: BrainTaskSnapshot) => void; onOpenTask: (taskId: string) => void; onQuickAdd: () => void;
   onCreateProject?: (name: string) => Promise<{ id: string; name: string } | null>;
   routineTemplate: RoutineTemplate; onRoutineTemplateChange: (template: RoutineTemplate) => void;
 }) {
@@ -2925,7 +2929,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
   const clock = useMemo(() => new Date(), [today]);
   const patchTask = (task: BrainTaskSnapshot, patch: Partial<BrainTaskSnapshot>) => {
     const changed = tasks.map((item) => item.id === task.id ? { ...item, ...patch } : item);
-    onSave(patch.priority === "highest" && task.id ? markMostImportant(changed, task.id, today) : changed);
+    return onSave(patch.priority === "highest" && task.id ? markMostImportant(changed, task.id, today) : changed);
   };
   const complete = (task: BrainTaskSnapshot) => patchTask(task, { status: task.status === "done" ? "todo" : "done", completedAt: task.status === "done" ? null : today });
   const startToday = () => {

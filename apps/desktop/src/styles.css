@@ -910,6 +910,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .reminder-settings-grid select, .reminder-settings-grid input[type="time"] { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: var(--paper, #fff); color: inherit; }
 .reminder-digest-row { display: flex; align-items: center; gap: 8px; }
 .reminder-settings-note { display: block; margin: 4px 0 8px; color: var(--muted); }
+.reminder-settings-error { margin: 0 0 8px; color: var(--accent-red); font-weight: 600; }
 .command-summary .load-meter { align-content: start; }
 .load-meter strong { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
 .load-meter strong small { color: var(--muted); font-weight: 600; }
@@ -941,6 +942,7 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .focus-actions button { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; }
 .focus-actions svg { width: 17px; height: 17px; }
 .focus-next { margin: 0; color: var(--muted); }
+.focus-error { margin: 0; color: var(--accent-red); font-weight: 600; }
 .focus-finished-icon { width: 56px; height: 56px; color: #6b9e7a; }
 .wrap-up-modal { width: min(560px, calc(100vw - 32px)); }
 .wrap-up-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 10px; }

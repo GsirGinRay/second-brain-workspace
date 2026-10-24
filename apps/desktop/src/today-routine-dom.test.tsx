@@ -57,7 +57,7 @@ function renderToday(
         projects={projects}
         showCompleted={false}
         onShowCompletedChange={() => undefined}
-        onSave={(next) => saved.push(next.map((item) => ({ ...item })))}
+        onSave={(next) => { saved.push(next.map((item) => ({ ...item }))); }}
         onDelete={overrides.onDelete ?? (() => undefined)}
         onOpenTask={() => undefined}
         onQuickAdd={() => undefined}

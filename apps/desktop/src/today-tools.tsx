@@ -99,7 +99,8 @@ export function FocusMode({ queue, language, t, onComplete, onOpenTask, onClose 
   queue: readonly BrainTaskSnapshot[];
   language: Language;
   t: Translate;
-  onComplete: (task: BrainTaskSnapshot) => void;
+  /** Resolves false when the save failed; the task then stays current. */
+  onComplete: (task: BrainTaskSnapshot) => void | Promise<boolean>;
   onOpenTask: (taskId: string) => void;
   onClose: () => void;
 }) {
@@ -108,6 +109,8 @@ export function FocusMode({ queue, language, t, onComplete, onOpenTask, onClose 
   const [passed, setPassed] = useState<string[]>([]);
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
+  const [saving, setSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   const byId = useMemo(() => new Map(queue.flatMap((task) => task.id ? [[task.id, task] as const] : [])), [queue]);
   const remaining = order.filter((id) => !passed.includes(id) && byId.get(id) && byId.get(id)!.status !== "done");
   const current = remaining[0] ? byId.get(remaining[0])! : null;
@@ -123,6 +126,20 @@ export function FocusMode({ queue, language, t, onComplete, onOpenTask, onClose 
   const advance = (id: string) => {
     setPassed((items) => [...items, id]);
     setStartedAt(Date.now());
+  };
+  // A finished task drops out of `remaining` at once (the edit shows before it
+  // is written), but it is only passed once the save succeeds, so a failed
+  // save brings it back as the current task.
+  const completeCurrent = async (task: BrainTaskSnapshot) => {
+    setSaving(true);
+    setSaveFailed(false);
+    try {
+      const saved = await onComplete(task);
+      if (saved === false) setSaveFailed(true);
+      else advance(task.id!);
+    } finally {
+      setSaving(false);
+    }
   };
   const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
   const target = (current?.durationMinutes ?? 0) * 60;
@@ -143,7 +160,7 @@ export function FocusMode({ queue, language, t, onComplete, onOpenTask, onClose 
             {target > 0 && <small> / {formatClock(target)}</small>}
           </div>
           <div className="focus-actions">
-            <button type="button" className="primary" onClick={() => { onComplete(current); advance(current.id!); }}>
+            <button type="button" className="primary" disabled={saving} onClick={() => void completeCurrent(current)}>
               <CheckCircle2 aria-hidden="true" />{t("today.focus.done")}
             </button>
             <button type="button" className="secondary-button" onClick={() => advance(current.id!)}>
@@ -151,6 +168,7 @@ export function FocusMode({ queue, language, t, onComplete, onOpenTask, onClose 
             </button>
             <button type="button" className="secondary-button" onClick={() => onOpenTask(current.id!)}>{t("today.focus.open")}</button>
           </div>
+          {saveFailed && <p className="focus-error" role="alert">{t("today.focus.saveFailed")}</p>}
           {remaining[1] && <p className="focus-next">{t("today.focus.next", { title: byId.get(remaining[1])!.title })}</p>}
         </div>
       ) : (
