@@ -8,7 +8,6 @@ import {
   type InboxRelayApi,
   type InboxRelayEntitlement,
   type InboxRelayItem,
-  type InboxRelayLine,
   type InboxRelayPairing,
   type InboxRelayStatus,
 } from "./inbox-relay";
@@ -28,8 +27,6 @@ const ENTITLEMENT_POLL_MS = 30 * 60_000;
 /** Whether the phone list shows the first 200 characters of notes; on by default. */
 const NOTES_KEY = "second-brain.inbox-relay.notes";
 const NOTES_EVENT = "second-brain:inbox-notes";
-/** While a LINE link code is shown, check this often whether it was used. */
-const LINE_POLL_MS = 3_000;
 
 function notifyEntitlementChanged() {
   window.dispatchEvent(new Event(ENTITLEMENT_EVENT));
@@ -356,7 +353,6 @@ function TodayListSection({ api, t }: { api: InboxRelayApi; t: Translate }) {
             />
             {t("inboxRelay.today.notes")}
           </label>
-          <LineSection api={api} t={t} />
           <div className="input-action">
             <button
               type="button"
@@ -426,86 +422,6 @@ function TodayListSection({ api, t }: { api: InboxRelayApi; t: Translate }) {
             </form>
           )}
           {codeSent && !message && <small>{t("inboxRelay.today.codeSent")}</small>}
-        </>
-      )}
-      {message && <p role="alert">{message}</p>}
-    </div>
-  );
-}
-
-const LINE_ERRORS = new Set(["not_entitled", "rate_limited", "line_unavailable"]);
-
-/** LINE to inbox for paid members; hidden until the relay has an official account. */
-function LineSection({ api, t }: { api: InboxRelayApi; t: Translate }) {
-  const [line, setLine] = useState<InboxRelayLine | null>(null);
-  const [link, setLink] = useState<InboxRelayLine | null>(null);
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    void api.line().then(setLine).catch(() => setLine(null));
-  }, [api]);
-  // A shown code is used from the phone; poll until the relay reports the link.
-  useEffect(() => {
-    if (!link) return;
-    const timer = window.setInterval(() => {
-      void api.line().then((result) => {
-        if (!result.linked) return;
-        setLine(result);
-        setLink(null);
-      }).catch(() => undefined);
-    }, LINE_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [api, link]);
-
-  if (!line?.available) return null;
-
-  const act = async (request: () => Promise<InboxRelayLine>, onOk: (result: InboxRelayLine) => void) => {
-    setBusy(true);
-    setMessage("");
-    try {
-      const result = await request();
-      if (result.error) setMessage(t(`inboxRelay.line.error.${LINE_ERRORS.has(result.error) ? result.error : "unavailable"}`));
-      else onOk(result);
-    } catch {
-      setMessage(t("inboxRelay.line.error.unavailable"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="inbox-relay-line">
-      <h3>{t("inboxRelay.line.title")}</h3>
-      {line.linked && !link ? (
-        <>
-          <p>{t("inboxRelay.line.linked")}</p>
-          <div className="input-action">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={busy}
-              onClick={() => void act(() => api.lineUnlink(), (result) => setLine({ ...result, linked: false }))}
-            >
-              {t("inboxRelay.line.unlink")}
-            </button>
-          </div>
-        </>
-      ) : link?.qrSvg && link.code ? (
-        <div className="pair-code inbox-relay-qr">
-          <img src={qrDataUrl(link.qrSvg)} alt={t("inboxRelay.line.qrAlt")} width={200} height={200} />
-          <small>{t("inboxRelay.line.scan")}</small>
-          <small>{t("inboxRelay.line.manual", { code: link.code })}</small>
-          <button type="button" className="secondary-button" onClick={() => setLink(null)}>{t("inboxRelay.hideQr")}</button>
-        </div>
-      ) : (
-        <>
-          <p>{t(line.linked ? "inboxRelay.line.relink" : "inboxRelay.line.hint")}</p>
-          <div className="input-action">
-            <button type="button" className="secondary-button" disabled={busy} onClick={() => void act(() => api.lineLink(), setLink)}>
-              {t("inboxRelay.line.link")}
-            </button>
-          </div>
         </>
       )}
       {message && <p role="alert">{message}</p>}

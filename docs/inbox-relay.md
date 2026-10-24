@@ -9,8 +9,7 @@ pairs a phone, the desktop app never contacts it.
 
 - **End-to-end encrypted.** The phone encrypts each item with the desktop's
   inbox public key. The relay stores only ciphertext and cannot read, edit or
-  move an item to another inbox. LINE messages are the exception: LINE hands
-  the relay plain text, which it seals on arrival (see "LINE").
+  move an item to another inbox.
 - **Store until delivered.** The relay deletes an item as soon as the desktop
   confirms it was written to Markdown, and after 14 days at the latest.
 - **Add only.** A phone holds a write-only capture token. It cannot list, read
@@ -76,9 +75,8 @@ Plaintext is UTF-8 JSON with this exact key order:
 - Optional, in this order after `source`: `action` and `taskId` (both or
   neither; see "Today list"), `date` (YYYY-MM-DD; required for `reschedule`,
   otherwise only on added tasks) and `projectId` (added tasks only).
-- `source` is `pwa`, `line` or `email`. LINE and email items arrive at the
-  relay in plain text; the relay seals them with the inbox public key on
-  arrival and stores only the envelope.
+- `source` is `pwa`. `line` and `email` are reserved in the format but no
+  sender uses them.
 - The serialized envelope must be at most 4096 bytes.
 
 ## Pairing
@@ -120,10 +118,6 @@ Phone requests use `Authorization: Bearer <captureToken>`.
 | `DELETE /v1/inboxes/{id}/entitlement` | desktop | `204`; also deletes the snapshot. |
 | `PUT /v1/inboxes/{id}/snapshot` | desktop | Replaces the sealed "today" snapshot; `403 not_entitled`, `409` for an older version. |
 | `GET /v1/inboxes/{id}/snapshot` | phone | `200` envelope, `403 not_entitled`, `404 no_snapshot`. |
-| `GET /v1/inboxes/{id}/line` | desktop | `200 {available, linked, botId?, addFriendUrl?}`; `available` is false when the relay has no LINE account. |
-| `POST /v1/inboxes/{id}/line` | desktop | `{publicKey}` (the inbox public key); `200 {code, linkUrl, addFriendUrl, botId, expiresAt}`, `403 not_entitled`, `503 line_unavailable`. |
-| `DELETE /v1/inboxes/{id}/line` | desktop | `204`; forgets the key and the linked LINE account. |
-| `POST /line/webhook` | LINE | Checked with `X-Line-Signature`; always `200` once the signature is good. |
 
 Errors: `400` malformed, `401` bad token or signature, `404` unknown inbox,
 `413` body over 4096 bytes, `429` rate limited (`Retry-After`), `507` relay
@@ -189,34 +183,6 @@ a project.
   paid outside Skool: `inbox-relay grant <email> [note]`, `ungrant <email>`,
   `grants`, run inside the container; `inbox-relay check <email>` reads the
   Sheet without sending mail.
-
-## LINE (paid)
-
-Paid members can send text to the official LINE account and get a task in
-`收件匣`, also while the computer is off.
-
-- **Linking.** In settings the desktop sends its inbox public key to
-  `POST /line` and gets a one-time code (8 characters, 15 minutes) and a
-  `line.me/R/oaMessage` link, shown as a QR code. Scanning it opens LINE with
-  `連結 ABCD-EFGH` typed; sending it links that LINE account to the inbox. A
-  LINE account feeds one inbox; linking it again moves it. Ten code attempts
-  per LINE account per hour.
-- **Messages.** For a linked, entitled inbox the relay builds the payload
-  (`"source":"line"`, `createdAt` from the LINE event), seals it exactly like
-  the phone (fresh ephemeral key, same HKDF and AAD), stores the envelope and
-  pushes it to the desktop. The item id is derived from LINE's
-  `webhookEventId`, so a redelivered event does not create a second task. The
-  text is never written to disk or logs.
-- **Replies.** The relay answers through the free reply API: saved (with the
-  first 40 characters), not linked yet, not a paid member, text only, too long
-  or inbox full. `解除連結` unlinks; blocking the account does too.
-- **What the relay keeps.** The inbox public key, an HMAC-SHA256 of the LINE
-  user id (keyed by the channel secret) and the hashed pending code. LINE
-  itself sees the messages, as with any LINE chat.
-- **Configuration.** `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN` and
-  `LINE_BOT_ID` (the basic id, such as `@123abcde`). Without them the webhook
-  is `404` and the desktop hides the LINE section. The webhook URL is
-  `https://inbox.aizbrain.com/line/webhook`.
 
 ## Phone web app
 

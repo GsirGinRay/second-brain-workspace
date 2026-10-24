@@ -995,5 +995,3 @@ button.calendar-task-drag-handle svg{width:13px;height:13px}
 .review-empty { display: flex; align-items: center; gap: 8px; color: var(--muted); }
 @media (max-width: 560px) { .review-stats { grid-template-columns: 1fr; } }
 .inbox-relay-today .checkbox-row { display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px; }
-.inbox-relay-line { margin-top:14px;padding-top:12px;border-top:1px solid var(--line); }
-.inbox-relay-line h3 { margin:0 0 4px;font-size:14px; }

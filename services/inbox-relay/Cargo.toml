@@ -21,7 +21,6 @@ tower-http = { version = "0.6.11", features = ["fs", "set-header"] }
 [dev-dependencies]
 futures-util = "0.3.34"
 http-body-util = "0.1.5"
-p256 = { version = "0.13.2", default-features = false, features = ["ecdh", "std"] }
 tokio-tungstenite = "0.30.0"
 tower = { version = "0.5.3", features = ["util"] }
 

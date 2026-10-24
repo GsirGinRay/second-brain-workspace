@@ -931,9 +931,6 @@ pub fn run() -> tauri::Result<()> {
             inbox_relay::inbox_relay_request_code,
             inbox_relay::inbox_relay_verify_code,
             inbox_relay::inbox_relay_cancel_entitlement,
-            inbox_relay::inbox_relay_line,
-            inbox_relay::inbox_relay_line_link,
-            inbox_relay::inbox_relay_line_unlink,
             inbox_relay::inbox_relay_publish_snapshot
         ])
         .on_window_event(|window, event| {
