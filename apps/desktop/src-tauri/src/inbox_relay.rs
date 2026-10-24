@@ -513,6 +513,61 @@ impl From<RelayAnswer> for InboxRelayEntitlement {
     }
 }
 
+/// LINE to inbox: whether the relay offers it, whether a LINE account is
+/// linked, and a fresh link code with its QR code after `inbox_relay_line_link`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxRelayLine {
+    pub available: bool,
+    pub linked: bool,
+    pub code: Option<String>,
+    pub link_url: Option<String>,
+    pub qr_svg: Option<String>,
+    pub add_friend_url: Option<String>,
+    pub expires_at: Option<i64>,
+    pub error: Option<String>,
+}
+
+/// Only LINE's own https links are passed on to the UI.
+fn line_url(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .filter(|url| url.starts_with("https://line.me/R/") && url.len() <= 300)
+        .filter(|url| url.bytes().all(|byte| byte.is_ascii_graphic()))
+        .map(str::to_owned)
+}
+
+impl From<RelayAnswer> for InboxRelayLine {
+    fn from(answer: RelayAnswer) -> Self {
+        let body = &answer.body;
+        let link_url = line_url(&body["linkUrl"]);
+        let qr_svg = link_url.as_ref().and_then(|url| {
+            qrcode::QrCode::new(url.as_bytes()).ok().map(|code| {
+                code.render::<qrcode::render::svg::Color>()
+                    .min_dimensions(200, 200)
+                    .build()
+            })
+        });
+        Self {
+            // A new code is only issued when LINE is on.
+            available: answer.ok
+                && (body["available"] == serde_json::Value::Bool(true) || link_url.is_some()),
+            linked: answer.ok && body["linked"] == serde_json::Value::Bool(true),
+            code: body["code"]
+                .as_str()
+                .filter(|code| {
+                    code.len() <= 12 && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                })
+                .map(str::to_owned),
+            link_url,
+            qr_svg,
+            add_friend_url: line_url(&body["addFriendUrl"]),
+            expires_at: body["expiresAt"].as_i64(),
+            error: answer.error,
+        }
+    }
+}
+
 pub struct RelayClient {
     http: reqwest::Client,
     signer: Signer,
@@ -1083,6 +1138,51 @@ pub async fn inbox_relay_cancel_entitlement(
     entitlement_call(&app, &state, reqwest::Method::DELETE, "/entitlement", None).await
 }
 
+async fn line_call(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    method: reqwest::Method,
+    with_key: bool,
+) -> Result<InboxRelayLine, NativeError> {
+    let pairing = state
+        .inbox_relay
+        .pairing()
+        .ok_or(NativeError::InvalidRequest)?;
+    let body = with_key.then(|| serde_json::json!({ "publicKey": pairing.public_key }));
+    let client = RelayClient::new(device_signer(app))?;
+    Ok(client.call(&pairing, method, "/line", body).await?.into())
+}
+
+#[tauri::command]
+pub async fn inbox_relay_line(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InboxRelayLine, NativeError> {
+    line_call(&app, &state, reqwest::Method::GET, false).await
+}
+
+/// Registers the inbox public key with the relay, which seals LINE messages
+/// with it, and returns a one-time link code. Paid members only.
+#[tauri::command]
+pub async fn inbox_relay_line_link(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InboxRelayLine, NativeError> {
+    line_call(&app, &state, reqwest::Method::POST, true).await
+}
+
+#[tauri::command]
+pub async fn inbox_relay_line_unlink(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<InboxRelayLine, NativeError> {
+    let answer = line_call(&app, &state, reqwest::Method::DELETE, false).await?;
+    Ok(InboxRelayLine {
+        available: answer.error.is_none(),
+        ..answer
+    })
+}
+
 /// Seals the "today" snapshot with the view key and replaces the one on the
 /// relay. Returns `not_entitled` without the paid list.
 #[tauri::command]
@@ -1560,5 +1660,60 @@ mod tests {
         .into();
         assert!(!refused.entitled);
         assert_eq!(refused.error.as_deref(), Some("not_member"));
+    }
+
+    #[test]
+    fn relay_answers_become_line_results() {
+        let created: InboxRelayLine = RelayAnswer {
+            ok: true,
+            error: None,
+            body: serde_json::json!({
+                "code": "ABCD-EFGH",
+                "linkUrl": "https://line.me/R/oaMessage/%40bot/?%E9%80%A3%E7%B5%90%20ABCD-EFGH",
+                "addFriendUrl": "https://line.me/R/ti/p/%40bot",
+                "expiresAt": 1_790_000_900,
+            }),
+        }
+        .into();
+        assert!(created.available);
+        assert!(!created.linked);
+        assert_eq!(created.code.as_deref(), Some("ABCD-EFGH"));
+        assert!(created
+            .qr_svg
+            .as_deref()
+            .is_some_and(|svg| svg.starts_with("<?xml")));
+        assert_eq!(created.expires_at, Some(1_790_000_900));
+
+        let foreign: InboxRelayLine = RelayAnswer {
+            ok: true,
+            error: None,
+            body: serde_json::json!({
+                "available": true,
+                "linked": true,
+                "linkUrl": "https://example.com/R/phish",
+                "addFriendUrl": "javascript:alert(1)",
+                "code": "<script>",
+            }),
+        }
+        .into();
+        assert!(foreign.available && foreign.linked);
+        assert_eq!(
+            (
+                foreign.link_url,
+                foreign.qr_svg,
+                foreign.add_friend_url,
+                foreign.code
+            ),
+            (None, None, None, None)
+        );
+
+        let refused: InboxRelayLine = RelayAnswer {
+            ok: false,
+            error: Some("not_entitled".to_owned()),
+            body: serde_json::json!({ "error": "not_entitled" }),
+        }
+        .into();
+        assert!(!refused.available && !refused.linked);
+        assert_eq!(refused.error.as_deref(), Some("not_entitled"));
     }
 }

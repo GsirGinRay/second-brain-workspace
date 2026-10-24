@@ -6,6 +6,7 @@ import {
 } from "@second-brain/brain-core";
 import {
   validateInboxRelayEntitlement,
+  validateInboxRelayLine,
   validateInboxRelayItems,
   validateInboxRelayPairing,
   validateInboxRelayStatus,
@@ -636,6 +637,15 @@ export function createNativeAdapter(invoke: NativeInvoke = defaultInvoke): Nativ
       },
       async publishSnapshot(snapshot) {
         return validateInboxRelayEntitlement(await invoke("inbox_relay_publish_snapshot", { snapshot }));
+      },
+      async line() {
+        return validateInboxRelayLine(await invoke("inbox_relay_line"));
+      },
+      async lineLink() {
+        return validateInboxRelayLine(await invoke("inbox_relay_line_link"));
+      },
+      async lineUnlink() {
+        return validateInboxRelayLine(await invoke("inbox_relay_line_unlink"));
       },
     },
   };

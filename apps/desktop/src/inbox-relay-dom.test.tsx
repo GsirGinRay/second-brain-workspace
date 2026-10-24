@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { Window } from "happy-dom";
 import { translate } from "./ui-preferences";
 import type { BrainTaskSnapshot, InboxSnapshot } from "@second-brain/brain-core";
-import type { InboxRelayApi, InboxRelayEntitlement, InboxRelayItem, InboxRelayStatus } from "./inbox-relay";
+import type { InboxRelayApi, InboxRelayEntitlement, InboxRelayItem, InboxRelayLine, InboxRelayStatus } from "./inbox-relay";
 
 const window = new Window({ url: "http://localhost/" });
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -50,6 +50,8 @@ function fakeApi(initial: Partial<InboxRelayStatus> = {}) {
   let pending: InboxRelayItem[] = [];
   let entitlement: InboxRelayEntitlement = { entitled: false, email: null, error: null };
   const snapshots: InboxSnapshot[] = [];
+  const noLink = { code: null, linkUrl: null, qrSvg: null, expiresAt: null, error: null };
+  let line: InboxRelayLine = { available: false, linked: false, ...noLink };
   const api: InboxRelayApi = {
     async status() { return status; },
     async pair() {
@@ -89,6 +91,22 @@ function fakeApi(initial: Partial<InboxRelayStatus> = {}) {
         ? { entitled: true, email: null, error: null }
         : { entitled: false, email: null, error: "not_entitled" };
     },
+    async line() { return line; },
+    async lineLink() {
+      calls.push("line-link");
+      return {
+        ...line,
+        code: "ABCD-EFGH",
+        linkUrl: "https://line.me/R/oaMessage/%40bot/?%E9%80%A3%E7%B5%90%20ABCD-EFGH",
+        qrSvg: "<?xml version=\"1.0\"?><svg/>",
+        expiresAt: 1_790_000_900,
+      };
+    },
+    async lineUnlink() {
+      calls.push("line-unlink");
+      line = { ...line, linked: false };
+      return line;
+    },
   };
   return {
     api,
@@ -96,6 +114,7 @@ function fakeApi(initial: Partial<InboxRelayStatus> = {}) {
     snapshots,
     setPending: (items: InboxRelayItem[]) => { pending = items; },
     setEntitled: (value: boolean) => { entitlement = { entitled: value, email: value ? "member@example.com" : null, error: null }; },
+    setLine: (patch: Partial<InboxRelayLine>) => { line = { ...line, ...patch }; },
   };
 }
 
@@ -268,5 +287,36 @@ test("members unlock the today list with an emailed code", async () => {
   await settle();
   assert.ok(container.textContent?.includes(t("inboxRelay.today.active", { email: "member@example.com" })));
   assert.deepEqual(calls, ["code:someone@example.com", "code:member@example.com", "verify:123456"]);
+  assert.equal(container.querySelector(".inbox-relay-line"), null, "no LINE section until the relay offers it");
+  view.cleanup();
+});
+
+test("members link LINE with a QR code and can unlink it", async () => {
+  const { api, calls, setEntitled, setLine } = fakeApi({ paired: true, connection: "connected" });
+  setEntitled(true);
+  setLine({ available: true });
+  const view = mount(<InboxRelaySettingsCard api={api} t={t} onError={() => undefined} />);
+  await settle();
+  view.render(<InboxRelaySettingsCard api={api} t={t} onError={() => undefined} />);
+  await settle();
+  const section = () => view.container.querySelector(".inbox-relay-line")!;
+  const button = (label: string) => [...section().querySelectorAll("button")].find((item) => item.textContent === label);
+  assert.ok(section().textContent?.includes(t("inboxRelay.line.hint")));
+
+  flushSync(() => button(t("inboxRelay.line.link"))!.click());
+  await settle();
+  assert.ok(section().querySelector("img"), "QR code");
+  assert.ok(section().textContent?.includes("連結 ABCD-EFGH"));
+
+  // The phone sends the code; the next poll sees the link.
+  setLine({ linked: true });
+  await new Promise((resolve) => setTimeout(resolve, 3_200));
+  assert.equal(section().querySelector("img"), null);
+  assert.ok(section().textContent?.includes(t("inboxRelay.line.linked")));
+
+  flushSync(() => button(t("inboxRelay.line.unlink"))!.click());
+  await settle();
+  assert.ok(section().textContent?.includes(t("inboxRelay.line.hint")));
+  assert.deepEqual(calls, ["line-link", "line-unlink"]);
   view.cleanup();
 });

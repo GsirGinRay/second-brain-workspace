@@ -44,6 +44,17 @@ export interface InboxRelayEntitlement {
   error: string | null;
 }
 
+/** LINE to inbox; `code` and `qrSvg` only right after asking for a link code. */
+export interface InboxRelayLine {
+  available: boolean;
+  linked: boolean;
+  code: string | null;
+  linkUrl: string | null;
+  qrSvg: string | null;
+  expiresAt: number | null;
+  error: string | null;
+}
+
 export interface InboxRelayStatus {
   paired: boolean;
   /** A pairing exists but this Windows account cannot open its key. */
@@ -72,6 +83,9 @@ export interface InboxRelayApi {
   verifyCode(code: string): Promise<InboxRelayEntitlement>;
   cancelEntitlement(): Promise<InboxRelayEntitlement>;
   publishSnapshot(snapshot: InboxSnapshot): Promise<InboxRelayEntitlement>;
+  line(): Promise<InboxRelayLine>;
+  lineLink(): Promise<InboxRelayLine>;
+  lineUnlink(): Promise<InboxRelayLine>;
 }
 
 const SOURCES = new Set<InboxSource>(["pwa", "line", "email"]);
@@ -170,6 +184,32 @@ export function validateInboxRelayEntitlement(value: unknown): InboxRelayEntitle
     entitled: input.entitled,
     email: typeof input.email === "string" ? input.email : null,
     error: typeof input.error === "string" ? input.error : null,
+  };
+}
+
+function optionalString(value: unknown, test: (value: string) => boolean): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string" || !test(value)) throw new Error("Invalid inbox relay LINE status");
+  return value;
+}
+
+export function validateInboxRelayLine(value: unknown): InboxRelayLine {
+  const input = record(value);
+  if (
+    typeof input.available !== "boolean"
+    || typeof input.linked !== "boolean"
+    || (input.expiresAt !== null && input.expiresAt !== undefined && (typeof input.expiresAt !== "number" || !Number.isSafeInteger(input.expiresAt)))
+  ) {
+    throw new Error("Invalid inbox relay LINE status");
+  }
+  return {
+    available: input.available,
+    linked: input.linked,
+    code: optionalString(input.code, (code) => /^[A-Z0-9-]{1,12}$/.test(code)),
+    linkUrl: optionalString(input.linkUrl, (url) => url.startsWith("https://line.me/R/")),
+    qrSvg: optionalString(input.qrSvg, (svg) => svg.startsWith("<?xml")),
+    expiresAt: typeof input.expiresAt === "number" ? input.expiresAt : null,
+    error: optionalString(input.error, (error) => /^[a-z_]{1,40}$/.test(error)),
   };
 }
 

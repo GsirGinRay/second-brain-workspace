@@ -7,6 +7,7 @@ import {
   inboxItemsToTasks,
   notesPreview,
   validateInboxRelayEntitlement,
+  validateInboxRelayLine,
   qrDataUrl,
   validateInboxRelayItems,
   validateInboxRelayPairing,
@@ -254,4 +255,22 @@ test("complete items and entitlements are validated", () => {
   assert.throws(() => validateInboxRelayEntitlement({ entitled: false, error: "<b>" }));
   const withViewKey = `https://inbox.aizbrain.com/#v=1&i=AAECAwQFBgcICQoLDA0ODw&t=abc&k=BMK9&s=${"A".repeat(43)}`;
   assert.equal(validateInboxRelayPairing({ url: withViewKey, qrSvg: "<?xml" }).url, withViewKey);
+});
+
+test("LINE answers are checked before the settings card shows them", () => {
+  const linked = validateInboxRelayLine({ available: true, linked: true });
+  assert.deepEqual(linked, { available: true, linked: true, code: null, linkUrl: null, qrSvg: null, expiresAt: null, error: null });
+  const code = validateInboxRelayLine({
+    available: true,
+    linked: false,
+    code: "ABCD-EFGH",
+    linkUrl: "https://line.me/R/oaMessage/%40bot/?x",
+    qrSvg: "<?xml version=\"1.0\"?><svg/>",
+    expiresAt: 1_790_000_900,
+    error: null,
+  });
+  assert.equal(code.code, "ABCD-EFGH");
+  assert.throws(() => validateInboxRelayLine({ available: true, linked: false, linkUrl: "https://evil.example/R/" }));
+  assert.throws(() => validateInboxRelayLine({ available: true, linked: false, code: "<b>" }));
+  assert.throws(() => validateInboxRelayLine({ available: "yes", linked: false }));
 });
