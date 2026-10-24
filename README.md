@@ -2,148 +2,62 @@
 
 [繁體中文](README.zh-TW.md)
 
-A local-first desktop workspace for tasks, outcome projects, and reference collections stored in ordinary
-Markdown files. Use it with Obsidian, VS Code, Typora, Notepad++, or any editor.
+A Windows task and project manager for people with a lot on their plate. Everything lives in ordinary Markdown files on your computer, so Obsidian, VS Code or any editor can open them too. No account, and your notes are never uploaded.
 
-## What the public app does
+## Download and install
 
-- Windows desktop application
-- Today, month/week calendar, task board (board/table/list views), project list/status views, and local collections
-- Traditional Chinese and English UI with persistent light and dark themes
-- Cross-field search with `+` for OR, `&` (or spaces) for AND, and quoted phrases
-- Full Markdown editing and safe preview for tasks, projects, and collections
-- Beginner draft mode: capture first, choose the Markdown folder before closing
-- First-run guidance in Traditional Chinese and English
-- Markdown folder scanning and file watching
-- Local backup, atomic writes and crash-recovery journal
-- Offline use
-- Optional phone inbox: pair a phone once, then send tasks from it end-to-end encrypted
-- Automatic `.ai/INDEX.md` so an AI can find projects, knowledge, today's and overdue tasks with file paths, and unscheduled ideas
+1. Download `Second-Brain-Workspace_x.y.z_x64-setup.exe` from the [latest release](https://github.com/GsirGinRay/second-brain-workspace/releases/latest).
+2. Run the installer.
+3. On first launch, pick a folder for your Markdown (or skip it and pick one before closing).
 
-Edits in the app write directly to the Markdown folder you select. There is no
-separate database. To use the same files on a phone, put that folder in OneDrive,
-Dropbox, Google Drive, or Obsidian Sync and open it with a Markdown app. The
-public build does not include built-in cloud sync.
+### "Windows protected your PC"
 
-To add tasks from a phone without syncing files, pair it in Settings → Phone
-inbox. The phone web app encrypts each task with a key only your computer has;
-the relay at `inbox.aizbrain.com` keeps the unreadable data until the computer
-writes the task into the inbox, then deletes it. Paid Skool members can also
-see and tick off today's tasks on the phone. See
-[docs/inbox-relay.md](docs/inbox-relay.md).
+Windows SmartScreen shows this for new software without a paid code-signing certificate. It does not mean the file is harmful; the whole app is open source on this page.
 
-## Development
+1. Click **More info**.
+2. Click **Run anyway**.
 
-Requirements: Node.js 20+, Rust stable, Microsoft WebView2 and the Tauri Windows
-build prerequisites.
+You only see this on the first install. Updates are downloaded by the app and checked against the public key built into it, so only official releases are installed.
 
-```bash
-npm install
-npm test
-npm run build
-npm run rust:test
-npm run desktop:dev
-```
+### Updates
 
-Build the Windows NSIS installer:
+The app checks for a new version at launch and every 6 hours and asks before installing. Updates never touch your Markdown folder.
 
-```bash
-npm run desktop:installer
-```
+## Features
 
-The installer is written to
-`apps/desktop/src-tauri/target/release/bundle/nsis/`.
+**What to do today**
+- Today page: today's single most important task, a timeline and unscheduled tasks
+- Load warning when today holds more hours than you have
+- Focus mode: one task at a time with a timer
+- Wrap-up: move what is left to tomorrow in one click and see what you finished
+- Waiting list: follow up on work you handed off
+- Review: tasks finished per week and the projects that moved most, up to 12 weeks back
 
-The Windows package keeps the stable product identity `Second Brain Workspace`
-(`app.secondbrain.workspace`). Installing a newer NSIS package detects the same
-installed product, uninstalls the older version through its registered uninstaller,
-and installs the update without deleting the user's Markdown folder. Portable or
-downloaded installer files are not removed because they are not installed apps.
+**Planning**
+- Month and week calendar with drag to reschedule; box-select several tasks to move or delete them together
+- Task board, also as a table or a list
+- Projects as cards, a table or by status, with their tasks, notes and attachments
+- Knowledge: prompts and reference notes, with prompt import and export
+- Search across fields: `+` for OR, `&` or a space for AND
 
+**Capture**
+- Quick add (`N`): type "Pay the phone bill tomorrow at 3pm" and the date and time are recognized
+- Repeating tasks: daily, on weekdays, on a day of the month or a custom interval
+- Checklists inside a task, with progress on the card
+- Windows notifications before a task starts and a daily summary
 
-## Installation
+**Phone**
+- Phone inbox (free): pair once, then tasks you send from the phone (or its share menu) arrive end-to-end encrypted in your computer's inbox
+- Today's list on the phone (paid Skool members): today and the next 7 days, tick off, reschedule or star tasks
 
-### For developers (build from source)
+**Also**
+- Traditional Chinese and English, light and dark themes
+- Undo and redo (`Ctrl+Z` / `Ctrl+Shift+Z`)
+- An automatic `.ai/INDEX.md` so an AI assistant can find your projects, knowledge and today's tasks
 
-Requirements:
+## Your data is Markdown
 
-- Node.js 20+
-- Rust stable toolchain
-- Microsoft WebView2 runtime
-- Tauri 2 Windows build prerequisites (Visual Studio Build Tools with C++ workload, Windows SDK)
-
-Clone and install:
-
-```bash
-git clone https://github.com/GsirGinRay/second-brain-workspace.git
-cd second-brain-workspace
-npm install
-```
-
-Run the desktop app in development mode (hot reload):
-
-```bash
-npm run desktop:dev
-```
-
-### For end users (Windows installer)
-
-Download the latest NSIS installer from the
-[Releases](https://github.com/GsirGinRay/second-brain-workspace/releases) page
-(named `Second Brain Workspace_x.y.z_x64-setup.exe`) and run it. The installer
-preserves your existing Markdown folder on upgrade.
-
-The installer is produced locally with:
-
-```bash
-npm run desktop:installer
-```
-
-and written to
-`apps/desktop/src-tauri/target/release/bundle/nsis/`.
-
-### Releasing updates
-
-Installed apps poll the signed `latest.json` of the newest
-[GitHub Release](https://github.com/GsirGinRay/second-brain-workspace/releases)
-at launch and every six hours. Pushing commits alone does not notify anyone.
-
-1. Bump the version in `package.json`, `apps/desktop/package.json`,
-   `apps/desktop/src-tauri/Cargo.toml` and `apps/desktop/src-tauri/tauri.conf.json`.
-2. Build the signed installer and manifest:
-   `npm run desktop:release -- --notes "What changed"`.
-3. Publish when the build looks right:
-   `npm run desktop:release -- --notes "What changed" --publish`.
-
-Updates are verified with the minisign public key in `tauri.conf.json`. The
-private key lives outside the repository (`TAURI_SIGNING_PRIVATE_KEY` or
-`~/.tauri/second-brain-workspace.key`). Back it up: without it, installed apps
-can never receive another update.
-
-## Development
-
-Run the full check suite before opening a pull request:
-
-```bash
-npm test            # TypeScript unit + integration + DOM tests
-npm run rust:test   # Rust (Tauri) tests
-npm run build       # Type-check and production web build
-```
-
-The desktop app uses Tauri 2 (Rust) with a React + TypeScript frontend in
-`apps/desktop`; shared logic lives in `packages/brain-core` (Markdown parsing
-and task rules) and `packages/brain-ui` (calendar and repository helpers).
-
-### Internal development status
-
-This repository is currently used for **internal development** with a small
-collaborator group. Releases are published as pre-releases under the `0.x`
-version line (SemVer: `0.x` means the API and data format are still stabilizing).
-A dedicated public-release marker will be created when the project is opened to
-the wider community. The Markdown file format is the long-term source of truth
-and is designed to stay stable across releases.
-
-## Data format
+Every action writes straight to the folder you chose; there is no separate database. A task looks like this:
 
 ```markdown
 - [ ] #task Write the first tutorial [[Open Source Launch]] ⏳ 2026-08-15 ⏰ 09:30 ⏱ 30m
@@ -153,28 +67,40 @@ and is designed to stay stable across releases.
   Full Markdown content for this task.
 ```
 
-See [docs/architecture.md](docs/architecture.md) and
-[docs/cloud-sync.md](docs/cloud-sync.md) for the product boundaries.
+- Repeat rules and similar tokens follow Obsidian Tasks, so other tools can read them.
+- Every write is preceded by a verified backup and done atomically, so a crash never leaves a half-written file.
+- To read the same files on a phone, keep the folder in OneDrive, Dropbox, Google Drive or Obsidian Sync.
 
 ## Privacy
 
-The public application does not upload Markdown. All reading and writing stays
-in the folder you select on this computer. Collection Markdown bodies are
-indexed locally.
+- Your Markdown is never uploaded; all reading and writing happens in the folder you chose.
+- The app goes online only to check for updates and, after you pair a phone, to receive tasks sent from it.
+- Phone tasks are encrypted on the phone and only your computer can open them. The relay at `inbox.aizbrain.com` keeps the unreadable data until your computer picks it up, then deletes it (14 days at most). See [docs/inbox-relay.md](docs/inbox-relay.md).
 
-The app connects to the network only to check for updates and, after you pair
-a phone, to receive phone inbox items. Those items are end-to-end encrypted;
-the relay never sees task text and keeps nothing after the computer has saved
-it (14 days at most). Turning the phone inbox off deletes the inbox on the
-relay.
+## For developers
 
-Projects use `type: project` and have a finite lifecycle (`planning`, `active`,
-`paused`, `done`, or `archived`). Long-lived prompts and reference notes use
-`type: collection` with optional `category` and `importance` frontmatter.
+Requires Node.js 20+, Rust stable, Microsoft WebView2 and the Tauri 2 Windows build prerequisites (Visual Studio Build Tools with the C++ workload, Windows SDK).
 
-Task status `waiting` means work is blocked on a reply, material, approval,
-date, or another external condition; it remains distinct from a project being
-intentionally `paused`.
+```bash
+git clone https://github.com/GsirGinRay/second-brain-workspace.git
+cd second-brain-workspace
+npm install
+npm run desktop:dev   # development mode
+npm test              # TypeScript unit, integration and DOM tests
+npm run rust:test     # Rust tests
+npm run build         # type check and web build
+```
+
+| Folder | Contents |
+| --- | --- |
+| `apps/desktop` | Desktop app: Tauri 2 (Rust) with React and TypeScript |
+| `apps/mobile-capture` | Phone web app (PWA) |
+| `packages/brain-core` | Markdown parsing, task rules, encryption format |
+| `packages/brain-ui` | Calendar, search and other shared logic |
+| `services/inbox-relay` | Phone inbox relay server (Rust) |
+| `examples/sample-vault` | Sample data (all made up) |
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute and [docs/architecture.md](docs/architecture.md) for the architecture.
 
 ## License
 

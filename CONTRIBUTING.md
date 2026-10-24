@@ -1,49 +1,49 @@
-# 如何一起開發（新人練習指南 / 白話版）
-
-我們現在是內部開發階段（0.x 版本），兩個人都在邊做邊學。這段是給我們自己練「多人協作流程」用的，等以後開源，下面的英文規範就是對外標準。
-
-## 三個鐵則
-1. **不直接改 main**：main 是正本、受保護。每次修改都開分支 → 發 PR → 互相看過才合併。
-2. **改之前先 pull**：`git checkout main && git pull`，抓到最新再開分支。
-3. **提交前跑測試**：`npm test` 至少跑一次。
-
-## 一次完整流程
-```bash
-git checkout main && git pull            # 1. 抓最新
-git checkout -b feature/功能名            # 2. 開分支
-# 3. 改程式
-npm test                                  # 4. 跑測試
-git add . && git commit -m "做了什麼"      # 5. 提交
-git push -u origin feature/功能名          # 6. 推上去
-```
-然後到 GitHub 對該分支點「Compare & pull request」發 PR，等對方 review 並按 Approve，
-branch protection 會要求「不能直接推 main、合併前至少 1 人批准」，都 OK 後按 Merge。
-
-## 合併流程重點（避開衝突、內容不會被覆蓋）
-收到 PR 後照這個順序，一定能避免「內容被覆蓋」：
-1. 打開 PR →「Files changed」分頁逐行看（綠＝新增、紅＝刪除），並看頁面頂端的「衝突徽章」。
-2. 若顯示「有衝突」：請對方先在 PR 頁面按「Update branch」同步到最新 main；仍有衝突就點
-   「Resolve conflicts」在網頁上逐段決定（會同時顯示「你的版本」vs「他的版本」）。
-3. 看完沒問題 → 右上「Review changes」→ Approve（滿足 main 需 1 人批准的規則）。
-4. 合併一律用「Create a merge commit」（保留雙邊歷史），不要用 Rebase and merge。
-5. 合併後在本機：`git pull` → `npm test` → `npm run build`，確認兩邊內容共存。
-
-> 重點：Git 合併＝把兩邊內容併在一起，不會「用新的蓋掉舊的」。只有「衝突」時才需要你
-> 手動選擇，決定權在你；所以你的改動不會因為收下別人的 PR 而消失。
-
-> 這是練習場，弄壞也沒關係（私有 repo 外面看不到）。有衝突就叫 GsirGinRay 一起處理。
-
----
-
 # Contributing
 
-1. Use synthetic data under `examples/sample-vault`; never use a real vault in
-   a fixture or screenshot.
-2. Add a failing test before changing Markdown parsing, formatting, merge,
-   backup, path or recovery behavior.
-3. Run `npm test`, `npm run build`, and `npm run rust:test` before opening a pull
-   request.
-4. Explain any data-format or permission change in the pull request.
+歡迎回報問題或送 Pull Request。中文或英文都可以。
+Issues and pull requests are welcome, in Chinese or English.
 
-Cloud adapters must use an explicit origin allowlist. Do not broaden the Tauri
-Content Security Policy to arbitrary Internet origins.
+## Ground rules
+
+1. Use the synthetic data under `examples/sample-vault`. Never put a real
+   vault, personal paths, email addresses or keys in a fixture, screenshot or
+   issue.
+2. Add a failing test before changing Markdown parsing, formatting, merge,
+   backup, path or recovery behavior. Markdown is the user's data: preserve BOM,
+   CRLF, indentation, unknown task tokens and unrelated text.
+3. Run the full checks before opening a pull request:
+
+   ```bash
+   npm test            # TypeScript unit, integration and DOM tests
+   npm run rust:test   # desktop Rust tests
+   npm run relay:test  # phone inbox relay tests
+   npm run build       # type check and web build
+   ```
+
+4. Explain any data-format or permission change in the pull request.
+5. Do not broaden the Tauri Content Security Policy to arbitrary Internet
+   origins. The app only talks to the update feed and the phone inbox relay.
+
+## Releasing (maintainers)
+
+Installed apps poll the signed `latest.json` of the newest
+[GitHub Release](https://github.com/GsirGinRay/second-brain-workspace/releases)
+at launch and every six hours. Pushing commits alone does not notify anyone.
+
+1. Bump the version in `package.json`, `apps/desktop/package.json`,
+   `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`
+   and `apps/desktop/src/ui-contract.test.ts`.
+2. Build the signed installer and manifest:
+   `npm run desktop:release -- --notes "What changed"`.
+3. Publish when the build looks right:
+   `npm run desktop:release -- --notes "What changed" --publish`.
+
+Updates are verified with the minisign public key in `tauri.conf.json`. The
+private key lives outside the repository (`TAURI_SIGNING_PRIVATE_KEY` or
+`~/.tauri/second-brain-workspace.key`). Back it up: without it, installed apps
+can never receive another update.
+
+The Windows package keeps the product identity `Second Brain Workspace`
+(`app.secondbrain.workspace`). A newer installer finds the installed version,
+removes it through its uninstaller and installs the update without touching the
+user's Markdown folder.
