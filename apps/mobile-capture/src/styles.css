@@ -158,9 +158,9 @@ select.chip { appearance: none; max-width: 48%; padding-right: 28px; text-overfl
 #today { display: grid; gap: 12px; }
 .today-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .today-head h2 { margin: 0; font-size: 22px; }
-.today-head small { color: var(--muted); font-size: 12px; }
+.today-head small { color: var(--muted); font-size: 14px; }
 
-.progress { display: grid; gap: 6px; font-size: 14px; font-weight: 600; }
+.progress { display: grid; gap: 6px; font-size: 15px; font-weight: 600; }
 .progress progress { width: 100%; height: 8px; appearance: none; border: 0; border-radius: 99px; background: var(--line); overflow: hidden; }
 .progress progress::-webkit-progress-bar { background: var(--line); border-radius: 99px; }
 .progress progress::-webkit-progress-value { background: var(--ok); border-radius: 99px; transition: width 0.3s ease; }
@@ -173,12 +173,12 @@ select.chip { appearance: none; max-width: 48%; padding-right: 28px; text-overfl
 .view-bar select { flex: 1; min-width: 0; padding: 7px 10px; font-size: 14px; border-radius: 10px; }
 
 .focus-card { background: var(--red-soft); border: 1px solid var(--accent-red); border-left-width: 5px; border-radius: 14px; padding: 10px 12px; }
-.focus-card > small { color: var(--accent-red); font-weight: 800; font-size: 12px; letter-spacing: 0.04em; }
+.focus-card > small { color: var(--accent-red); font-weight: 800; font-size: 14px; letter-spacing: 0.04em; }
 .focus-card .task-row { border: 0; padding: 4px 0 0; background: transparent; }
 .focus-card .tick { border-color: var(--accent-red); }
-.focus-card .task-title { font-weight: 700; font-size: 17px; }
+.focus-card .task-title { font-weight: 700; font-size: 20px; }
 
-.task-group h3 { font-size: 13px; color: var(--muted); margin: 4px 0 6px; font-weight: 700; }
+.task-group h3 { font-size: 15px; color: var(--muted); margin: 4px 0 6px; font-weight: 700; }
 .task-group[data-group="overdue"] h3 { color: var(--bad); }
 .task-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .task-row {
@@ -215,14 +215,14 @@ select.chip { appearance: none; max-width: 48%; padding-right: 28px; text-overfl
   font-weight: 500;
   text-align: left;
 }
-.task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.task-title { font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; font-weight: 500; }
 
 /* Today's timeline: start and end times in a column on the left. */
 .task-row.timed { padding-left: 0; }
-.task-time { flex: none; width: 52px; display: grid; justify-items: end; padding-right: 2px; font-variant-numeric: tabular-nums; }
-.task-time strong { font-size: 14px; }
-.task-time small { color: var(--muted); font-size: 11px; }
+.task-time { flex: none; width: 60px; display: grid; justify-items: end; padding-right: 2px; font-variant-numeric: tabular-nums; }
+.task-time strong { font-size: 16px; }
+.task-time small { color: var(--muted); font-size: 13px; }
 
 .pending-badge {
   display: inline-block;
@@ -253,15 +253,15 @@ select.chip { appearance: none; max-width: 48%; padding-right: 28px; text-overfl
 .sheet::backdrop { background: #0000004d; }
 @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 .sheet-grip { width: 40px; height: 4px; margin: 0 auto 2px; border-radius: 99px; background: var(--line); }
-.sheet h2 { margin: 0; font-size: 19px; overflow-wrap: anywhere; }
-.sheet dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 15px; }
+.sheet h2 { margin: 0; font-size: 21px; overflow-wrap: anywhere; }
+.sheet dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 17px; }
 .sheet dt { color: var(--muted); }
 .sheet dd { margin: 0; }
-.sheet-notes { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--soft); color: var(--ink); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sheet-notes { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--soft); color: var(--ink); font-size: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .sheet-actions:has(#sheet-focus[hidden]) #sheet-complete { grid-column: 1 / -1; }
 #sheet-complete { background: var(--ok); color: #ffffff; }
-.sheet-move h3 { margin: 0 0 6px; font-size: 13px; color: var(--muted); }
+.sheet-move h3 { margin: 0 0 6px; font-size: 15px; color: var(--muted); }
 .sheet-close { width: 100%; }
 
 /* Undo toast */
