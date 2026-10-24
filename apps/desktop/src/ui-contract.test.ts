@@ -489,7 +489,7 @@ test("Windows installer keeps a stable upgrade identity", () => {
   const config = tauriConfig();
   assert.equal(config.productName, "Second Brain Workspace");
   assert.equal(config.identifier, "app.secondbrain.workspace");
-  assert.equal(config.version, "0.8.2");
+  assert.equal(config.version, "0.8.3");
   assert.equal(config.bundle?.windows?.nsis?.installMode, "currentUser");
   assert.equal(config.bundle?.windows?.allowDowngrades, false);
 });
