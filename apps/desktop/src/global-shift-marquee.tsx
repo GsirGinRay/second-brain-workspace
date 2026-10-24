@@ -131,20 +131,26 @@ export function GlobalShiftMarquee() {
       // then mark whatever is inside the marquee. We reapply the class
       // afterwards so React re-renders that drop the class silently get
       // it back on the next tick.
+      // A task can be on screen twice (a calendar chip and the same task in
+      // a side list); it is selected when any of its elements is inside, so
+      // a copy outside the marquee cannot undo the one inside it.
       const elements = [...document.querySelectorAll<HTMLElement>(SELECTABLE)];
+      const inside = new Map<string, string>();
       for (const element of elements) {
-        const rect = element.getBoundingClientRect();
         const id = element.dataset.globalSelectId;
-        const kind = element.dataset.globalSelectKind ?? "task";
         if (!id) continue;
-        const inside = rect.width > 0 && rect.height > 0 && intersects(next, rect);
-        if (inside) {
-          setSelected(id, kind);
-          element.classList.add(SELECTED_CLASS);
-        } else {
-          unsetSelected(id);
-          element.classList.remove(SELECTED_CLASS);
+        const rect = element.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && intersects(next, rect)) {
+          inside.set(id, element.dataset.globalSelectKind ?? "task");
         }
+      }
+      for (const element of elements) {
+        const id = element.dataset.globalSelectId;
+        if (!id) continue;
+        const kind = inside.get(id);
+        if (kind) setSelected(id, kind);
+        else unsetSelected(id);
+        element.classList.toggle(SELECTED_CLASS, kind !== undefined);
       }
     };
     const pointerDown = (event: PointerEvent) => {
