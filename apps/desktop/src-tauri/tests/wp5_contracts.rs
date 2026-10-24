@@ -783,7 +783,10 @@ fn forgetting_a_file_works_whatever_way_its_path_is_spelled() {
     fs::OpenOptions::new().write(true).open(&target).unwrap().set_modified(when).unwrap();
     let (_, unseen) = cached_scan_reads(&root, &mut cache);
     assert!(unseen.is_empty(), "the restored time should hide the edit from the cache alone");
-    let spelled = PathBuf::from(format!("{}/10-收件匣/todo.md", dir.path().join("VAULT").to_string_lossy()));
+    // The scan reports long paths; a temp dir may be spelled with an 8.3
+    // short name (C:\Users\RUNNER~1 on CI), so start from the canonical one.
+    let base = fs::canonicalize(dir.path()).unwrap();
+    let spelled = PathBuf::from(format!("{}/10-收件匣/todo.md", base.join("VAULT").to_string_lossy()));
     cache.invalidate(&[root.join("other.md")], false);
     assert_eq!(cache.len(), 1);
     cache.invalidate(&[spelled], false);

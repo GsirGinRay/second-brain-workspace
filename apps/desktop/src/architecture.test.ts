@@ -117,7 +117,7 @@ test("sample vault uses official folder conventions and visible task Markdown", 
   assert.match(inboxText, /⏳ 2026-08-15/);
   assert.match(inboxText, /⏰ 09:30/);
   assert.match(inboxText, /⏱ 30m/);
-  assert.match(inboxText, /\n  ## Notes\n/);
+  assert.match(inboxText, /\r?\n  ## Notes\r?\n/);
   assert.doesNotMatch(projectText, /publisher_id/);
   assert.doesNotMatch(collectionText, /publisher_id/);
   assert.doesNotMatch(inboxText, /publisher_id/);
