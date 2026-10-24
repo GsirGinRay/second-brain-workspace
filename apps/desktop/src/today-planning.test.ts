@@ -6,7 +6,9 @@ import {
   focusQueue,
   formatHours,
   loadAvailableHours,
+  markPostponed,
   moveTasksToDate,
+  postponedCount,
   waitingItems,
   weekStart,
   wrapUpSummary,
@@ -84,4 +86,19 @@ test("moving tasks only changes the chosen dates", () => {
   assert.equal(moved[0]!.taskDate, "2026-10-21");
   assert.equal(moved[0]!.startTime, "10:00");
   assert.equal(moved[1]!.taskDate, "2026-10-20");
+});
+
+test("each postponement adds one > in front of the title", () => {
+  assert.equal(markPostponed("整理對帳單"), "> 整理對帳單");
+  assert.equal(markPostponed("> 整理對帳單"), ">> 整理對帳單");
+  assert.equal(markPostponed(">>整理對帳單"), ">>> 整理對帳單");
+  assert.equal(postponedCount(">>> 整理對帳單"), 3);
+  assert.equal(postponedCount("整理對帳單"), 0);
+});
+
+test("wrap-up moves can mark the moved tasks as postponed", () => {
+  const moved = moveTasksToDate([task("a", { title: "對帳單" }), task("b", { title: "運動" })], new Set(["a"]), "2026-10-21", { markPostponed: true });
+  assert.equal(moved[0]!.title, "> 對帳單");
+  assert.equal(moved[1]!.title, "運動");
+  assert.equal(moveTasksToDate([task("a", { title: "對帳單" })], new Set(["a"]), "2026-10-21")[0]!.title, "對帳單");
 });

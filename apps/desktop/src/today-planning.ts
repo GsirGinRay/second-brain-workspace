@@ -102,6 +102,25 @@ export function wrapUpSummary(tasks: readonly BrainTaskSnapshot[], today: string
 }
 
 /** Moves the chosen tasks to `date`, keeping their start time on the new day. */
-export function moveTasksToDate(tasks: readonly BrainTaskSnapshot[], ids: ReadonlySet<string>, date: string): BrainTaskSnapshot[] {
-  return tasks.map((task) => task.id && ids.has(task.id) ? { ...task, taskDate: date } : task);
+/** How many times a task was put off, written as leading ">" marks in its title. */
+export function postponedCount(title: string): number {
+  return /^>*/.exec(title.trimStart())![0].length;
+}
+
+/** Adds one ">" in front of the title, so ">> 對帳單" becomes ">>> 對帳單". */
+export function markPostponed(title: string): string {
+  const trimmed = title.trimStart();
+  const count = postponedCount(trimmed);
+  return `${">".repeat(count + 1)} ${trimmed.slice(count).trimStart()}`;
+}
+
+export function moveTasksToDate(
+  tasks: readonly BrainTaskSnapshot[],
+  ids: ReadonlySet<string>,
+  date: string,
+  options: { markPostponed?: boolean } = {},
+): BrainTaskSnapshot[] {
+  return tasks.map((task) => task.id && ids.has(task.id)
+    ? { ...task, taskDate: date, ...(options.markPostponed ? { title: markPostponed(task.title) } : {}) }
+    : task);
 }

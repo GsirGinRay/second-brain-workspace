@@ -39,6 +39,14 @@ import { AVAILABLE_HOURS_KEY, focusQueue, loadAvailableHours, moveTasksToDate } 
 import { FocusMode, LoadMeter, WaitingPanel, WrapUpDialog } from "./today-tools";
 import { WeeklyReviewDialog } from "./weekly-review-ui";
 
+const LOWER_PRIORITY: Record<BrainTaskSnapshot["priority"], BrainTaskSnapshot["priority"]> = {
+  highest: "high",
+  high: "medium",
+  medium: "normal",
+  normal: "low",
+  low: "low",
+};
+
 export function Today({ tasks, projects, showCompleted, onShowCompletedChange, onSave, onDelete, onOpenTask, onQuickAdd, onCreateProject, routineTemplate, onRoutineTemplateChange }: {
   tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; showCompleted: boolean;
   onShowCompletedChange: (value: boolean) => void;
@@ -194,7 +202,7 @@ export function Today({ tasks, projects, showCompleted, onShowCompletedChange, o
     <WaitingPanel tasks={tasks} today={today} t={t} onOpenTask={onOpenTask} onReceived={(task) => patchTask(task, { status: "done", completedAt: today })} />
     {focusOpen && <FocusMode queue={focusQueue(groups.today, groups.overdue)} language={preferences.language} t={t} onComplete={complete} onOpenTask={(taskId) => { setFocusOpen(false); onOpenTask(taskId); }} onClose={() => setFocusOpen(false)} />}
     {reviewOpen && <WeeklyReviewDialog tasks={tasks} today={today} language={preferences.language} t={t} onClose={() => setReviewOpen(false)} />}
-    {wrapUpOpen && <WrapUpDialog tasks={tasks} today={today} t={t} onMove={(ids, date) => { onSave(moveTasksToDate(tasks, ids, date)); setNotice(t("today.wrap.moved", { count: ids.size })); }} onClose={() => setWrapUpOpen(false)} />}
+    {wrapUpOpen && <WrapUpDialog tasks={tasks} today={today} t={t} onMove={(ids, date) => { onSave(moveTasksToDate(tasks, ids, date, { markPostponed: true })); setNotice(t("today.wrap.moved", { count: ids.size })); }} onLowerPriority={(task) => onSave(applyTaskPriority(tasks, task.id!, LOWER_PRIORITY[task.priority], today))} onClose={() => setWrapUpOpen(false)} />}
     <button className="today-quick-add-fab" type="button" onClick={onQuickAdd} aria-label={t("app.quickAdd")} title={t("app.quickAdd")}><Plus aria-hidden="true" /></button>
     {showCompleted && completed.length > 0 && <details className="completed-section"><summary>今日已完成 · {completed.length} 項</summary><div className="focus-task-list">{completed.map((task) => <InlineTaskCard key={task.id ?? task.title} task={task} today={today} projects={projects} onOpen={onOpenTask} onPatch={patchTask} onComplete={complete} onDelete={onDelete} onPickProject={pickProject} onCreateProject={onCreateProject} />)}</div></details>}
   </section>;

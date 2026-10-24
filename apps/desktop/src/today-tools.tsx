@@ -7,9 +7,13 @@ import {
   addDaysToKey,
   dayLoad,
   formatHours,
+  postponedCount,
   waitingItems,
   wrapUpSummary,
 } from "./today-planning";
+
+/** Moving a task for the third time is when wrap-up suggests lowering it. */
+const POSTPONE_REVIEW_COUNT = 3;
 
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 type Language = "zh-TW" | "en";
@@ -182,11 +186,13 @@ export function FocusMode({ queue, language, t, onComplete, onOpenTask, onClose 
   );
 }
 
-export function WrapUpDialog({ tasks, today, t, onMove, onClose }: {
+export function WrapUpDialog({ tasks, today, t, onMove, onLowerPriority, onClose }: {
   tasks: readonly BrainTaskSnapshot[];
   today: string;
   t: Translate;
   onMove: (ids: ReadonlySet<string>, date: string) => void;
+  /** Offered once a task would be put off for the third time: it may matter less than it looks. */
+  onLowerPriority?: (task: BrainTaskSnapshot) => void;
   onClose: () => void;
 }) {
   const summary = useMemo(() => wrapUpSummary(tasks, today), [tasks, today]);
@@ -230,7 +236,11 @@ export function WrapUpDialog({ tasks, today, t, onMove, onClose }: {
                   <input type="checkbox" checked={selected.has(task.id!)} onChange={() => toggle(task.id!)} />
                   <span>{task.title}</span>
                   {task.taskDate && task.taskDate < today && <small className="overdue-label">{shortDate(task.taskDate)}</small>}
+                  {postponedCount(task.title) > 0 && <small className="postponed-label">{t("today.wrap.postponed", { count: postponedCount(task.title) + 1 })}</small>}
                 </label>
+                {onLowerPriority && postponedCount(task.title) + 1 >= POSTPONE_REVIEW_COUNT && task.priority !== "low" && (
+                  <button type="button" className="text-button wrap-up-lower" title={t("today.wrap.lowerHint")} onClick={() => onLowerPriority(task)}>{t("today.wrap.lower")}</button>
+                )}
               </li>
             ))}
           </ul>

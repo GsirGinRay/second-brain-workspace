@@ -211,6 +211,29 @@ test("wrap-up moves the selected unfinished tasks to tomorrow", () => {
   }
 });
 
+test("wrap-up flags a task postponed three times and can lower its priority", () => {
+  const lowered: string[] = [];
+  const { container, cleanup } = mount(
+    <WrapUpDialog
+      tasks={[task("a", { title: ">> 對帳單", priority: "high" }), task("b", { title: "運動" })]}
+      today={TODAY}
+      t={t}
+      onMove={() => undefined}
+      onLowerPriority={(item) => lowered.push(item.id!)}
+      onClose={() => undefined}
+    />,
+  );
+  try {
+    const items = container.querySelectorAll(".wrap-up-list li");
+    assert.match(items[0]!.textContent!, /第 3 次延後/);
+    assert.doesNotMatch(items[1]!.textContent!, /延後/);
+    click(buttonByText(container, "降低重要性"));
+    assert.deepEqual(lowered, ["a"]);
+  } finally {
+    cleanup();
+  }
+});
+
 test("the repeat picker offers presets anchored on the task date", () => {
   const changes: (string | null)[] = [];
   const { container, cleanup } = mount(
