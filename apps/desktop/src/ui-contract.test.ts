@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
-const app = () => readFileSync(resolve(import.meta.dirname, "App.tsx"), "utf8");
+// App.tsx and the page modules split out of it, read as one source.
+const APP_SOURCES = [
+  "App.tsx", "app-shared.tsx", "today-page.tsx", "quick-add-modal.tsx", "board-page.tsx",
+  "calendar-page.tsx", "projects-page.tsx", "collections-page.tsx", "create-entity-modal.tsx",
+  "settings-page.tsx", "workspace-search.tsx",
+];
+const app = () => APP_SOURCES.map((file) => readFileSync(resolve(import.meta.dirname, file), "utf8")).join("\n");
 const css = () => readFileSync(resolve(import.meta.dirname, "styles.css"), "utf8");
 const detail = () => readFileSync(resolve(import.meta.dirname, "entity-detail-dialog.tsx"), "utf8");
 const blockEditor = () => readFileSync(resolve(import.meta.dirname, "markdown-block-editor.tsx"), "utf8");
