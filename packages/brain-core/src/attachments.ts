@@ -1,14 +1,12 @@
 /**
- * Vault attachments live in `附件/<project or category>/<file>`.
+ * Vault attachments live in `附件/<project or category>/<file>`
+ * (`Attachments/…` in English vaults).
  * Markdown stores only a relative link; binaries are never scanned as notes.
  */
 
 import {
   CANONICAL_ATTACHMENTS_DIR,
-  CANONICAL_INBOX_DIR,
-  CANONICAL_JOURNAL_DIR,
-  CANONICAL_KNOWLEDGE_DIR,
-  CANONICAL_PROJECTS_DIR,
+  activeVaultLayout,
   canonicalKnowledgeWriteDir,
 } from "./vault-paths";
 
@@ -109,13 +107,13 @@ export function uniqueAttachmentFileName(
 }
 
 export function canonicalAttachmentPath(folder: string, fileName: string): string {
-  return `${CANONICAL_ATTACHMENTS_DIR}/${folder}/${fileName}`;
+  return `${activeVaultLayout().attachmentsDir}/${folder}/${fileName}`;
 }
 
 export function attachmentFolderForProject(
   name: string | null | undefined,
 ): string {
-  return sanitizeAttachmentFolderName(name) || CANONICAL_PROJECTS_DIR;
+  return sanitizeAttachmentFolderName(name) || activeVaultLayout().projectsDir;
 }
 
 export function attachmentFolderForKnowledge(
@@ -124,11 +122,11 @@ export function attachmentFolderForKnowledge(
   const writeDir = canonicalKnowledgeWriteDir(category);
   const parts = writeDir.split("/").filter(Boolean);
   const folder = parts.length > 1 ? parts[1] : parts[0];
-  return sanitizeAttachmentFolderName(folder) || CANONICAL_KNOWLEDGE_DIR;
+  return sanitizeAttachmentFolderName(folder) || activeVaultLayout().knowledgeDir;
 }
 
 export function attachmentFolderForJournal(): string {
-  return CANONICAL_JOURNAL_DIR;
+  return activeVaultLayout().journalDir;
 }
 
 export function attachmentFolderForTask(
@@ -136,7 +134,7 @@ export function attachmentFolderForTask(
 ): string {
   return projectName?.trim()
     ? attachmentFolderForProject(projectName)
-    : CANONICAL_INBOX_DIR;
+    : activeVaultLayout().inboxDir;
 }
 
 function needsMarkdownAngleBrackets(path: string): boolean {
@@ -152,7 +150,7 @@ export function renderAttachmentMarkdown(relativePath: string): string {
   return `[${name}](${href})`;
 }
 
-/** Normalize a Markdown href to `附件/<folder>/<file>` or null. */
+/** Normalize a Markdown href to `附件/<folder>/<file>` (or `Attachments/…`) or null. */
 export function vaultAttachmentRelativePath(href: string): string | null {
   if (!href.trim()) return null;
   let decoded = href.trim();
@@ -170,7 +168,8 @@ export function vaultAttachmentRelativePath(href: string): string | null {
     return null;
   }
   const parts = decoded.split("/").filter(Boolean);
-  const index = parts.indexOf(CANONICAL_ATTACHMENTS_DIR);
+  const roots = [activeVaultLayout().attachmentsDir, CANONICAL_ATTACHMENTS_DIR];
+  const index = parts.findIndex((part) => roots.includes(part));
   if (index < 0) return null;
   const rest = parts.slice(index);
   if (rest.length !== 3) return null;
@@ -178,7 +177,7 @@ export function vaultAttachmentRelativePath(href: string): string | null {
   const file = rest[2]!;
   if (!sanitizeAttachmentFolderName(folder)) return null;
   if (!sanitizeAttachmentFileName(file)) return null;
-  return canonicalAttachmentPath(folder, file);
+  return `${rest[0]}/${folder}/${file}`;
 }
 
 export function extractAttachmentHrefs(markdown: string): string[] {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatTaskLine, type BrainTaskSnapshot } from "@second-brain/brain-core";
+import { ZH_TW_VAULT_LAYOUT, activeVaultLayout, formatTaskLine, setActiveVaultLayout, type BrainTaskSnapshot } from "@second-brain/brain-core";
 import { VaultLoader } from "./vault-loader";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -69,5 +69,26 @@ test("files in subfolders survive when the scan uses backslashes and reads use s
   for (let load = 0; load < 2; load += 1) {
     const local = await new VaultLoader(native).loadLocal();
     assert.deepEqual(local.files.map((file) => file.relativePath), ["10-收件匣/待辦.md", "root.md"]);
+  }
+});
+
+test("loading activates the vault's folder layout, and an empty vault takes the interface language", async () => {
+  const listing = (paths: string[]) => ({
+    async scanVault() {
+      return paths.map((relativePath) => ({ relativePath, sha256: "d".repeat(64), bytes: 4, hasBom: false, newline: "cr_lf" as const }));
+    },
+    async readMarkdownFiles(requested: string[]) {
+      return requested.map((relativePath) => ({ relativePath, sha256: "d".repeat(64), bytesBase64: base64("# x\r\n") }));
+    },
+  }) as unknown as ConstructorParameters<typeof VaultLoader>[0];
+  try {
+    await new VaultLoader(listing([]), "en").loadLocal();
+    assert.equal(activeVaultLayout().inboxDir, "Inbox");
+    await new VaultLoader(listing(["收件匣/待辦.md"]), "en").loadLocal();
+    assert.equal(activeVaultLayout().inboxDir, "收件匣");
+    await new VaultLoader(listing(["Inbox/Inbox.md"]), "zh-TW").loadLocal();
+    assert.equal(activeVaultLayout().inboxDir, "Inbox");
+  } finally {
+    setActiveVaultLayout(ZH_TW_VAULT_LAYOUT);
   }
 });

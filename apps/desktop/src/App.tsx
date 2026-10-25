@@ -1,8 +1,9 @@
 import {
   DEFAULT_ARCHITECTURE_PACK_IDS,
   LEGACY_TEMPLATES_DIR,
-  MANAGED_TEMPLATE_DIRS,
-  TEMPLATE_PACKS,
+  activeVaultLayout,
+  managedTemplateDirs,
+  templatePacks,
   buildOutcomeKnowledgeDraft,
   collectionToPrompt,
   completeProject,
@@ -45,7 +46,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { UiPreferencesContext, VIEW_KEYS, VIEW_TITLE_KEYS, describeError, newTask, taipeiDateKey, type DetailTarget, type Translate, type View } from "./app-shared";
 import { APP_VERSION } from "./app-version";
-import { VAULT_INDEX_PATH, decodeBase64, renderIndexChange, scaffoldArchitectureChanges } from "./architecture";
+import { AI_HANDOFF_PATHS, VAULT_INDEX_PATH, VAULT_INSTRUCTIONS_PATH, decodeBase64, renderIndexChange, scaffoldArchitectureChanges, writeBackUpgradeChange } from "./architecture";
 import appLogo from "./assets/app-logo.png";
 import { AttachmentProvider, createAttachmentApi } from "./attachment-context";
 import { Board } from "./board-page";
@@ -163,6 +164,9 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
     (key, values) => translate(preferences.language, key, values),
     [preferences.language],
   );
+  // An empty vault gets folders named in the interface language.
+  const languageRef = useRef(preferences.language);
+  languageRef.current = preferences.language;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -497,7 +501,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       }
       try {
         const paths: string[] = [];
-        for (const folder of MANAGED_TEMPLATE_DIRS) {
+        for (const folder of managedTemplateDirs()) {
           try {
             paths.push(...(await native.listManagedFiles(folder)));
           } catch {
@@ -545,11 +549,25 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
       const existingTasks = loaded?.tasks ?? tasks;
       const existingProjects = loaded?.projects ?? projects;
       const existingCollections = loaded?.collections ?? collections;
+      const packs = options.packs ?? selectedPacks;
+      // The scan skips .ai/ and the root entry files; read them so existing
+      // ones are kept and an older INSTRUCTIONS.md only gets the write-back rules.
+      const handoffFiles: LocalMarkdownFile[] = [];
+      for (const path of AI_HANDOFF_PATHS) {
+        const found = await native.readMarkdownFiles([path]).catch(() => []);
+        handoffFiles.push(...found);
+      }
       const changes = scaffoldArchitectureChanges(
-        existingFiles.map((file) => file.relativePath),
-        options.packs ?? selectedPacks,
+        [...existingFiles, ...handoffFiles].map((file) => file.relativePath),
+        packs,
         { today: taipeiDateKey(), samples: options.samples === true },
       );
+      if (packs.includes("ai")) {
+        const upgrade = writeBackUpgradeChange(
+          handoffFiles.find((file) => file.relativePath.replace(/\\/g, "/") === VAULT_INSTRUCTIONS_PATH),
+        );
+        if (upgrade) changes.push(upgrade);
+      }
       // A brand-new vault has no .ai/INDEX.md yet; treat the failed read as
       // "not created" so scaffolding (whose job is to create it) can proceed.
       const existingPaths = existingFiles.map((file) => file.relativePath);
@@ -616,7 +634,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         return;
       }
       const teachFirstRun = pendingScaffold.some((change) =>
-        /開始使用|待辦收件匣/.test(change.relativePath),
+        /開始使用|待辦收件匣|Getting Started/.test(change.relativePath),
       );
       await native.applyMarkdownChanges(changes);
       await reloadLocal();
@@ -633,6 +651,12 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   const prepareLayoutMigration = async () => {
     if (!diagnostics?.selectedVault) {
       setError(t("layout.needFolder"));
+      return;
+    }
+    // The legacy migrator targets the Chinese layout; English vaults are
+    // created in their final layout and their Projects/ is not legacy.
+    if (activeVaultLayout().locale === "en") {
+      setStatus(t("layout.empty"));
       return;
     }
     setWorking(true);
@@ -707,7 +731,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         return;
       }
       if (hasDraftContent(loadDraftWorkspace())) await flushDraftsToSelectedVault();
-      const loader = new VaultLoader(native);
+      const loader = new VaultLoader(native, languageRef.current);
       let local = await loader.loadLocal();
       // Capture warnings from the first pass: healing (below) rewrites the
       // broken markers, so a re-scan reports clean and the anomaly would
@@ -1399,7 +1423,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
   async function flushDraftsToSelectedVault(): Promise<void> {
     const draft = loadDraftWorkspace();
     if (!hasDraftContent(draft)) return;
-    const loader = new VaultLoader(native);
+    const loader = new VaultLoader(native, languageRef.current);
     const local = await loader.loadLocal();
     const usedPaths = local.files.map((file) => file.relativePath);
     const creates = [];
@@ -1920,7 +1944,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
             </div>
             <p>預設只勾專案管理與個人知識庫。提示詞庫、模板套件與 AI 委任之後需要再加。已存在的檔案不會被覆寫。</p>
             <div className="architecture-pack-list">
-              {TEMPLATE_PACKS.map((pack) => (
+              {templatePacks(preferences.language).map((pack) => (
                 <label key={pack.id} className="architecture-pack">
                   <input
                     type="checkbox"

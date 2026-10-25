@@ -18,7 +18,7 @@ import {
   withVisibleScheduleTokens,
   canonicalizeTaskMarker,
   canonicalizeEntityFrontmatterId,
-  CANONICAL_PROJECTS_DIR,
+  activeVaultLayout,
   canonicalKnowledgeWriteDir,
   isContentScanExcludedPath,
   type LayoutMigrationPlan,
@@ -336,7 +336,7 @@ export function buildProjectCreateChange(
     "",
   ].join("\r\n");
   return {
-    relativePath: uniqueMarkdownPath(CANONICAL_PROJECTS_DIR, title, existingPaths),
+    relativePath: uniqueMarkdownPath(activeVaultLayout().projectsDir, title, existingPaths),
     expectedSha256: EMPTY_SHA256,
     replacementBase64: encodeBase64(encoder.encode(content)),
     operation: "create",

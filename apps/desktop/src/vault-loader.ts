@@ -1,4 +1,4 @@
-import type { BrainCollectionSnapshot, BrainProjectSnapshot, BrainTaskSnapshot } from "@second-brain/brain-core";
+import { detectVaultLocale, setActiveVaultLayout, vaultLayoutFor, type BrainCollectionSnapshot, type BrainProjectSnapshot, type BrainTaskSnapshot, type VaultLocale } from "@second-brain/brain-core";
 import type { NativeAdapter } from "./ipc";
 import { createIncrementalVaultScanner, scanStructuredVault, type LocalMarkdownFile } from "./vault";
 
@@ -10,10 +10,13 @@ const vaultScanners = new WeakMap<object, ReturnType<typeof createIncrementalVau
 
 /** Reads the Markdown folder and parses it, re-reading only changed files. */
 export class VaultLoader {
-  constructor(private readonly native: NativeVaultReader) {}
+  /** `fallbackLocale` names the folders of an empty vault (the interface language). */
+  constructor(private readonly native: NativeVaultReader, private readonly fallbackLocale: VaultLocale = "zh-TW") {}
 
   async loadLocal(): Promise<{ files: LocalMarkdownFile[]; tasks: BrainTaskSnapshot[]; projects: BrainProjectSnapshot[]; collections: BrainCollectionSnapshot[]; bootstrapChanges: ReturnType<typeof scanStructuredVault>["bootstrapChanges"]; warnings: ReturnType<typeof scanStructuredVault>["warnings"] }> {
     const scan = await this.native.scanVault();
+    // Activate the vault's folder layout before anything resolves a write path.
+    setActiveVaultLayout(vaultLayoutFor(detectVaultLocale(scan.map((file) => file.relativePath), this.fallbackLocale)));
     if (scan.length === 0) return { files: [], tasks: [], projects: [], collections: [], bootstrapChanges: [], warnings: [] };
     const files = await this.readChangedFiles(scan);
     const structured = this.parse(files);

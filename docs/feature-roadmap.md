@@ -136,6 +136,35 @@
 | M4 | 部署（`https://inbox.aizbrain.com`，0.7.9 桌面版） | ✅ |
 | M5 | 文件與發版 | ✅ |
 
+## AI 協作：讓每一家 AI 都接得上
+
+參考 [agentmemory](https://github.com/rohitg00/agentmemory)（Apache-2.0）的長處，改寫成符合本 App 原則的做法：資料仍是使用者看得懂的 Markdown，不另建資料庫。只參考設計，不複製程式碼。
+
+目標是主流 AI 都能讀到、也會寫回：Claude、OpenAI（Codex）、Gemini、Grok，以及透過 OpenCode、Qwen Code、Kimi 等工具使用的開源模型（DeepSeek、Qwen、Kimi、GLM 等）。開源模型本身不讀檔案，讀不讀得到取決於使用者用哪個工具跑它，所以支援的單位是「工具」。
+
+| 順序 | 功能 | 說明 | 狀態 |
+| --- | --- | --- | --- |
+| 1 | AI 做完自動寫回 | 支援 hooks 的 AI 工具在對話開始時自動帶入今天的重點；對話結束時，如果 AI 沒有把結果寫回任務筆記，就提醒它寫。不支援 hooks 的工具靠說明檔規則。計畫見 [ai-write-back-plan.md](ai-write-back-plan.md) | 🚧 說明檔規則與 Claude Code、Codex、Grok 的 hooks 已完成（指令安裝）；Gemini 待實測，OpenCode 與設定頁未做 |
+| 2 | MCP 伺服器 | 提供「今天最重要的事」「新增任務」「打勾完成」「寫進任務筆記」等工具，讓 Claude Desktop、ChatGPT 等 App 版 AI 和沒有 hooks 的工具也能讀寫 | 未開始 |
+| 3 | 語意搜尋 | 本機模型依意思找筆記；中文需要多語言模型、安裝檔會變大，等使用者真的覺得找不到再做 | 暫緩 |
+
+## 國際化：資料夾名稱
+
+產品改名 aizbrain、準備賣到海外。資料夾名稱原本寫死成中文。
+
+| 類別 | 做法 |
+| --- | --- |
+| 技術資料夾與檔名（`.ai/`、`.ai/worklog/`、hook 設定、`INDEX.md`） | 一律英文，所有語言相同 |
+| 使用者看得到的內容資料夾 | 空資料夾依介面語言建立：英文是 `Inbox/Inbox.md`、`Projects`、`Knowledge`、`Journal`、`Attachments`、`Templates`，範例內容、INSTRUCTIONS 與 INDEX 也是英文；中文維持原本的名稱 |
+| 程式辨識資料夾 | 載入時依現有資料夾判斷（`detectVaultLocale`）：有任何中文或舊 Publisher 資料夾就是中文版，否則有英文資料夾就是英文版，空的資料夾看介面語言。不另存設定檔；INSTRUCTIONS 會列出這個 vault 的資料夾 |
+| 既有 vault | 不自動改名，避免弄斷 `[[連結]]`、Obsidian 設定和使用者自己的腳本；切換介面語言也不會改資料夾 |
+| 舊版資料夾整理（layout migrator） | 只給中文版；英文版的 `Projects/` 不是舊資料夾 |
+| 知識分類 | 中文版維持 `FAQ`、`產業`、`社群`、`影片`、`方法`、`提示詞`；英文版只有 `FAQ`、`Prompts`。改成使用者自訂留到之後 |
+
+狀態：✅ 資料夾、範例、INSTRUCTIONS、INDEX 與附件（Rust 端）已依語言處理。App 介面裡仍有部分寫死的中文狀態訊息，屬於介面翻譯，另外處理。
+
+一個限制：中文版 vault 裡如果剛好有叫 `Templates` 或 `Attachments` 的資料夾，也會被當成模板或附件資料夾，不列入掃描。
+
 ## 已知的小問題（低優先）
 
 - 提醒固定用台灣時間（UTC+8）計算。

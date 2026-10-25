@@ -1,18 +1,18 @@
-# 第二大腦（Second Brain Workspace）
+# aizbrain（AI 第二大腦）
 
 [English](README.md)
 
-給「每天事情很多」的人用的 Windows 任務與專案管理工具。所有資料都是你電腦裡的一般 Markdown 檔，可以同時用 Obsidian、VS Code 或任何編輯器開啟；不需要帳號，也不會把你的筆記上傳到雲端。
+你和所有 AI 共用的第二大腦：給「每天事情很多」的人用的 Windows 任務與專案管理工具。0.9.0 以前叫「第二大腦工作台／Second Brain Workspace」。所有資料都是你電腦裡的一般 Markdown 檔，可以同時用 Obsidian、VS Code 或任何編輯器開啟；不需要帳號，也不會把你的筆記上傳到雲端。
 
 ## 下載與安裝
 
-1. 到 [最新版本頁面](https://github.com/GsirGinRay/second-brain-workspace/releases/latest) 下載 `Second-Brain-Workspace_x.y.z_x64-setup.exe`。
+1. 到 [最新版本頁面](https://github.com/GsirGinRay/second-brain-workspace/releases/latest) 下載 `aizbrain_x.y.z_x64-setup.exe`（0.8.6 以前的檔名是 `Second-Brain-Workspace_x.y.z_x64-setup.exe`）。
 2. 執行安裝檔。
 3. 第一次打開時選一個資料夾存放 Markdown（可以先不選，關閉前再選）。
 
 ### 看到「Windows 已保護您的電腦」怎麼辦？
 
-這是 Windows SmartScreen 對「還沒有付費程式碼簽章」的新軟體的標準警告，不代表有病毒。第二大腦是開源軟體，所有程式碼都在這個頁面上公開。
+這是 Windows SmartScreen 對「還沒有付費程式碼簽章」的新軟體的標準警告，不代表有病毒。aizbrain 是開源軟體，所有程式碼都在這個頁面上公開。
 
 1. 在藍色視窗點 **「其他資訊」**。
 2. 按 **「仍要執行」**。
@@ -70,6 +70,28 @@ App 裡的每個操作都直接寫進你選的資料夾，沒有另外一份資�
 - 重複規則等寫法與 Obsidian Tasks 相容，換到別的工具也讀得懂。
 - 每次寫入前會先建立並驗證備份，再用原子寫入，中途當機也不會只寫一半。
 - 想在手機上看同一份檔案，可以把資料夾放進 OneDrive、Dropbox、Google 雲端硬碟或 Obsidian Sync。
+- 資料夾名稱跟著建立時的語言：中文介面建立 `收件匣`、`專案`、`知識`、`日誌`；英文介面建立 `Inbox`、`Projects`、`Knowledge`、`Journal`。之後切換介面語言不會改資料夾。
+
+## 和 AI 一起用
+
+到設定按「建立知識架構」並勾選「AI 委任架構」，資料夾裡會多出：
+
+- `.ai/INSTRUCTIONS.md`：給 AI 的規則，包括「做完要寫回」：AI 做完一件事，會在任務下面留一段 AI 工作紀錄（做了什麼、結果在哪、下一步）。
+- `.ai/INDEX.md`：App 自動更新的總覽，最上面是今天最重要的事，也列出最近的 AI 交接。
+- `CLAUDE.md`、`AGENTS.md`、`GEMINI.md`、`QWEN.md`：讓 Claude Code、Codex、Grok、OpenCode、Gemini CLI、Qwen Code 等工具一打開資料夾就找到規則。
+
+想讓 AI 一開始就拿到今天的重點、做完忘了寫回時被提醒一次，可以替 AI 工具裝上 hook（目前用指令安裝，`<App>` 是 App 的安裝路徑）：
+
+```
+<App>\second-brain-workspace.exe --aizbrain-hook install claude <你的資料夾>
+<App>\second-brain-workspace.exe --aizbrain-hook install codex  <你的資料夾>
+<App>\second-brain-workspace.exe --aizbrain-hook install gemini <你的資料夾>
+<App>\second-brain-workspace.exe --aizbrain-hook install antigravity <你的資料夾>
+```
+
+- `claude` 同時適用 Grok Build；Grok 和 Gemini 第一次要信任這個資料夾，Codex 要在 `/hooks` 審核一次。
+- 把 `install` 換成 `uninstall` 就移除；原本的設定檔會先備份成 `.aizbrain-backup`。
+- hook 只讀你的資料夾，不讀對話內容。細節見 [docs/ai-write-back-plan.md](docs/ai-write-back-plan.md)。
 
 ## 隱私
 

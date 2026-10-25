@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Second Brain Workspace is an open-source, local-first task and project manager
+aizbrain (formerly Second Brain Workspace) is an open-source, local-first task and project manager
 for standard Markdown files. The Windows desktop application is the primary
 product. Cloud sync is an optional adapter and must never be required for local
 reading, editing, calendar, board, backup, or recovery features.

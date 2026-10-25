@@ -1,7 +1,7 @@
 # Architecture
 
 ```text
-Any Markdown editor  ↔  the same folder on disk  ↔  Second Brain Workspace Desktop
+Any Markdown editor  ↔  the same folder on disk  ↔  aizbrain Desktop
 ```
 
 The public desktop application is local-first. Choosing a Markdown folder makes

@@ -1,5 +1,8 @@
 import {
+  AI_ENTRY_FILES,
   CANONICAL_AI_DIR,
+  WRITE_BACK_MARKER,
+  instructionsWriteBackAppendix,
   renderVaultIndex,
   scaffoldTemplateFiles,
   type ScaffoldFileOptions,
@@ -18,6 +21,32 @@ import type { LocalMarkdownFile, MarkdownChange } from "./vault";
 const EMPTY_SHA256 =
   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 export const VAULT_INDEX_PATH = `${CANONICAL_AI_DIR}/INDEX.md`;
+export const VAULT_INSTRUCTIONS_PATH = `${CANONICAL_AI_DIR}/INSTRUCTIONS.md`;
+
+/**
+ * The scan skips `.ai/` and the root entry files, so scaffolding reads these
+ * one by one to learn which already exist instead of trying to recreate them.
+ */
+export const AI_HANDOFF_PATHS: readonly string[] = [VAULT_INSTRUCTIONS_PATH, ...AI_ENTRY_FILES];
+
+/**
+ * An INSTRUCTIONS.md written before the write-back rules gets them appended
+ * once. The file is human-owned, so this goes through the scaffold preview and
+ * leaves everything already in the file as it was.
+ */
+export function writeBackUpgradeChange(existing: LocalMarkdownFile | undefined): MarkdownChange | null {
+  if (!existing) return null;
+  const text = decodeBase64(existing.bytesBase64);
+  if (text.includes(WRITE_BACK_MARKER)) return null;
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  const appendix = instructionsWriteBackAppendix().replace(/^\n/, "").replace(/\n/g, newline);
+  return {
+    relativePath: VAULT_INSTRUCTIONS_PATH,
+    expectedSha256: existing.sha256,
+    replacementBase64: encodeBase64(`${text.replace(/\s+$/, "")}${newline}${newline}${appendix}`),
+    operation: "write",
+  } as MarkdownChange;
+}
 
 function encodeBase64(text: string): string {
   return btoa(unescape(encodeURIComponent(text)));

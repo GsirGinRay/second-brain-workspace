@@ -263,6 +263,28 @@ pub fn prepare_path_for_create(root: &Path, relative: &Path) -> Result<PathBuf, 
 }
 
 const ATTACHMENT_ROOT: &str = "附件";
+/// English vaults (see `packages/brain-core/src/vault-paths.ts`) name their
+/// attachment and template folders in English.
+const ENGLISH_ATTACHMENT_ROOT: &str = "Attachments";
+const ENGLISH_TEMPLATE_ROOT: &str = "Templates";
+
+/// The attachment folder of this vault: `附件` unless the vault is English,
+/// which the existing `Attachments/` or an `Inbox/` without `收件匣/` shows.
+fn attachment_root_for(canonical_root: &Path) -> &'static str {
+    if canonical_root.join(ATTACHMENT_ROOT).is_dir() {
+        return ATTACHMENT_ROOT;
+    }
+    if canonical_root.join(ENGLISH_ATTACHMENT_ROOT).is_dir()
+        || (canonical_root.join("Inbox").is_dir() && !canonical_root.join("收件匣").is_dir())
+    {
+        return ENGLISH_ATTACHMENT_ROOT;
+    }
+    ATTACHMENT_ROOT
+}
+
+fn is_attachment_root(name: &str) -> bool {
+    name == ATTACHMENT_ROOT || name == ENGLISH_ATTACHMENT_ROOT
+}
 const ATTACHMENT_MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 pub fn is_allowed_attachment_extension(ext: &str) -> bool {
@@ -374,7 +396,7 @@ pub fn validate_attachment_relative_path(path: &Path) -> Result<(), NativeError>
         Component::Normal(value) => value.to_string_lossy(),
         _ => return Err(NativeError::UnsafePath),
     };
-    if first != ATTACHMENT_ROOT {
+    if !is_attachment_root(&first) {
         return Err(NativeError::UnsafePath);
     }
     let ext = path
@@ -515,9 +537,10 @@ pub fn import_attachment_bytes(
     let folder = sanitize_attachment_folder(folder)?;
     let file_name = sanitize_attachment_file_name(file_name)?;
     let canonical_root = validate_vault_root(root)?;
-    let dest_dir = canonical_root.join(ATTACHMENT_ROOT).join(&folder);
+    let attachment_root = attachment_root_for(&canonical_root);
+    let dest_dir = canonical_root.join(attachment_root).join(&folder);
     let unique_name = unique_attachment_file_name(&dest_dir, &file_name)?;
-    let relative = PathBuf::from(ATTACHMENT_ROOT)
+    let relative = PathBuf::from(attachment_root)
         .join(&folder)
         .join(&unique_name);
     let target = prepare_attachment_path_for_create(root, &relative)?;
@@ -734,29 +757,33 @@ fn is_technical_name(name: &str) -> bool {
             | "node_modules"
             | "claude.md"
             | "agents.md"
+            | "gemini.md"
+            | "qwen.md"
     ) || name.starts_with('.')
 }
 
 /// Managed architecture folders/files that the app is explicitly allowed to
 /// create even though they are excluded from Markdown scanning and cloud plans:
-/// the AI handoff folder `.ai/`, the template folders `模板/` and `90-模板/`,
-/// and the root entry files `CLAUDE.md` / `AGENTS.md`. These are exact literal
+/// the AI handoff folder `.ai/`, the template folders `模板/`, `90-模板/` and
+/// `Templates/` (English vaults), and the root entry files `CLAUDE.md`,
+/// `AGENTS.md`, `GEMINI.md` and `QWEN.md`. These are exact literal
 /// names (no wildcards); every other traversal/symlink/hidden check still applies.
 fn is_managed_component(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        ".ai" | "模板" | "90-模板" | "claude.md" | "agents.md"
+        ".ai" | "模板" | "90-模板" | "templates" | "claude.md" | "agents.md" | "gemini.md" | "qwen.md"
     )
 }
 
 fn is_template_dir(name: &str) -> bool {
-    name == "模板" || name == "90-模板"
+    name == "模板" || name == "90-模板" || name == ENGLISH_TEMPLATE_ROOT
 }
 
 fn is_content_scan_skipped_dir(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     is_template_dir(name)
         || lower == "附件"
+        || name == ENGLISH_ATTACHMENT_ROOT
         || lower == "tmp"
         || lower.contains("backup")
 }

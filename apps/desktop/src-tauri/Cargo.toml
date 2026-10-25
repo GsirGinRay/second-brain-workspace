@@ -1,8 +1,8 @@
 [package]
 name = "second-brain-workspace"
 version = "0.8.6"
-description = "Native local-first second brain workspace"
-authors = ["Second Brain Workspace"]
+description = "aizbrain: local-first AI second brain"
+authors = ["aizbrain"]
 edition = "2021"
 rust-version = "1.77"
 build = "build.rs"

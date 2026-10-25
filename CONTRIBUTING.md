@@ -43,7 +43,10 @@ private key lives outside the repository (`TAURI_SIGNING_PRIVATE_KEY` or
 `~/.tauri/second-brain-workspace.key`). Back it up: without it, installed apps
 can never receive another update.
 
-The Windows package keeps the product identity `Second Brain Workspace`
-(`app.secondbrain.workspace`). A newer installer finds the installed version,
-removes it through its uninstaller and installs the update without touching the
-user's Markdown folder.
+The Windows package is named `aizbrain` and keeps the identifier
+`app.secondbrain.workspace`, so settings and keys stay where they are. A newer
+installer finds the installed version, removes it through its uninstaller and
+installs the update without touching the user's Markdown folder. Up to 0.8.6 the
+product name was `Second Brain Workspace`; NSIS keys the install folder by that
+name, so `src-tauri/windows/installer-hooks.nsh` removes the old install first.
+Keep the product name stable from now on.

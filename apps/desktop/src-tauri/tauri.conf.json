@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Second Brain Workspace",
+  "productName": "aizbrain",
   "version": "0.8.6",
   "identifier": "app.secondbrain.workspace",
   "build": {
@@ -17,7 +17,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Second Brain Workspace",
+        "title": "aizbrain",
         "width": 1040,
         "height": 760,
         "minWidth": 320,
@@ -36,7 +36,8 @@
     "windows": {
       "allowDowngrades": false,
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "./windows/installer-hooks.nsh"
       }
     }
   },

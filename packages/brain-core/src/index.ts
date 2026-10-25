@@ -91,10 +91,21 @@ export {
 } from "./templates";
 export type { BrainTemplate } from "./templates";
 export {
+  AI_ENTRY_FILES,
   TEMPLATE_PACKS,
   DEFAULT_ARCHITECTURE_PACK_IDS,
+  WRITE_BACK_MARKER,
+  instructionsWriteBackAppendix,
   scaffoldTemplateFiles,
+  templatePacks,
 } from "./scaffold";
+export {
+  AI_WORKLOG_DIR,
+  aiWorklogPath,
+  parseAiWorklog,
+  recentAiHandoffs,
+} from "./ai-worklog";
+export type { AiHandoff, AiWorklogEntry } from "./ai-worklog";
 export type { ScaffoldFileOptions, TemplatePack, TemplatePackId } from "./scaffold";
 export {
   CANONICAL_AI_DIR,
@@ -128,8 +139,16 @@ export {
   resolveInboxWritePath,
   resolveTodayJournalPath,
   canonicalJournalPath,
+  EN_VAULT_LAYOUT,
+  ZH_TW_VAULT_LAYOUT,
+  activeInboxPath,
+  activeVaultLayout,
+  detectVaultLocale,
+  managedTemplateDirs,
+  setActiveVaultLayout,
+  vaultLayoutFor,
 } from "./vault-paths";
-export type { DailyJournalRef, KnowledgeCategory } from "./vault-paths";
+export type { DailyJournalRef, KnowledgeCategory, VaultLayout, VaultLocale } from "./vault-paths";
 export {
   hintsForLayoutMigration,
   isManualIndexPath,

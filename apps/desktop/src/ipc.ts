@@ -167,13 +167,13 @@ function assertAttachmentRelativePath(value: unknown): string {
     path.includes("..")
     || path.startsWith("/")
     || path.includes("\\")
-    || !path.startsWith("附件/")
     || !ATTACHMENT_EXT.test(path)
   ) {
     throw new Error("attachment path is invalid");
   }
   const parts = path.split("/").filter(Boolean);
-  if (parts.length !== 3 || parts[0] !== "附件") throw new Error("attachment path is invalid");
+  // 附件/ in Chinese vaults, Attachments/ in English ones.
+  if (parts.length !== 3 || (parts[0] !== "附件" && parts[0] !== "Attachments")) throw new Error("attachment path is invalid");
   return path;
 }
 

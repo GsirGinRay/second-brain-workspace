@@ -1,6 +1,6 @@
 # Desktop Application
 
-The Tauri desktop app is the primary Second Brain Workspace product. It reads
+The Tauri desktop app is the primary aizbrain product. It reads
 and writes a user-selected Markdown directory without requiring Obsidian or a
 cloud account.
 

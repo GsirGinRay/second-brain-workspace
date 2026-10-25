@@ -19,7 +19,7 @@ const tauriConfig = () =>
       resolve(import.meta.dirname, "../src-tauri/tauri.conf.json"),
       "utf8",
     ),
-  ) as { productName?: string; version?: string; identifier?: string; app?: { windows?: Array<{ dragDropEnabled?: boolean }> }; bundle?: { windows?: { allowDowngrades?: boolean; nsis?: { installMode?: string } } } };
+  ) as { productName?: string; version?: string; identifier?: string; app?: { windows?: Array<{ dragDropEnabled?: boolean }> }; bundle?: { windows?: { allowDowngrades?: boolean; nsis?: { installMode?: string; installerHooks?: string } } } };
 test("desktop checks signed releases for in-app updates", () => {
   const source = app();
   assert.match(source, /checkAppUpdate/);
@@ -459,7 +459,9 @@ test("Today, calendar and project empty states teach the first action in plain l
 
 test("Windows installer keeps a stable upgrade identity", () => {
   const config = tauriConfig();
-  assert.equal(config.productName, "Second Brain Workspace");
+  // 0.9.0 renamed the product; the NSIS hook removes the old install on upgrade.
+  assert.equal(config.productName, "aizbrain");
+  assert.equal(config.bundle?.windows?.nsis?.installerHooks, "./windows/installer-hooks.nsh");
   assert.equal(config.identifier, "app.secondbrain.workspace");
   assert.equal(config.version, "0.8.6");
   assert.equal(config.bundle?.windows?.nsis?.installMode, "currentUser");

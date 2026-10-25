@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { CANONICAL_AI_DIR, renderVaultIndex, TEMPLATE_PACKS } from "@second-brain/brain-core";
-import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH } from "./architecture";
+import { decodeBase64, renderIndexChange, scaffoldArchitectureChanges, VAULT_INDEX_PATH, writeBackUpgradeChange } from "./architecture";
 import type { LocalMarkdownFile } from "./vault";
 
 function file(relativePath: string, content: string): LocalMarkdownFile {
@@ -178,4 +178,27 @@ test("renderIndexChange emits a create when index is missing and write when chan
   assert.ok(written);
   assert.equal(written.operation, "write");
   assert.equal(written.expectedSha256, stale.sha256);
+});
+
+test("an older INSTRUCTIONS.md gets the write-back rules appended once, keeping its text and CRLF", () => {
+  const older = "﻿# 我的規則\r\n\r\n- 不要動 專案/ 以外的檔\r\n";
+  const change = writeBackUpgradeChange(file(".ai/INSTRUCTIONS.md", older));
+  assert.ok(change);
+  assert.equal(change.operation, "write");
+  assert.equal(change.expectedSha256, "a".repeat(64));
+  const upgraded = decodeBase64(change.replacementBase64!);
+  assert.ok(upgraded.startsWith("﻿# 我的規則\r\n\r\n- 不要動 專案/ 以外的檔\r\n\r\n<!-- aizbrain:write-back v1 -->\r\n"));
+  assert.match(upgraded, /### AI 工作紀錄 2026-10-25 10:42（Codex）/);
+  assert.doesNotMatch(upgraded.replace(/\r\n/g, ""), /\n/);
+  assert.equal(writeBackUpgradeChange(file(".ai/INSTRUCTIONS.md", upgraded)), null);
+  assert.equal(writeBackUpgradeChange(undefined), null);
+});
+
+test("scaffolding keeps AI handoff files that the scan cannot see", () => {
+  const changes = scaffoldArchitectureChanges([".ai/INSTRUCTIONS.md", "CLAUDE.md"], ["ai"]);
+  const paths = changes.map((change) => change.relativePath);
+  assert.ok(!paths.includes(".ai/INSTRUCTIONS.md"));
+  assert.ok(!paths.includes("CLAUDE.md"));
+  assert.ok(paths.includes("GEMINI.md"));
+  assert.ok(paths.includes("QWEN.md"));
 });

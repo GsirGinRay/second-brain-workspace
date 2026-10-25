@@ -1,12 +1,12 @@
-# Second Brain Workspace
+# aizbrain
 
 [繁體中文](README.zh-TW.md)
 
-A Windows task and project manager for people with a lot on their plate. Everything lives in ordinary Markdown files on your computer, so Obsidian, VS Code or any editor can open them too. No account, and your notes are never uploaded.
+The second brain you share with every AI: a Windows task and project manager for people with a lot on their plate. Called Second Brain Workspace before 0.9.0. Everything lives in ordinary Markdown files on your computer, so Obsidian, VS Code or any editor can open them too. No account, and your notes are never uploaded.
 
 ## Download and install
 
-1. Download `Second-Brain-Workspace_x.y.z_x64-setup.exe` from the [latest release](https://github.com/GsirGinRay/second-brain-workspace/releases/latest).
+1. Download `aizbrain_x.y.z_x64-setup.exe` (`Second-Brain-Workspace_x.y.z_x64-setup.exe` up to 0.8.6) from the [latest release](https://github.com/GsirGinRay/second-brain-workspace/releases/latest).
 2. Run the installer.
 3. On first launch, pick a folder for your Markdown (or skip it and pick one before closing).
 
@@ -70,6 +70,28 @@ Every action writes straight to the folder you chose; there is no separate datab
 - Repeat rules and similar tokens follow Obsidian Tasks, so other tools can read them.
 - Every write is preceded by a verified backup and done atomically, so a crash never leaves a half-written file.
 - To read the same files on a phone, keep the folder in OneDrive, Dropbox, Google Drive or Obsidian Sync.
+- Folder names follow the language the vault was created in: `Inbox`, `Projects`, `Knowledge`, `Journal` in English, `收件匣`, `專案`, `知識`, `日誌` in Traditional Chinese. Switching the interface language later does not rename them.
+
+## Working with AI
+
+In Settings, choose "Build architecture" and tick "AI handoff". The folder then gets:
+
+- `.ai/INSTRUCTIONS.md`: rules for AI, including "write back when you finish": after a piece of work the AI adds an AI work log under the task (done, result, next).
+- `.ai/INDEX.md`: an overview the app keeps up to date, with today's most important task first and the latest AI handoffs.
+- `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `QWEN.md`: so Claude Code, Codex, Grok, OpenCode, Gemini CLI, Qwen Code and similar tools find the rules as soon as they open the folder.
+
+To hand the AI today's priorities at the start of a session, and remind it once when it forgets to write back, install the hooks (from the command line for now; `<App>` is where the app is installed):
+
+```
+<App>\second-brain-workspace.exe --aizbrain-hook install claude <your folder>
+<App>\second-brain-workspace.exe --aizbrain-hook install codex  <your folder>
+<App>\second-brain-workspace.exe --aizbrain-hook install gemini <your folder>
+<App>\second-brain-workspace.exe --aizbrain-hook install antigravity <your folder>
+```
+
+- `claude` also covers Grok Build. Grok and Gemini ask you to trust the folder once; Codex asks you to review the hooks once in `/hooks`.
+- Use `uninstall` instead of `install` to remove them; the previous settings file is kept as `.aizbrain-backup`.
+- The hooks only read your folder, never the conversation. See [docs/ai-write-back-plan.md](docs/ai-write-back-plan.md) (Traditional Chinese).
 
 ## Privacy
 

@@ -62,7 +62,7 @@ if (!existsSync(builtInstaller) || !existsSync(builtSignature)) {
 }
 
 // GitHub rewrites spaces in asset names, so publish a URL-safe file name.
-const assetName = `Second-Brain-Workspace_${version}_x64-setup.exe`;
+const assetName = `aizbrain_${version}_x64-setup.exe`;
 const releaseDir = resolve(root, "apps/desktop/src-tauri/target/release/updater", tag);
 mkdirSync(releaseDir, { recursive: true });
 const installer = join(releaseDir, assetName);
@@ -89,6 +89,6 @@ if (!publish) {
   // Tag the exact commit that was built; gh rejects it if it is not pushed yet.
   const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
   if (!/^[0-9a-f]{40}$/.test(head)) throw new Error("Could not resolve the commit to release");
-  run("gh", ["release", "create", tag, installer, manifestPath, "--repo", REPO, "--target", head, "--title", `Second Brain Workspace ${version}`, "--notes", notes, "--latest"]);
+  run("gh", ["release", "create", tag, installer, manifestPath, "--repo", REPO, "--target", head, "--title", `aizbrain ${version}`, "--notes", notes, "--latest"]);
   console.log(`Published ${tag}. Installed apps will offer the update on their next check.`);
 }

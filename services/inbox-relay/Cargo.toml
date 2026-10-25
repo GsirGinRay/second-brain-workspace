@@ -3,7 +3,7 @@ name = "inbox-relay"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Encrypted phone-to-desktop inbox relay for Second Brain Workspace"
+description = "Encrypted phone-to-desktop inbox relay for aizbrain"
 license = "MIT"
 
 [dependencies]

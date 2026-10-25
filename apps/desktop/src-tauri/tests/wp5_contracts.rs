@@ -881,3 +881,57 @@ fn sync_coordinator_serializes_work_and_marks_one_pending_rerun() {
     assert!(coordinator.finish().unwrap());
     assert!(!coordinator.finish().unwrap());
 }
+
+#[test]
+fn an_english_vault_keeps_attachments_and_templates_in_english_folders() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir_all(root.join("Inbox")).unwrap();
+    fs::write(root.join("Inbox").join("Inbox.md"), "# Inbox\n").unwrap();
+    let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    let saved = import_attachment_bytes(&root, "Launch", "photo.png", &png).unwrap();
+    assert_eq!(
+        saved.to_string_lossy().replace('\\', "/"),
+        "Attachments/Launch/photo.png"
+    );
+    assert!(read_attachment_image(&root, Path::new("Attachments/Launch/photo.png")).is_ok());
+    assert!(validate_attachment_relative_path(Path::new("Attachments/Launch/photo.png")).is_ok());
+    assert!(validate_attachment_relative_path(Path::new("Other/Launch/photo.png")).is_err());
+
+    fs::create_dir_all(root.join("Templates")).unwrap();
+    fs::write(root.join("Templates").join("General project.md"), "# T\n").unwrap();
+    fs::write(root.join("Attachments").join("Launch").join("note.md"), "# N\n").unwrap();
+    assert!(managed_subfolder(&root, "Templates").is_ok());
+    let scanned = scan_markdown(&root, ScanLimits::default(), &|| false).unwrap();
+    let paths: Vec<String> = scanned
+        .files
+        .iter()
+        .map(|file| file.relative_path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    assert_eq!(paths, vec!["Inbox/Inbox.md".to_owned()]);
+}
+
+#[test]
+fn a_chinese_vault_with_an_inbox_folder_still_uses_its_attachment_folder() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir_all(root.join("收件匣")).unwrap();
+    fs::create_dir_all(root.join("Inbox")).unwrap();
+    let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    let saved = import_attachment_bytes(&root, "專案", "a.png", &png).unwrap();
+    assert_eq!(saved.to_string_lossy().replace('\\', "/"), "附件/專案/a.png");
+}
+
+#[test]
+fn gemini_and_qwen_entry_files_are_managed_like_claude_and_agents() {
+    for name in ["CLAUDE.md", "AGENTS.md", "GEMINI.md", "QWEN.md"] {
+        assert!(validate_relative_path(Path::new(name)).is_ok(), "{name}");
+    }
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("vault");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("GEMINI.md"), "# See .ai\n").unwrap();
+    fs::write(root.join("QWEN.md"), "# See .ai\n").unwrap();
+    let scanned = scan_markdown(&root, ScanLimits::default(), &|| false).unwrap();
+    assert!(scanned.files.is_empty());
+}

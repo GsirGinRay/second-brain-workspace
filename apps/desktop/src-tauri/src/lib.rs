@@ -1,3 +1,4 @@
+pub mod ai_hook;
 pub mod app_update;
 pub mod atomic_write;
 pub mod backup;
