@@ -13,9 +13,18 @@ export function priorityDisplay(priority: BrainTaskSnapshot["priority"]): { code
   return PRIORITY_DISPLAY[priority];
 }
 
+/**
+ * The day a done task counts as finished. A task ticked outside the app
+ * (an AI or another editor changing `- [ ]` to `- [x]`) may have no `✅` date;
+ * it then counts on the day it was scheduled.
+ */
+export function completionDate(task: BrainTaskSnapshot): string | null {
+  return task.status === "done" ? task.completedAt ?? task.taskDate ?? null : null;
+}
+
 export function completedForDate(tasks: readonly BrainTaskSnapshot[], date: string): BrainTaskSnapshot[] {
   return tasks
-    .filter((task) => task.status === "done" && task.completedAt === date)
+    .filter((task) => completionDate(task) === date)
     .sort((left, right) => left.rank.localeCompare(right.rank));
 }
 

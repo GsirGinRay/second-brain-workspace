@@ -89,7 +89,7 @@ log under the matching task so the next AI can pick it up:
   (create it if needed) and name the work after the time.
 - Write a short summary, not the conversation. Never write API keys, passwords,
   tokens or personal data.
-- When the task is done, change \`- [ ]\` to \`- [x]\`.
+- When the task is done, change \`- [ ]\` to \`- [x]\` and add \`✅ YYYY-MM-DD\` (today) after its dates.
 `;
   }
   return `${WRITE_BACK_MARKER}
@@ -113,7 +113,7 @@ log under the matching task so the next AI can pick it up:
 - 找不到對應任務時，把同樣的段落追加到 \`${AI_WORKLOG_DIR}/YYYY-MM.md\`（沒有就建立），
   並在時間後面寫做的是什麼事。
 - 只寫摘要，不要貼整段對話；不要寫入 API key、密碼、token 或個資。
-- 任務完成就把 \`- [ ]\` 改成 \`- [x]\`。
+- 任務完成就把 \`- [ ]\` 改成 \`- [x]\`，並在日期後面加上 \`✅ YYYY-MM-DD\`（今天）。
 `;
 }
 

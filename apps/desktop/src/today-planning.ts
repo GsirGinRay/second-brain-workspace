@@ -1,4 +1,5 @@
 import type { BrainTaskSnapshot } from "@second-brain/brain-core";
+import { completionDate } from "./task-actions";
 
 export const AVAILABLE_HOURS_KEY = "second-brain.availableHours";
 export const AVAILABLE_HOUR_OPTIONS = [4, 5, 6, 7, 8, 9, 10, 12] as const;
@@ -86,13 +87,13 @@ export interface WrapUpSummary {
 
 export function wrapUpSummary(tasks: readonly BrainTaskSnapshot[], today: string): WrapUpSummary {
   const monday = weekStart(today);
-  const doneThisWeek = tasks.filter((task) => task.status === "done" && task.completedAt && task.completedAt >= monday && task.completedAt <= today);
+  const doneThisWeek = tasks.filter((task) => { const day = completionDate(task); return day !== null && day >= monday && day <= today; });
   const byProject = new Map<string, number>();
   for (const task of doneThisWeek) {
     if (task.projectName) byProject.set(task.projectName, (byProject.get(task.projectName) ?? 0) + 1);
   }
   return {
-    doneToday: tasks.filter((task) => task.status === "done" && task.completedAt === today),
+    doneToday: tasks.filter((task) => completionDate(task) === today),
     doneThisWeek: doneThisWeek.length,
     topProjects: [...byProject].map(([name, count]) => ({ name, count }))
       .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))

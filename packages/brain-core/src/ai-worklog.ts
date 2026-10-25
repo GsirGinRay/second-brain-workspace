@@ -31,8 +31,10 @@ export interface AiWorklogEntry {
   next: string | null;
 }
 
-const HEADING = /^\s*#{2,4}\s*(?:AI 工作紀錄|AI work log)\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s*[（(]\s*([^）)]{1,40}?)\s*[）)]\s*$/i;
+// The rest of the heading line is kept: some tools write the whole log on one line.
+const HEADING = /^\s*#{2,4}\s*(?:AI 工作紀錄|AI work log)\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s*[（(]\s*([^）)]{1,40}?)\s*[）)](.*)$/i;
 const NEXT = /^\s*[-*]\s*(?:下一步|Next)\s*[：:]\s*(.+?)\s*$/i;
+const INLINE_NEXT = /(?:^|\s)[-*]\s*(?:下一步|Next)\s*[：:]\s*(.+?)\s*$/i;
 const ANY_HEADING = /^\s*#{1,6}\s/;
 
 /** Every work log in a task note, in the order written. */
@@ -43,7 +45,7 @@ export function parseAiWorklog(body: string | null | undefined): AiWorklogEntry[
   for (const line of body.split(/\r?\n/)) {
     const heading = HEADING.exec(line);
     if (heading) {
-      current = { date: heading[1]!, time: heading[2]!, tool: heading[3]!, next: null };
+      current = { date: heading[1]!, time: heading[2]!, tool: heading[3]!, next: INLINE_NEXT.exec(heading[4]!)?.[1] ?? null };
       entries.push(current);
       continue;
     }

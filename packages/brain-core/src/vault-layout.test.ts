@@ -142,6 +142,10 @@ test("work logs are read from both languages with their next step", () => {
     { date: "2026-10-25", time: "09:05", tool: "Codex", next: "check the next call" },
   ]);
   assert.deepEqual(parseAiWorklog("### AI 工作紀錄 sometime"), []);
+  // Some tools write the whole log on the heading line.
+  assert.deepEqual(parseAiWorklog("  ### AI 工作紀錄 2026-10-25 23:24（Codex）   - 做了什麼：補上提醒   - 下一步：下次法說會比較"), [
+    { date: "2026-10-25", time: "23:24", tool: "Codex", next: "下次法說會比較" },
+  ]);
 });
 
 function task(overrides: Partial<BrainTaskSnapshot>): BrainTaskSnapshot {

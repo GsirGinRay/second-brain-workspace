@@ -85,6 +85,13 @@ test("completed tasks for a day are separated from unfinished work", () => {
   assert.deepEqual(completedForDate([doneToday, doneEarlier, open], "2026-08-12").map((item) => item.id), ["done-today"]);
 });
 
+test("a task ticked outside the app without a completion date counts on its scheduled day", () => {
+  const tickedByAi = { ...task("ticked", "2026-08-12"), status: "done" as const, completedAt: null };
+  const undated = { ...task("undated", null), status: "done" as const, completedAt: null };
+  assert.deepEqual(completedForDate([tickedByAi, undated], "2026-08-12").map((item) => item.id), ["ticked"]);
+  assert.deepEqual(completedForDate([tickedByAi], "2026-08-13"), []);
+});
+
 test("completed tasks are hidden by default and can be revealed explicitly", () => {
   const open = task("open", "2026-08-12");
   const done = { ...task("done", "2026-08-12"), status: "done" as const, completedAt: "2026-08-12" };
