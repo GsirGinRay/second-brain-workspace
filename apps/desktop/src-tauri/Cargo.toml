@@ -1,6 +1,6 @@
 [package]
 name = "second-brain-workspace"
-version = "0.8.6"
+version = "0.9.0"
 description = "aizbrain: local-first AI second brain"
 authors = ["aizbrain"]
 edition = "2021"
