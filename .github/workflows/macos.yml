@@ -5,7 +5,7 @@ name: macOS
 
 on:
   push:
-    branches: [main, feat/macos]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

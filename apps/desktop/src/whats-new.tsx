@@ -27,6 +27,7 @@ export const RELEASE_HIGHLIGHT_KEYS: Readonly<Record<string, readonly string[]>>
   "0.9.0": ["whatsNew.0.9.0.name", "whatsNew.0.9.0.writeBack", "whatsNew.0.9.0.language"],
   "0.9.1": ["whatsNew.0.9.1.done"],
   "0.9.2": ["whatsNew.0.9.2.name"],
+  "0.9.3": ["whatsNew.0.9.3.mac"],
 };
 
 function compareVersions(left: string, right: string): number {

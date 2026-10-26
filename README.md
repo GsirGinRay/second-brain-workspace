@@ -2,22 +2,35 @@
 
 [繁體中文](README.zh-TW.md)
 
-The second brain you share with every AI: a Windows task and project manager for people with a lot on their plate. Called Second Brain Workspace before 0.9.0. Everything lives in ordinary Markdown files on your computer, so Obsidian, VS Code or any editor can open them too. No account, and your notes are never uploaded.
+The second brain you share with every AI: a task and project manager for Windows and Mac for people with a lot on their plate. Called Second Brain Workspace before 0.9.0. Everything lives in ordinary Markdown files on your computer, so Obsidian, VS Code or any editor can open them too. No account, and your notes are never uploaded.
 
 ## Download and install
+
+### Windows
 
 1. Download `aizbrain_x.y.z_x64-setup.exe` (`Second-Brain-Workspace_x.y.z_x64-setup.exe` up to 0.8.6) from the [latest release](https://github.com/GsirGinRay/second-brain-workspace/releases/latest).
 2. Run the installer.
 3. On first launch, pick a folder for your Markdown (or skip it and pick one before closing).
 
-### "Windows protected your PC"
+#### "Windows protected your PC"
 
 Windows SmartScreen shows this for new software without a paid code-signing certificate. It does not mean the file is harmful; the whole app is open source on this page.
 
 1. Click **More info**.
 2. Click **Run anyway**.
 
-You only see this on the first install. Updates are downloaded by the app and checked against the public key built into it, so only official releases are installed.
+You only see this on the first install.
+
+### Mac
+
+1. Download `aizbrain_x.y.z_universal.dmg` from the same page. It runs on Apple Silicon and Intel Macs with macOS 11 or later.
+2. Open the .dmg and drag **aizbrain** into **Applications**.
+3. Open aizbrain once. macOS says it cannot verify the developer, because the app has no paid Apple signature yet.
+4. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to aizbrain, then confirm.
+
+After an update macOS may ask once whether aizbrain may use its Keychain item (it holds the phone inbox key); choose **Always Allow**.
+
+Updates on both systems are downloaded by the app and checked against the public key built into it, so only official releases are installed.
 
 ### Updates
 
@@ -44,7 +57,7 @@ The app checks for a new version at launch and every 6 hours and asks before ins
 - Quick add (`N`): type "Pay the phone bill tomorrow at 3pm" and the date and time are recognized
 - Repeating tasks: daily, on weekdays, on a day of the month or a custom interval
 - Checklists inside a task, with progress on the card
-- Windows notifications before a task starts and a daily summary
+- System notifications before a task starts and a daily summary
 
 **Phone**
 - Phone inbox (free): pair once, then tasks you send from the phone (or its share menu) arrive end-to-end encrypted in your computer's inbox
