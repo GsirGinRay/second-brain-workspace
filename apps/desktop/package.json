@@ -9,7 +9,8 @@
     "test": "tsx --test src/test.ts",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build --no-bundle",
-    "tauri:installer": "tauri build --bundles nsis"
+    "tauri:installer": "tauri build --bundles nsis",
+    "tauri:mac": "tauri build --target universal-apple-darwin --bundles app,dmg"
   },
   "dependencies": {
     "@second-brain/brain-core": "file:../../packages/brain-core",

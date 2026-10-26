@@ -15,9 +15,27 @@ use zeroize::Zeroizing;
 pub enum KeyBackend {
     #[serde(rename = "windows-dpapi-v1")]
     WindowsDpapiV1,
+    #[serde(rename = "macos-keychain-v1")]
+    MacosKeychainV1,
     #[serde(rename = "test-memory-v1")]
     TestMemoryV1,
 }
+
+impl KeyBackend {
+    fn label(self) -> &'static str {
+        match self {
+            KeyBackend::WindowsDpapiV1 => "windows-dpapi-v1",
+            KeyBackend::MacosKeychainV1 => "macos-keychain-v1",
+            KeyBackend::TestMemoryV1 => "test-memory-v1",
+        }
+    }
+}
+
+/// The backend `protect_key` uses on this platform.
+#[cfg(target_os = "macos")]
+const PLATFORM_BACKEND: KeyBackend = KeyBackend::MacosKeychainV1;
+#[cfg(not(target_os = "macos"))]
+const PLATFORM_BACKEND: KeyBackend = KeyBackend::WindowsDpapiV1;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PublicIdentity {
@@ -63,7 +81,7 @@ impl KeyStore {
                 .map_err(|_| NativeError::KeyStorageUnavailable)?;
             if persisted.version != 1
                 || persisted.algorithm != "Ed25519"
-                || persisted.backend != KeyBackend::WindowsDpapiV1
+                || persisted.backend != PLATFORM_BACKEND
                 || persisted.device_id.is_empty()
                 || persisted.device_id.len() > 128
             {
@@ -90,11 +108,11 @@ impl KeyStore {
                 device_id: persisted.device_id,
                 public_key_base64_url: persisted.public_key_base64_url,
                 fingerprint: persisted.fingerprint,
-                backend: "windows-dpapi-v1".to_owned(),
+                backend: PLATFORM_BACKEND.label().to_owned(),
             };
             return Ok(Self {
                 identity,
-                backend: KeyBackend::WindowsDpapiV1,
+                backend: PLATFORM_BACKEND,
                 protected_key: Mutex::new(Zeroizing::new(protected_key)),
                 key_path: Some(path),
             });
@@ -115,12 +133,12 @@ impl KeyStore {
             device_id: Uuid::new_v4().to_string(),
             public_key_base64_url: URL_SAFE_NO_PAD.encode(public_key),
             fingerprint: public_key_fingerprint(public_key),
-            backend: "windows-dpapi-v1".to_owned(),
+            backend: PLATFORM_BACKEND.label().to_owned(),
         };
         let persisted = PersistedKey {
             version: 1,
             algorithm: "Ed25519".to_owned(),
-            backend: KeyBackend::WindowsDpapiV1,
+            backend: PLATFORM_BACKEND,
             device_id: identity.device_id.clone(),
             public_key_base64_url: identity.public_key_base64_url.clone(),
             fingerprint: identity.fingerprint.clone(),
@@ -137,7 +155,7 @@ impl KeyStore {
         file.sync_all()?;
         Ok(Self {
             identity,
-            backend: KeyBackend::WindowsDpapiV1,
+            backend: PLATFORM_BACKEND,
             protected_key: Mutex::new(Zeroizing::new(protected_key)),
             key_path: Some(path),
         })
@@ -211,7 +229,9 @@ impl KeyStore {
             .clone();
         let private_key = Zeroizing::new(match self.backend {
             KeyBackend::TestMemoryV1 => protected.to_vec(),
-            KeyBackend::WindowsDpapiV1 => unprotect_key(protected.as_slice())?,
+            KeyBackend::WindowsDpapiV1 | KeyBackend::MacosKeychainV1 => {
+                unprotect_key(protected.as_slice())?
+            }
         });
         sign_request_with_pkcs8(private_key.as_slice(), request)
     }
@@ -252,7 +272,12 @@ pub(crate) fn protect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
     Ok(protected)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub(crate) fn protect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
+    keychain::seal(keychain::SERVICE, keychain::ACCOUNT, value)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn protect_key(_value: &[u8]) -> Result<Vec<u8>, NativeError> {
     Err(NativeError::KeyStorageUnavailable)
 }
@@ -292,9 +317,109 @@ pub(crate) fn unprotect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
     Ok(plain)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub(crate) fn unprotect_key(value: &[u8]) -> Result<Vec<u8>, NativeError> {
+    keychain::open(keychain::SERVICE, keychain::ACCOUNT, value)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn unprotect_key(_value: &[u8]) -> Result<Vec<u8>, NativeError> {
     Err(NativeError::KeyStorageUnavailable)
+}
+
+/// macOS has no DPAPI. The login Keychain holds one random AES-256-GCM key and
+/// the files on disk only hold data sealed with it, laid out as
+/// `FORMAT || nonce || ciphertext+tag`.
+#[cfg(target_os = "macos")]
+mod keychain {
+    use crate::error::NativeError;
+    use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
+    use ring::rand::{SecureRandom, SystemRandom};
+    use security_framework::passwords::{get_generic_password, set_generic_password};
+    use zeroize::Zeroizing;
+
+    pub const SERVICE: &str = "app.secondbrain.workspace";
+    pub const ACCOUNT: &str = "local-key-wrap-v1";
+    const FORMAT: u8 = 1;
+    const AAD: &[u8] = b"aizbrain-key-wrap-v1";
+    const TAG_LEN: usize = 16;
+    const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
+    fn wrapping_key(service: &str, account: &str, create: bool) -> Result<LessSafeKey, NativeError> {
+        let bytes = match get_generic_password(service, account) {
+            Ok(bytes) => Zeroizing::new(bytes),
+            Err(error) if create && error.code() == ERR_SEC_ITEM_NOT_FOUND => {
+                let mut fresh = Zeroizing::new(vec![0u8; 32]);
+                SystemRandom::new()
+                    .fill(&mut fresh)
+                    .map_err(|_| NativeError::KeyStorageUnavailable)?;
+                if set_generic_password(service, account, &fresh).is_ok() {
+                    fresh
+                } else {
+                    // Another instance may have created it first; use theirs.
+                    Zeroizing::new(
+                        get_generic_password(service, account)
+                            .map_err(|_| NativeError::KeyStorageUnavailable)?,
+                    )
+                }
+            }
+            Err(_) => return Err(NativeError::KeyStorageUnavailable),
+        };
+        let unbound = UnboundKey::new(&AES_256_GCM, &bytes)
+            .map_err(|_| NativeError::KeyStorageUnavailable)?;
+        Ok(LessSafeKey::new(unbound))
+    }
+
+    pub fn seal(service: &str, account: &str, value: &[u8]) -> Result<Vec<u8>, NativeError> {
+        let key = wrapping_key(service, account, true)?;
+        let mut nonce = [0u8; NONCE_LEN];
+        SystemRandom::new()
+            .fill(&mut nonce)
+            .map_err(|_| NativeError::KeyStorageUnavailable)?;
+        let mut sealed = value.to_vec();
+        key.seal_in_place_append_tag(Nonce::assume_unique_for_key(nonce), Aad::from(AAD), &mut sealed)
+            .map_err(|_| NativeError::KeyStorageUnavailable)?;
+        let mut output = Vec::with_capacity(1 + NONCE_LEN + sealed.len());
+        output.push(FORMAT);
+        output.extend_from_slice(&nonce);
+        output.extend_from_slice(&sealed);
+        Ok(output)
+    }
+
+    pub fn open(service: &str, account: &str, value: &[u8]) -> Result<Vec<u8>, NativeError> {
+        if value.len() < 1 + NONCE_LEN + TAG_LEN || value[0] != FORMAT {
+            return Err(NativeError::KeyStorageUnavailable);
+        }
+        let key = wrapping_key(service, account, false)?;
+        let nonce = Nonce::try_assume_unique_for_key(&value[1..1 + NONCE_LEN])
+            .map_err(|_| NativeError::KeyStorageUnavailable)?;
+        let mut buffer = Zeroizing::new(value[1 + NONCE_LEN..].to_vec());
+        let plain = key
+            .open_in_place(nonce, Aad::from(AAD), buffer.as_mut_slice())
+            .map_err(|_| NativeError::KeyStorageUnavailable)?;
+        Ok(plain.to_vec())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use security_framework::passwords::delete_generic_password;
+
+        #[test]
+        fn sealed_data_round_trips_and_rejects_tampering() {
+            let account = format!("test-{}", uuid::Uuid::new_v4());
+            let sealed = seal(SERVICE, &account, b"private key bytes").expect("seal");
+            assert_ne!(&sealed[1 + NONCE_LEN..], b"private key bytes");
+            assert_eq!(open(SERVICE, &account, &sealed).expect("open"), b"private key bytes");
+
+            let mut tampered = sealed.clone();
+            *tampered.last_mut().expect("tag byte") ^= 1;
+            assert!(open(SERVICE, &account, &tampered).is_err());
+
+            delete_generic_password(SERVICE, &account).expect("cleanup");
+            assert!(open(SERVICE, &account, &sealed).is_err());
+        }
+    }
 }
 
 #[cfg(test)]

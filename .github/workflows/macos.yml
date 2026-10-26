@@ -1,0 +1,55 @@
+# Builds the macOS app on GitHub's Mac runners; there is no Mac to build on locally.
+# scripts/release-desktop.mjs downloads the artifact of the released commit,
+# signs the updater bundle with the local key and attaches it to the release.
+name: macOS
+
+on:
+  push:
+    branches: [main, feat/macos]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: npm run rust:test
+
+  bundle:
+    needs: rust
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: npm ci
+      - run: npm --workspace @second-brain/desktop run tauri:mac
+      - name: Collect the app, disk image and updater bundle
+        run: |
+          bundle=apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
+          mkdir -p out
+          cp "$bundle"/dmg/*.dmg out/aizbrain_universal.dmg
+          tar -czf out/aizbrain_universal.app.tar.gz -C "$bundle/macos" aizbrain.app
+          codesign --verify --deep --strict "$bundle/macos/aizbrain.app"
+          lipo -archs "$bundle/macos/aizbrain.app/Contents/MacOS/second-brain-workspace"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aizbrain-macos
+          path: out/
+          if-no-files-found: error
+          retention-days: 30

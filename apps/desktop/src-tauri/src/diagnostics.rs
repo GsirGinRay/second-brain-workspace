@@ -56,11 +56,58 @@ pub fn set_autostart(enabled: bool, executable: &Path) -> Result<(), NativeError
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").ok_or(NativeError::Io)?;
+        let path = Path::new(&home)
+            .join("Library/LaunchAgents")
+            .join(format!("{LAUNCH_AGENT_LABEL}.plist"));
+        if enabled {
+            let program = executable.to_str().ok_or(NativeError::InvalidRequest)?;
+            std::fs::create_dir_all(path.parent().ok_or(NativeError::Io)?)?;
+            std::fs::write(&path, launch_agent_plist(program))?;
+        } else {
+            match std::fs::remove_file(&path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (enabled, executable);
         Err(NativeError::KeyStorageUnavailable)
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+const LAUNCH_AGENT_LABEL: &str = "app.secondbrain.workspace";
+
+/// A per-user LaunchAgent: launchd starts the app once at login.
+#[cfg(any(target_os = "macos", test))]
+fn launch_agent_plist(program: &str) -> String {
+    let program = program
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{LAUNCH_AGENT_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{program}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+"#
+    )
 }
 
 #[cfg(test)]
@@ -89,5 +136,13 @@ mod tests {
             assert!(object.contains_key(key), "missing {key}");
         }
         assert!(!object.contains_key("selected_vault"));
+    }
+
+    #[test]
+    fn launch_agent_runs_the_app_at_login_with_an_escaped_path() {
+        let plist = launch_agent_plist("/Applications/R&D <x>.app/Contents/MacOS/second-brain-workspace");
+        assert!(plist.contains("<string>app.secondbrain.workspace</string>"));
+        assert!(plist.contains("<string>/Applications/R&amp;D &lt;x&gt;.app/Contents/MacOS/second-brain-workspace</string>"));
+        assert!(plist.contains("<key>RunAtLoad</key>\n  <true/>"));
     }
 }
