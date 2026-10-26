@@ -626,3 +626,12 @@ test("board lanes offer an inline add button bound to the active project filter"
   assert.match(source, /onQuickAdd=\{\(\) => setQuickAddOpen\(true\)\}/);
   assert.match(styles, /\.lane-composer input/);
 });
+
+test("the sidebar names the app AIzBrain in English and 第二大腦 in Chinese", async () => {
+  const { translate } = await import("./ui-preferences");
+  assert.equal(translate("en", "app.name"), "AIzBrain");
+  assert.equal(translate("zh-TW", "app.name"), "第二大腦");
+  // "AI" gets its own colour so a sans-serif I is not read as an l ("Alz").
+  assert.match(app(), /<BrandName name=\{t\("app\.name"\)\} \/>/);
+  assert.match(css(), /\.brand-ai\s*\{/);
+});

@@ -133,6 +133,12 @@ function ViewIcon({ view }: { view: View }) {
   return <Settings2 className={className} />;
 }
 
+/** "AIzBrain" with "AI" coloured, so a sans-serif I is not read as an l. */
+function BrandName({ name }: { name: string }) {
+  if (!name.startsWith("AI")) return <>{name}</>;
+  return <><span className="brand-ai">AI</span>{name.slice(2)}</>;
+}
+
 const UPDATE_DISMISSED_KEY = "second-brain.dismissedUpdateVersion";
 
 const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000;
@@ -1610,7 +1616,7 @@ export function App({ adapter: providedAdapter }: { adapter?: NativeAdapter }) {
         <div className="brand">
           <img className="brand-logo" src={appLogo} alt="" aria-hidden="true" />
           <div>
-            <strong>{t("app.name")}</strong>
+            <strong><BrandName name={t("app.name")} /></strong>
             <small>{t("app.tagline")}</small>
           </div>
         </div>

@@ -52,6 +52,7 @@ kbd { border: 1px solid #cfd0d0; border-bottom-width: 2px; border-radius: 5px; b
 .brand { display: flex; align-items: center; gap: 11px; padding: 0 8px 28px; white-space: nowrap; }
 .brand-logo { display:block;width:40px;height:40px;flex:0 0 40px;border-radius:11px;object-fit:cover;box-shadow:0 0 0 1px #ffffff1f,0 5px 16px #00000026; }
 .brand div { display: flex; flex-direction: column; }
+.brand-ai { color: #3a8dff; }
 .brand small, .sidebar-foot, .topbar p, .task-card small, .board-card small, .project-meta, .settings-card p { color: var(--muted); }
 .sidebar nav { display: grid; gap: 5px; }
 .sidebar nav button, .mobile-nav button { border: 0; background: transparent; color: #55585e; text-align: left; padding: 11px 12px; border-radius: 9px; display: flex; align-items: center; gap: 10px; white-space: nowrap; }

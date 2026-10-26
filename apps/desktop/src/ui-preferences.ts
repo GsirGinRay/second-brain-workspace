@@ -35,7 +35,7 @@ export function normalizeUiPreferences(value: unknown): UiPreferences {
 }
 
 const ENGLISH: Record<string, string> = {
-  "app.name": "aizbrain",
+  "app.name": "AIzBrain",
   "app.tagline": "Tasks and projects hub",
   "app.language": "Switch language",
   "app.theme": "Switch color theme",
@@ -547,7 +547,7 @@ const ENGLISH: Record<string, string> = {
 };
 
 const TRADITIONAL_CHINESE: Record<string, string> = {
-  "app.name": "aizbrain",
+  "app.name": "第二大腦",
   "app.tagline": "任務與專案中心",
   "app.language": "切換語言",
   "app.theme": "切換色彩主題",
@@ -817,7 +817,7 @@ const TRADITIONAL_CHINESE: Record<string, string> = {
   "update.promptTitle": "發現新版本",
   "update.promptMessage": "新版本 {latest} 已推出（目前是 {current}）。按「立即更新」會自動下載、驗證並安裝，完成後程式會重新開啟；你的 Markdown 資料不受影響。",
   "settings.recoveryLocalHelp": "每次寫入前會先建立可驗證的 ZIP 備份，中斷時可以復原。",
-  "onboarding.title": "歡迎使用 aizbrain",
+  "onboarding.title": "歡迎使用第二大腦",
   "onboarding.body": "這是一個把任務存在你電腦資料夾的工具。打勾、改日期都會寫進那個資料夾，沒有另外一份資料庫。",
   "onboarding.task": "任務：今天要做的一件事",
   "onboarding.project": "專案：有成果的一組事",
