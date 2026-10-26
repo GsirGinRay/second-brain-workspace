@@ -55,11 +55,14 @@ body {
   margin: 0 auto;
   padding: max(16px, env(safe-area-inset-top)) 16px max(96px, calc(env(safe-area-inset-bottom) + 80px));
   display: grid;
+  /* minmax(0, …): a long unwrapped line must not widen the page past the screen. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
 header { display: flex; align-items: center; gap: 12px; }
 header img { border-radius: 9px; }
+header > div { min-width: 0; overflow-wrap: anywhere; }
 h1 { font-size: 20px; margin: 0; }
 h2 { font-size: 16px; margin: 0 0 6px; }
 header p, .hint, footer p, .card p { color: var(--muted); margin: 0; font-size: 14px; }
@@ -92,8 +95,9 @@ button:disabled { opacity: 0.4; }
 button.secondary { background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
 #install button.secondary { margin-top: 10px; }
 
-#composer { display: grid; gap: 8px; }
-.composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#composer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.composer-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.composer-row button { margin-left: auto; }
 .composer-row input { flex: 1; }
 #counter { color: var(--muted); }
 #counter.over { color: var(--bad); }
@@ -127,7 +131,7 @@ select.chip { appearance: none; max-width: 48%; padding-right: 28px; text-overfl
 
 .notice { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); border: 1px solid var(--line); }
 
-#history { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+#history { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 #history li {
   display: flex;
   justify-content: space-between;
@@ -155,7 +159,7 @@ select.chip { appearance: none; max-width: 48%; padding-right: 28px; text-overfl
 [hidden] { display: none !important; }
 
 /* Today list */
-#today { display: grid; gap: 12px; }
+#today { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .today-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .today-head h2 { margin: 0; font-size: 22px; }
 .today-head small { color: var(--muted); font-size: 14px; }
@@ -180,7 +184,7 @@ select.chip { appearance: none; max-width: 48%; padding-right: 28px; text-overfl
 
 .task-group h3 { font-size: 15px; color: var(--muted); margin: 4px 0 6px; font-weight: 700; }
 .task-group[data-group="overdue"] h3 { color: var(--bad); }
-.task-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.task-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .task-row {
   display: flex;
   align-items: center;

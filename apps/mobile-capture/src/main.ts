@@ -32,6 +32,7 @@ import {
   saveOutbox,
   savePairing,
   saveView,
+  shellScript,
   textBytes,
   todayProgress,
   type CachedSnapshot,
@@ -646,10 +647,29 @@ window.addEventListener("online", () => {
   void flush();
   void refreshToday();
 });
+/**
+ * An installed app resumes from the background without reloading, so it can
+ * run an old version for days. Reload onto a new deploy when nothing is typed
+ * and no task sheet is open; queued tasks are kept in storage either way.
+ */
+async function checkForUpdate() {
+  const running = document.querySelector<HTMLScriptElement>("script[type=\"module\"][src]")?.getAttribute("src");
+  if (!running || !navigator.onLine) return;
+  void navigator.serviceWorker?.getRegistration().then((registration) => registration?.update()).catch(() => undefined);
+  try {
+    const response = await fetch(`/?update-check=${Date.now()}`, { cache: "no-store" });
+    const latest = response.ok ? shellScript(await response.text()) : null;
+    if (latest && latest !== running && !textArea.value.trim() && !sheet.open) window.location.reload();
+  } catch {
+    // Offline or the server is down: keep the running version.
+  }
+}
+
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     void flush();
     void refreshToday();
+    void checkForUpdate();
   }
 });
 window.setInterval(() => void flush(), RETRY_MS);

@@ -21,6 +21,7 @@ import {
   type JsonFetcher,
   flushOutbox,
   isTextWithinLimit,
+  shellScript,
   loadOutbox,
   loadPairing,
   parsePairingFragment,
@@ -334,4 +335,11 @@ test("date helpers and the saved view", () => {
   assert.deepEqual(loadView(store), { days: 7, project: "家務" });
   store.setItem("second-brain.capture.view", "{bad");
   assert.deepEqual(loadView(store), { days: 3, project: null });
+});
+
+test("a newer deploy is found by the module script in the page", () => {
+  const page = (src: string) => `<!doctype html><head><script type="module" crossorigin src="${src}"></script></head>`;
+  assert.equal(shellScript(page("/assets/index-DwP6OBi2.js")), "/assets/index-DwP6OBi2.js");
+  assert.equal(shellScript("<html><body>maintenance</body></html>"), null);
+  assert.equal(shellScript(page("https://evil.example/x.js")), null);
 });

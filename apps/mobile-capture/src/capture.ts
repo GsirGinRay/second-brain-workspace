@@ -490,3 +490,9 @@ export function endTime(time: string, minutes: number): string {
   const total = (hours * 60 + mins + minutes) % (24 * 60);
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
+
+/** The `/assets/…` module script a page loads; a new one means a new deploy. */
+export function shellScript(html: string): string | null {
+  const match = /<script\b[^>]*\btype="module"[^>]*\bsrc="(\/assets\/[^"]+\.js)"/.exec(html);
+  return match ? match[1] : null;
+}
