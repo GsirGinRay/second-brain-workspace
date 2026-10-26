@@ -53,3 +53,22 @@ jobs:
           path: out/
           if-no-files-found: error
           retention-days: 30
+      # Nobody on the team has a Mac: launch the built app and keep a screenshot as proof it starts.
+      - name: Launch smoke test
+        run: |
+          app=apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/aizbrain.app
+          mkdir -p smoke
+          "$app/Contents/MacOS/second-brain-workspace" > smoke/app.log 2>&1 &
+          pid=$!
+          sleep 20
+          screencapture -x smoke/launch.png || true
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "The app exited during startup"; cat smoke/app.log; exit 1
+          fi
+          kill "$pid"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aizbrain-macos-smoke
+          path: smoke/
+          retention-days: 14

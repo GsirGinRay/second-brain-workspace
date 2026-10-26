@@ -131,6 +131,11 @@ pub fn validate_relative_path(path: &Path) -> Result<(), NativeError> {
         match component {
             Component::Normal(value) => {
                 let name = value.to_string_lossy();
+                // Only Windows parses `\` and drive colons; reject them everywhere so a
+                // path written on macOS cannot mean something else when the vault is opened on Windows.
+                if name.contains(['\\', ':']) {
+                    return Err(NativeError::UnsafePath);
+                }
                 if !is_managed_component(&name)
                     && (is_technical_name(&name) || is_template_dir(&name))
                 {
