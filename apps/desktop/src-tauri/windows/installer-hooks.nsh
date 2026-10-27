@@ -11,6 +11,9 @@
 !endif
 !define LEGACY_UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${LEGACY_PRODUCTNAME}"
 
+Var LegacyStartMenuShortcut
+Var LegacyDesktopShortcut
+
 !macro NSIS_HOOK_PREINSTALL
   ReadRegStr $R0 HKCU "${LEGACY_UNINSTKEY}" "UninstallString"
   ReadRegStr $R1 HKCU "${LEGACY_UNINSTKEY}" "InstallLocation"
@@ -23,6 +26,14 @@
       StrCpy $R1 $R1 -1
     ${EndIf}
     ${If} $R1 != $INSTDIR
+      ; The legacy uninstaller deletes its shortcuts, and an /UPDATE install
+      ; never creates new ones, so remember which ones to recreate.
+      ${If} ${FileExists} "$SMPROGRAMS\${LEGACY_PRODUCTNAME}.lnk"
+        StrCpy $LegacyStartMenuShortcut 1
+      ${EndIf}
+      ${If} ${FileExists} "$DESKTOP\${LEGACY_PRODUCTNAME}.lnk"
+        StrCpy $LegacyDesktopShortcut 1
+      ${EndIf}
       ExecWait '$R0 /S _?=$R1'
       Delete "$R1\uninstall.exe"
       RMDir "$R1"
@@ -34,5 +45,11 @@
   ReadRegStr $R0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SecondBrainWorkspace"
   ${If} $R0 != ""
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SecondBrainWorkspace" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${EndIf}
+  ${If} $LegacyStartMenuShortcut = 1
+    CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${EndIf}
+  ${If} $LegacyDesktopShortcut = 1
+    CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
   ${EndIf}
 !macroend
