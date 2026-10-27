@@ -463,7 +463,7 @@ test("Windows installer keeps a stable upgrade identity", () => {
   assert.equal(config.productName, "aizbrain");
   assert.equal(config.bundle?.windows?.nsis?.installerHooks, "./windows/installer-hooks.nsh");
   assert.equal(config.identifier, "app.secondbrain.workspace");
-  assert.equal(config.version, "0.9.3");
+  assert.equal(config.version, "0.9.4");
   assert.equal(config.bundle?.windows?.nsis?.installMode, "currentUser");
   assert.equal(config.bundle?.windows?.allowDowngrades, false);
 });
